@@ -19,17 +19,23 @@ import (
 )
 
 func TestNewId(t *testing.T) {
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		id := NewId()
 		require.LessOrEqual(t, len(id), 26, "ids shouldn't be longer than 26 chars")
 	}
 }
 
 func TestRandomString(t *testing.T) {
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		str := NewRandomString(i)
 		require.Len(t, str, i)
 		require.NotContains(t, str, "=")
+	}
+}
+
+func BenchmarkNewTestPassword(b *testing.B) {
+	for range b.N {
+		NewTestPassword()
 	}
 }
 
@@ -218,6 +224,20 @@ func TestAppErrorSerialize(t *testing.T) {
 		require.EqualError(t, berr, aerr.Error())
 	})
 
+	t.Run("Props survive WipeDetailed and round-trip to clients", func(t *testing.T) {
+		aerr := NewAppError("", "message", nil, "detail", http.StatusTeapot).Wrap(errors.New("wrapped"))
+		aerr.Props = StringMap{"plugin_id": "com.example", "version_direction": "downgrade"}
+		aerr.WipeDetailed()
+		js := aerr.ToJSON()
+		err := AppErrorFromJSON(strings.NewReader(js))
+		berr, ok := err.(*AppError)
+		require.True(t, ok)
+		require.Equal(t, "message", berr.Id)
+		require.Empty(t, berr.DetailedError, "WipeDetailed must still discard the detailed error")
+		require.Equal(t, StringMap{"plugin_id": "com.example", "version_direction": "downgrade"}, berr.Props)
+		require.Equal(t, http.StatusTeapot, berr.StatusCode)
+	})
+
 	t.Run("Where", func(t *testing.T) {
 		appErr := NewAppError("TestAppError", "message", nil, "", http.StatusInternalServerError)
 		json := appErr.ToJSON()
@@ -232,6 +252,32 @@ func TestAppErrorSerialize(t *testing.T) {
 
 		err := AppErrorFromJSON(strings.NewReader(aerr))
 		require.EqualError(t, err, "The request was too large. Consider asking your System Admin to raise the FileSettings.MaxFileSize setting.")
+	})
+}
+
+func TestAsAppError(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		assert.Nil(t, AsAppError(nil))
+	})
+
+	t.Run("AppError", func(t *testing.T) {
+		appErr := NewAppError("TestAsAppError", "message", nil, "", http.StatusNotFound)
+		assert.Same(t, appErr, AsAppError(appErr))
+	})
+
+	t.Run("wrapped AppError", func(t *testing.T) {
+		appErr := NewAppError("TestAsAppError", "message", nil, "", http.StatusNotFound)
+		assert.Same(t, appErr, AsAppError(fmt.Errorf("context: %w", appErr)))
+	})
+
+	t.Run("plain error", func(t *testing.T) {
+		err := errors.New("plain")
+
+		appErr := AsAppError(err)
+		require.NotNil(t, appErr)
+		assert.Equal(t, "model.app_error.internal_error", appErr.Id)
+		assert.Equal(t, http.StatusInternalServerError, appErr.StatusCode)
+		assert.ErrorIs(t, appErr, err)
 	})
 }
 
@@ -279,7 +325,7 @@ func TestSortedArrayFromJSON(t *testing.T) {
 	t.Run("Duplicate keys, returns one", func(t *testing.T) {
 		var ids []string
 		id := NewId()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			ids = append(ids, id)
 		}
 		b, _ := json.Marshal(ids)
@@ -309,7 +355,7 @@ func TestNonSortedArrayFromJSON(t *testing.T) {
 	t.Run("Duplicate keys, returns one", func(t *testing.T) {
 		var ids []string
 		id := NewId()
-		for i := 0; i <= 10; i++ {
+		for range 11 {
 			ids = append(ids, id)
 		}
 		b, _ := json.Marshal(ids)
@@ -373,6 +419,10 @@ func TestIsValidEmail(t *testing.T) {
 			Expected: false,
 		},
 		{
+			Input:    "<billy@example.com>",
+			Expected: false,
+		},
+		{
 			Input:    "email.domain.com",
 			Expected: false,
 		},
@@ -394,6 +444,50 @@ func TestIsValidEmail(t *testing.T) {
 		},
 		{
 			Input:    "email1@domain.com, email2@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "\"attacker@attacker.com,admin\"@spaceship.com",
+			Expected: false,
+		},
+		{
+			Input:    "(email)@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "<email>@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "[email]@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "{email}@domain.com",
+			Expected: true,
+		},
+		{
+			Input:    "first\"name@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "first:name@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "first;name@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "first,name@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "first@name@domain.com",
+			Expected: false,
+		},
+		{
+			Input:    "john..doe@example.com",
 			Expected: false,
 		},
 	} {
@@ -493,10 +587,58 @@ func TestStringArray_Equal(t *testing.T) {
 }
 
 func TestParseHashtags(t *testing.T) {
-	for input, output := range hashtags {
-		o, _ := ParseHashtags(input)
-		require.Equal(t, o, output, "failed to parse hashtags from input="+input+" expected="+output+" actual="+o)
-	}
+	t.Run("basic hashtag extraction", func(t *testing.T) {
+		for input, output := range hashtags {
+			o, _ := ParseHashtags(input)
+			require.Equal(t, o, output, "failed to parse hashtags from input="+input+" expected="+output+" actual="+o)
+		}
+	})
+
+	t.Run("long hashtag string truncation", func(t *testing.T) {
+		// Test case where hashtag string exceeds 1000 characters with a space to truncate at
+		longHashtags := "#test " + strings.Repeat("#verylonghashtag ", 50)
+		hashtagString, plainString := ParseHashtags(longHashtags)
+		require.NotEmpty(t, hashtagString)
+		require.LessOrEqual(t, len(hashtagString), 1000)
+		require.Empty(t, plainString)
+		// Ensure it truncated at a space
+		require.NotEqual(t, "", hashtagString)
+		require.True(t, hashtagString[len(hashtagString)-1] != ' ')
+	})
+
+	t.Run("long hashtag string truncation without spaces", func(t *testing.T) {
+		// Test case where hashtag string exceeds 1000 characters with no space after position 999
+		// Create a single very long hashtag that will be truncated
+		veryLongHashtag := "#" + strings.Repeat("a", 1010)
+		hashtagString, plainString := ParseHashtags(veryLongHashtag)
+		// Should be empty because no space was found to truncate at
+		require.Equal(t, "", hashtagString)
+		require.Empty(t, plainString)
+	})
+
+	t.Run("plain text extraction", func(t *testing.T) {
+		hashtagString, plainString := ParseHashtags("hello #world this is #test plain text")
+		require.Equal(t, "#world #test", hashtagString)
+		require.Equal(t, "hello this is plain text", plainString)
+	})
+
+	t.Run("only plain text", func(t *testing.T) {
+		hashtagString, plainString := ParseHashtags("no hashtags here")
+		require.Empty(t, hashtagString)
+		require.Equal(t, "no hashtags here", plainString)
+	})
+
+	t.Run("only hashtags", func(t *testing.T) {
+		hashtagString, plainString := ParseHashtags("#one #two #three")
+		require.Equal(t, "#one #two #three", hashtagString)
+		require.Empty(t, plainString)
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		hashtagString, plainString := ParseHashtags("")
+		require.Empty(t, hashtagString)
+		require.Empty(t, plainString)
+	})
 }
 
 func TestIsValidAlphaNum(t *testing.T) {
@@ -763,6 +905,30 @@ func TestIsValidAlphaNumHyphenUnderscorePlus(t *testing.T) {
 	}
 }
 
+func TestDecodeId(t *testing.T) {
+	id := NewId()
+	b, ok := DecodeId(id)
+	require.True(t, ok)
+	require.Equal(t, id, encoding.EncodeToString(b[:]))
+
+	// The last character carries 3 bits of the ID and 2 unused bits that NewId leaves at zero. Setting an
+	// unused bit gives a different string that the decoder still turns into the same 16 bytes; DecodeId must
+	// reject it, or two channels could share one key.
+	const alphabet = "ybndrfg8ejkmcpqxot1uwisza345h769"
+	alt := id[:25] + string(alphabet[strings.IndexByte(alphabet, id[25])|1])
+	var same [16]byte
+	_, err := encoding.Decode(same[:], []byte(alt))
+	require.NoError(t, err)
+	require.Equal(t, b, same, "the decoder ignores the unused bits")
+	_, ok = DecodeId(alt)
+	require.False(t, ok)
+
+	for _, bad := range []string{"l0v2aaaaaaaaaaaaaaaaaaaaaa", "short"} {
+		_, ok := DecodeId(bad)
+		require.False(t, ok, bad)
+	}
+}
+
 func TestIsValidId(t *testing.T) {
 	cases := []struct {
 		Input  string
@@ -963,7 +1129,6 @@ func TestNowhereNil(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.Description, func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -986,13 +1151,7 @@ func checkNowhereNil(t *testing.T, name string, value any) bool {
 
 	v := reflect.ValueOf(value)
 	switch v.Type().Kind() {
-	case reflect.Ptr:
-		// Ignoring these 2 settings.
-		// TODO: remove them completely in v8.0.
-		if name == "config.BleveSettings.BulkIndexingTimeWindowSeconds" ||
-			name == "config.ElasticsearchSettings.BulkIndexingTimeWindowSeconds" {
-			return true
-		}
+	case reflect.Pointer:
 
 		if v.IsNil() {
 			t.Logf("%s was nil", name)
@@ -1012,7 +1171,7 @@ func checkNowhereNil(t *testing.T, name string, value any) bool {
 
 	case reflect.Struct:
 		nowhereNil := true
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			f := v.Field(i)
 			// Ignore unexported fields
 			if v.Type().Field(i).PkgPath != "" {
@@ -1196,7 +1355,6 @@ func TestIsValidHTTPURL(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		testCase := testCase
 		t.Run(testCase.Description, func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil {

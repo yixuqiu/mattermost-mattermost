@@ -1,13 +1,16 @@
-@charset "utf-8";
+@use "utils/functions";
+@use "utils/mixins";
+@use "utils/variables";
 
 .channel-header {
     position: relative;
-    z-index: 15;
+    z-index: variables.$z-index-channel-header;
     width: 100%;
     max-height: 56px;
     padding: 12px;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    background: v(center-channel-bg);
+    border-radius: 12px 12px 0 0;
+    border-bottom: var(--border-default);
+    background: functions.v(center-channel-bg);
     font-size: 14px;
 
     #channelHeaderDropdownButton {
@@ -25,15 +28,15 @@
         margin-right: 2px;
 
         &:hover {
-            background: rgba(v(center-channel-color-rgb), 0.08);
+            background: rgba(functions.v(center-channel-color-rgb), 0.08);
         }
 
         &.active {
-            background: rgba(v(button-bg-rgb), 0.08);
+            background: rgba(functions.v(button-bg-rgb), 0.08);
 
             .heading,
             .header-dropdown-chevron-icon {
-                color: v(button-bg);
+                color: functions.v(button-bg);
             }
         }
 
@@ -47,40 +50,42 @@
         margin-left: 0;
     }
 
-    .btn.channel-header__favorites {
+    // IconButton + compass SVG use currentColor; legacy muted/active colors targeted `i` only.
+    // Keep size='small' for Icon glyph context; override box to 24×24 to match header icons.
+    // Compass already uses :focus-visible; reset residual :focus styles after mouse click.
+    button.channel-header__favorites {
         position: relative;
         z-index: 1;
+        width: 24px;
+        min-width: 24px;
         height: 24px;
-        padding: 4px;
-        border-radius: 4px;
-        color: var(--center-channel-color);
-        float: left;
+        color: rgba(var(--center-channel-color-rgb), 0.64);
 
-        i {
-            position: relative;
-            top: -1px;
-            font-size: 18px !important;
-            opacity: 0.64;
+        svg {
+            color: inherit;
+            fill: currentColor;
         }
 
-        &:hover {
-            background: rgba(v(center-channel-color-rgb), 0.08);
-
-            i {
-                opacity: 0.8;
-            }
+        &:hover:not(:disabled) {
+            color: rgba(var(--center-channel-color-rgb), 0.8);
         }
 
-        &.inactive {
-            .icon {
-                color: v(center-channel-color);
-            }
+        &:focus:not(:focus-visible) {
+            box-shadow: none;
+            outline-color: transparent;
+            outline-offset: 0;
+        }
+
+        &:disabled {
+            cursor: default;
+            opacity: 0.32;
         }
 
         &.active {
-            i {
+            color: var(--button-bg);
+
+            &:hover:not(:disabled) {
                 color: var(--button-bg);
-                opacity: 1;
             }
         }
     }
@@ -99,6 +104,7 @@
     .flex-parent {
         display: flex;
         padding: 0;
+        gap: 4px;
     }
 
     .flex-child {
@@ -108,14 +114,6 @@
             min-width: 0;
             flex: 1;
             padding: 0 24px 0 2px;
-        }
-
-        .markdown__paragraph-inline {
-            display: inline-block;
-            overflow: hidden;
-            width: 100%;
-            margin: 0;
-            text-overflow: ellipsis;
         }
     }
 
@@ -193,13 +191,21 @@
                     &::after {
                         height: 20px;
                         border-left: solid 1px rgba(var(--center-channel-color-rgb), 0.12);
-                        margin-right: 8px;
                         margin-left: 8px;
                         content: "";
                     }
                 }
 
                 &:has(.header-placeholder) .header-status__text {
+                    &::after {
+                        height: 20px;
+                        border-left: solid 1px rgba(var(--center-channel-color-rgb), 0.12);
+                        margin-left: 8px;
+                        content: "";
+                    }
+                }
+
+                &:has(.header-placeholder) .autotranslation-header {
                     &::after {
                         height: 20px;
                         border-left: solid 1px rgba(var(--center-channel-color-rgb), 0.12);
@@ -336,14 +342,17 @@
 
     .channel-header__title {
         display: flex;
+        width: 100%;
+        min-width: 0;
         height: 24px;
+        align-items: center;
 
         .channel-header__favorites {
             flex: 0 0 auto;
         }
 
         .channel-header-archived-icon {
-            opacity: 0.5;
+            opacity: 0.64;
         }
 
         > a {
@@ -359,19 +368,36 @@
 
     .channel-header__icons {
         display: flex;
+        min-width: 0;
+
+        // Content-sized so every chip can show while there is room. Shrinks (and
+        // the chips collapse into +N) only after the description has been squeezed
+        // to its 100px floor. min-width:0 lets that shrink happen; the default
+        // min-width:auto would push the call and info controls instead.
+        flex: 0 1 auto;
+        align-items: center;
         margin-right: 8px;
         gap: 4px;
+
+        .btn-icon {
+            margin: 0;
+        }
     }
 
     .channel-header__description {
         position: relative;
         display: flex;
         overflow: hidden;
+        min-width: 100px;
         height: 24px;
-        flex: 1;
+
+        // Leftover space after the channel name and chips. Never below 100px, so
+        // the header text stays readable; chips collapse before this is eaten.
+        flex: 1 1 100px;
         align-items: center;
         margin: 0;
         font-size: 12px;
+        gap: 8px;
         line-height: 24px;
         text-overflow: ellipsis;
 
@@ -380,19 +406,6 @@
                 position: relative;
                 top: -1px;
                 overflow: hidden;
-            }
-        }
-
-        blockquote {
-            overflow: hidden;
-            padding: 0 0 0 20px;
-            font-size: 13px;
-            text-overflow: ellipsis;
-
-            &::before {
-                top: 0;
-                left: 2px;
-                font-size: 15px;
             }
         }
 
@@ -419,7 +432,6 @@
                 &::after {
                     height: 20px;
                     border-left: solid 1px rgba(var(--center-channel-color-rgb), 0.12);
-                    margin-right: 8px;
                     margin-left: 8px;
                     content: "";
                 }
@@ -433,12 +445,23 @@
                     content: "";
                 }
             }
+
+            .autotranslation-header {
+                &::after {
+                    height: 20px;
+                    border-left: solid 1px rgba(var(--center-channel-color-rgb), 0.12);
+                    margin-left: 8px;
+                    content: "";
+                }
+            }
         }
 
         .header-description__text {
             overflow: hidden;
             height: 24px;
             line-height: inherit;
+            text-overflow: ellipsis;
+            white-space: nowrap;
 
             ul {
                 &:first-child {
@@ -455,6 +478,20 @@
                 }
             }
 
+            &>blockquote {
+                display: inline-block;
+                overflow: hidden;
+                padding: 0 0 0 20px;
+                font-size: 13px;
+                text-overflow: ellipsis;
+
+                &::before {
+                    top: 0;
+                    left: 2px;
+                    font-size: 15px;
+                }
+            }
+
             .emoticon {
                 width: 18.8px;
                 min-width: 18.8px;
@@ -462,6 +499,17 @@
                 height: 18.8px;
                 min-height: 18.8px;
                 max-height: 18.8px;
+            }
+
+            &>p.markdown__paragraph-inline:first-child {
+                display: inline;
+                overflow: hidden;
+                margin: 0;
+                text-overflow: ellipsis;
+            }
+
+            &>p.markdown__paragraph-inline:not(:first-child) {
+                display: block;
             }
         }
 
@@ -558,7 +606,6 @@
     }
 }
 
-.channel-header__popover,
 .navbar__popover {
     p {
         white-space: pre-wrap;
@@ -676,14 +723,13 @@
     .channel-intro__actions {
         display: flex;
         justify-content: center;
-        gap: 4px;
+        gap: var(--spacing-xs);
     }
 }
 
 // Team Header in Sidebar
 .sidebar--left,
 #SidebarContainer,
-.sidebar--menu,
 .admin-sidebar {
     .divider {
         border-top: 1px solid transparent;
@@ -694,7 +740,7 @@
     }
 
     .team__header {
-        @include pie-clearfix;
+        @include mixins.pie-clearfix;
 
         position: relative;
         display: flex;
@@ -712,7 +758,7 @@
             height: 100%;
             background: none;
             content: "";
-            transition: all $transition-quick ease-in-out;
+            transition: all variables.$transition-quick ease-in-out;
         }
 
         &:hover {
@@ -802,7 +848,7 @@
                 height: 100%;
                 padding: 10px;
                 background: none;
-                color: $white;
+                color: variables.$white;
                 font-size: 1em;
                 line-height: 1.8;
                 opacity: 0.8;
@@ -828,7 +874,7 @@
                 width: 36px;
                 height: 36px;
                 border-radius: 36px;
-                fill: $white;
+                fill: variables.$white;
                 float: right;
                 line-height: 36px;
                 text-align: center;
@@ -876,7 +922,7 @@
             color: rgba(var(--sidebar-header-text-color-rgb), 0.8);
             font-size: 14px;
             font-weight: 400;
-            transition: all $transition-quick ease-in-out;
+            transition: all variables.$transition-quick ease-in-out;
         }
 
         .custom-status {
@@ -932,7 +978,13 @@
 
 .channel-header-archived-icon {
     position: relative;
-    top: 2px;
+    top: -1px;
     margin-right: 5px;
     fill: var(--center-channel-color);
+}
+
+// Specific styling for archive icon in search results context
+.search-channel__archived .channel-header-archived-icon {
+    top: 2px;
+    margin-left: 4px;
 }

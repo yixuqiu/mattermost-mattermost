@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blang/semver/v4"
+	"github.com/Masterminds/semver/v3"
+	"github.com/goccy/go-yaml"
 	"github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
 )
 
 type PluginOption struct {
@@ -89,6 +89,36 @@ type PluginSetting struct {
 	// and the opposite environment is running the plugin, the setting will be hidden in the admin console UI.
 	// Note that this functionality is entirely client-side, so the plugin needs to handle the case of invalid submissions.
 	Hosting string `json:"hosting"`
+
+	// If true, the setting is sanitized before showing it in the System Console or returning it via the API.
+	// This is useful for settings that contain sensitive information.
+	Secret bool `json:"secret"`
+}
+
+type PluginSettingsSection struct {
+	// A unique identifier for this section.
+	Key string `json:"key" yaml:"key"`
+
+	// Optional text to display as section title.
+	Title string `json:"title" yaml:"title"`
+
+	// Optional text to display as section subtitle.
+	Subtitle string `json:"subtitle" yaml:"subtitle"`
+
+	// A list of setting definitions to display inside the section.
+	Settings []*PluginSetting `json:"settings" yaml:"settings"`
+
+	// Optional text to display above the settings. Supports Markdown formatting.
+	Header string `json:"header" yaml:"header"`
+
+	// Optional text to display below the settings. Supports Markdown formatting.
+	Footer string `json:"footer" yaml:"footer"`
+
+	// If true, the section will load the custom component registered using `registry.registerAdminConsoleCustomSection`
+	Custom bool `json:"custom" yaml:"custom"`
+
+	// If true and Custom = true, the settings defined under this section will still render as fallback (unless the individual setting is type 'custom') when the plugin is disabled.
+	Fallback bool `json:"fallback" yaml:"fallback"`
 }
 
 type PluginSettingsSchema struct {
@@ -100,6 +130,9 @@ type PluginSettingsSchema struct {
 
 	// A list of setting definitions.
 	Settings []*PluginSetting `json:"settings" yaml:"settings"`
+
+	// A list of settings section definitions.
+	Sections []*PluginSettingsSection `json:"sections" yaml:"sections"`
 }
 
 // The plugin manifest defines the metadata required to load and present your plugin. The manifest
@@ -176,6 +209,12 @@ type Manifest struct {
 	// Minimum server version: 5.6
 	MinServerVersion string `json:"min_server_version,omitempty" yaml:"min_server_version,omitempty"`
 
+	// RequiredAddOn names the add-on the server license must grant before this plugin
+	// can be enabled or activated, matched case-insensitively against License.AddOns.
+	//
+	// Minimum server version: 12.0
+	RequiredAddOn string `json:"required_add_on,omitempty" yaml:"required_add_on,omitempty"`
+
 	// Server defines the server-side portion of your plugin.
 	Server *ManifestServer `json:"server,omitempty" yaml:"server,omitempty"`
 
@@ -210,6 +249,11 @@ type ManifestWebapp struct {
 	// location of the manifest file.
 	BundlePath string `json:"bundle_path" yaml:"bundle_path"`
 
+	// PreAuth indicates the webapp bundle must also be delivered to unauthenticated clients, such
+	// as the login page. When PluginSettings.RestrictUnauthenticatedWebappPlugins is enabled, only
+	// plugins setting this field are exposed to clients without a session.
+	PreAuth bool `json:"pre_auth,omitempty" yaml:"pre_auth,omitempty"`
+
 	// BundleHash is the 64-bit FNV-1a hash of the webapp bundle, computed when the plugin is loaded
 	BundleHash []byte `json:"-"`
 }
@@ -221,13 +265,34 @@ func (m *Manifest) HasClient() bool {
 func (m *Manifest) ClientManifest() *Manifest {
 	cm := new(Manifest)
 	*cm = *m
-	cm.Name = ""
+	cm.Name = m.Name
 	cm.Description = ""
 	cm.Server = nil
 	if cm.Webapp != nil {
 		cm.Webapp = new(ManifestWebapp)
 		*cm.Webapp = *m.Webapp
-		cm.Webapp.BundlePath = "/static/" + m.Id + "/" + fmt.Sprintf("%s_%x_bundle.js", m.Id, m.Webapp.BundleHash)
+		cm.Webapp.BundlePath = m.clientBundlePath()
+	}
+	return cm
+}
+
+func (m *Manifest) clientBundlePath() string {
+	return "/static/" + m.Id + "/" + fmt.Sprintf("%s_%x_bundle.js", m.Id, m.Webapp.BundleHash)
+}
+
+// PreAuthClientManifest returns the minimal manifest needed by an unauthenticated client to load
+// the plugin's webapp bundle.
+func (m *Manifest) PreAuthClientManifest() *Manifest {
+	cm := &Manifest{
+		Id:      m.Id,
+		Name:    m.Name,
+		Version: m.Version,
+	}
+	if m.Webapp != nil {
+		cm.Webapp = &ManifestWebapp{
+			BundlePath: m.clientBundlePath(),
+			PreAuth:    m.Webapp.PreAuth,
+		}
 	}
 	return cm
 }
@@ -266,12 +331,12 @@ func (m *Manifest) HasWebapp() bool {
 }
 
 func (m *Manifest) MeetMinServerVersion(serverVersion string) (bool, error) {
-	minServerVersion, err := semver.Parse(m.MinServerVersion)
+	minServerVersion, err := semver.StrictNewVersion(m.MinServerVersion)
 	if err != nil {
 		return false, errors.New("failed to parse MinServerVersion")
 	}
 	sv := semver.MustParse(serverVersion)
-	if sv.LT(minServerVersion) {
+	if sv.LessThan(minServerVersion) {
 		return false, nil
 	}
 	return true, nil
@@ -299,14 +364,14 @@ func (m *Manifest) IsValid() error {
 	}
 
 	if m.Version != "" {
-		_, err := semver.Parse(m.Version)
+		_, err := semver.StrictNewVersion(m.Version)
 		if err != nil {
 			return errors.Wrap(err, "failed to parse Version")
 		}
 	}
 
 	if m.MinServerVersion != "" {
-		_, err := semver.Parse(m.MinServerVersion)
+		_, err := semver.StrictNewVersion(m.MinServerVersion)
 		if err != nil {
 			return errors.Wrap(err, "failed to parse MinServerVersion")
 		}
@@ -323,6 +388,27 @@ func (m *Manifest) IsValid() error {
 }
 
 func (s *PluginSettingsSchema) isValid() error {
+	for _, setting := range s.Settings {
+		err := setting.isValid()
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, section := range s.Sections {
+		if err := section.IsValid(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *PluginSettingsSection) IsValid() error {
+	if s.Key == "" {
+		return errors.New("invalid empty Key")
+	}
+
 	for _, setting := range s.Settings {
 		err := setting.isValid()
 		if err != nil {

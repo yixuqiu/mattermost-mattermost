@@ -1,12 +1,21 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
+import {screen} from '@testing-library/react';
 import React from 'react';
 
 import InstalledCommand from 'components/integrations/installed_command';
 
+import {renderWithContext, userEvent} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
+
+jest.mock('components/integrations/delete_integration_link', () => {
+    const ReactMock = require('react');
+    return {
+        __esModule: true,
+        default: (props: {onDelete: () => void}) => ReactMock.createElement('button', {onClick: props.onDelete}, 'Delete'),
+    };
+});
 
 describe('components/integrations/InstalledCommand', () => {
     const team = TestHelper.getTeamMock({name: 'team_name'});
@@ -22,6 +31,17 @@ describe('components/integrations/InstalledCommand', () => {
     });
     const creator = TestHelper.getUserMock({username: 'username'});
 
+    const initialState = {
+        entities: {
+            general: {
+                config: {},
+            },
+            users: {
+                currentUserId: 'currentUserId',
+            },
+        },
+    };
+
     const requiredProps = {
         team,
         command,
@@ -31,17 +51,19 @@ describe('components/integrations/InstalledCommand', () => {
         canChange: false,
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<InstalledCommand {...requiredProps}/>);
-        expect(wrapper).toMatchSnapshot();
+    test('should render', () => {
+        const {container} = renderWithContext(
+            <InstalledCommand {...requiredProps}/>,
+            initialState,
+        );
 
         const trigger = `- /${command.trigger} ${command.auto_complete_hint}`;
-        expect(wrapper.find('.item-details__trigger').text()).toBe(trigger);
-        expect(wrapper.find('.item-details__name').text()).toBe(command.display_name);
-        expect(wrapper.find('.item-details__description').text()).toBe(command.description);
+        expect(container.querySelector('.item-details__trigger')?.textContent).toBe(trigger);
+        expect(container.querySelector('.item-details__name')?.textContent).toBe(command.display_name);
+        expect(container.querySelector('.item-details__description')?.textContent).toBe(command.description);
     });
 
-    test('should match snapshot, not autocomplete, no display_name/description/auto_complete_hint', () => {
+    test('should render not autocomplete, no display_name/description/auto_complete_hint', () => {
         const minCommand = TestHelper.getCommandMock({
             id: 'r5tpgt4iepf45jt768jz84djic',
             trigger: 'trigger',
@@ -51,35 +73,42 @@ describe('components/integrations/InstalledCommand', () => {
         });
         const props = {...requiredProps, command: minCommand};
 
-        const wrapper = shallow(<InstalledCommand {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        const {container} = renderWithContext(
+            <InstalledCommand {...props}/>,
+            initialState,
+        );
 
         const trigger = `- /${command.trigger}`;
-        expect(wrapper.find('.item-details__trigger').text()).toBe(trigger);
+        expect(container.querySelector('.item-details__trigger')?.textContent).toBe(trigger);
     });
 
-    test('should call onRegenToken function', () => {
+    test('should call onRegenToken function', async () => {
         const onRegenToken = jest.fn();
         const canChange = true;
         const props = {...requiredProps, onRegenToken, canChange};
 
-        const wrapper = shallow(<InstalledCommand {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(
+            <InstalledCommand {...props}/>,
+            initialState,
+        );
 
-        wrapper.find('div.item-actions button').first().simulate('click', {preventDefault: jest.fn()});
+        await userEvent.click(screen.getByRole('button', {name: 'Regenerate Token'}));
         expect(onRegenToken).toHaveBeenCalledTimes(1);
         expect(onRegenToken).toHaveBeenCalledWith(props.command);
     });
 
-    test('should call onDelete function', () => {
+    test('should call onDelete function', async () => {
         const onDelete = jest.fn();
         const canChange = true;
         const props = {...requiredProps, onDelete, canChange};
 
-        const wrapper = shallow<InstalledCommand>(<InstalledCommand {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(
+            <InstalledCommand {...props}/>,
+            initialState,
+        );
 
-        wrapper.instance().handleDelete();
+        await userEvent.click(screen.getByRole('button', {name: 'Delete'}));
+
         expect(onDelete).toHaveBeenCalledTimes(1);
         expect(onDelete).toHaveBeenCalledWith(props.command);
     });
@@ -88,7 +117,10 @@ describe('components/integrations/InstalledCommand', () => {
         const filter = 'no_match';
         const props = {...requiredProps, filter};
 
-        const wrapper = shallow(<InstalledCommand {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        const {container} = renderWithContext(
+            <InstalledCommand {...props}/>,
+            initialState,
+        );
+        expect(container.firstChild).toBeNull();
     });
 });

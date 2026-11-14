@@ -4,16 +4,22 @@
 package platform
 
 import (
+	"context"
 	"crypto/ecdsa"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"hash/maphash"
 	"net/http"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/shared/markdown"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/v8/channels/app/featureflag"
 	"github.com/mattermost/mattermost/server/v8/channels/jobs"
@@ -27,7 +33,6 @@ import (
 	"github.com/mattermost/mattermost/server/v8/einterfaces"
 	"github.com/mattermost/mattermost/server/v8/platform/services/cache"
 	"github.com/mattermost/mattermost/server/v8/platform/services/searchengine"
-	"github.com/mattermost/mattermost/server/v8/platform/services/searchengine/bleveengine"
 	"github.com/mattermost/mattermost/server/v8/platform/shared/filestore"
 )
 
@@ -35,9 +40,10 @@ import (
 // responsible for non-entity related functionalities that are required
 // by a product such as database access, configuration access, licensing etc.
 type PlatformService struct {
-	sqlStore *sqlstore.SqlStore
-	Store    store.Store
-	newStore func() (store.Store, error)
+	sqlStore     *sqlstore.SqlStore
+	Store        store.Store
+	newStore     func() (store.Store, error)
+	storeOptions []sqlstore.Option
 
 	WebSocketRouter *WebSocketRouter
 
@@ -46,21 +52,25 @@ type PlatformService struct {
 	filestore       filestore.FileBackend
 	exportFilestore filestore.FileBackend
 
+	// Channel for batching status updates
+	statusUpdateChan       chan *model.Status
+	statusUpdateExitSignal chan struct{}
+	statusUpdateDoneSignal chan struct{}
+
 	cacheProvider cache.Provider
 	statusCache   cache.Cache
 	sessionCache  cache.Cache
-	sessionPool   sync.Pool
 
 	asymmetricSigningKey atomic.Pointer[ecdsa.PrivateKey]
 	clientConfig         atomic.Value
 	clientConfigHash     atomic.Value
 	limitedClientConfig  atomic.Value
+	auditLoggingActive   atomic.Pointer[func() bool]
 
 	isFirstUserAccountLock sync.Mutex
 	isFirstUserAccount     atomic.Bool
 
-	logger              *mlog.Logger
-	notificationsLogger *mlog.Logger
+	logger *mlog.Logger
 
 	startMetrics bool
 	metrics      *platformMetrics
@@ -88,6 +98,11 @@ type PlatformService struct {
 	searchConfigListenerId  string
 	searchLicenseListenerId string
 
+	esWatcher *searchEngineWatcher
+
+	ldapDiagnostic einterfaces.LdapDiagnosticInterface
+	samlDiagnostic einterfaces.SamlDiagnosticInterface
+
 	Jobs *jobs.JobServer
 
 	hubs     []*Hub
@@ -97,16 +112,62 @@ type PlatformService struct {
 	goroutineExitSignal chan struct{}
 	goroutineBuffered   chan struct{}
 
+	// goroutineCtx is cancelled when the server begins shutting down. Long-running background
+	// requests (e.g. outgoing integration requests) derive their context from it so shutdown can
+	// cancel them instead of blocking on their full configured timeout.
+	goroutineCtx    context.Context
+	goroutineCancel context.CancelFunc
+
+	// Document content extraction runs on a dedicated, bounded worker pool so
+	// that expensive extractions cannot saturate the generic worker pool and
+	// block the request goroutines that dispatch them.
+	extractionQueue chan func()
+	extractionStop  chan struct{}
+	extractionWG    sync.WaitGroup
+
 	additionalClusterHandlers map[model.ClusterEvent]einterfaces.ClusterMessageHandler
 
 	shareChannelServiceMux sync.RWMutex
 	sharedChannelService   SharedChannelServiceIFace
 
 	pluginEnv HookRunner
+
+	// This is a test mode setting used to enable Redis
+	// without a license.
+	forceEnableRedis bool
+
+	pdpService einterfaces.PolicyDecisionPointInterface
+
+	startTime time.Time
+
+	// installTypeOverride overrides MM_INSTALL_TYPE in support packet diagnostics.
+	installTypeOverride string
+
+	// logRootPathOverride overrides MM_LOG_PATH for log root path validation.
+	logRootPathOverride string
+
+	// activeManagedDirs accumulates the managed directories of every config applied since startup.
+	activeManagedDirsMut sync.Mutex
+	activeManagedDirs    []string
+
+	// skipGlobalLogger suppresses this service's claim on the process-wide logging globals.
+	skipGlobalLogger bool
+
+	postDeliveryRecorder func(marker *model.PostDeliveryMarker, userID string)
+}
+
+// SetInstallTypeOverride sets the install type override for support packet diagnostics.
+func (ps *PlatformService) SetInstallTypeOverride(v string) {
+	ps.installTypeOverride = v
+}
+
+// SetLogRootPathOverride sets the log root path override for log file validation.
+func (ps *PlatformService) SetLogRootPathOverride(v string) {
+	ps.logRootPathOverride = v
 }
 
 type HookRunner interface {
-	RunMultiHook(hookRunnerFunc func(hooks plugin.Hooks) bool, hookId int)
+	RunMultiHook(hookRunnerFunc func(hooks plugin.Hooks, _ *model.Manifest) bool, hookId int)
 	GetPluginsEnvironment() *plugin.Environment
 }
 
@@ -116,38 +177,32 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 	// ConfigStore is and should be handled on a upper level.
 	ps := &PlatformService{
 		Store:               sc.Store,
-		configStore:         sc.ConfigStore,
 		clusterIFace:        sc.Cluster,
 		hashSeed:            maphash.MakeSeed(),
+		startTime:           time.Now(),
 		goroutineExitSignal: make(chan struct{}, 1),
 		goroutineBuffered:   make(chan struct{}, runtime.NumCPU()),
+		extractionQueue:     make(chan func(), runtime.NumCPU()),
+		extractionStop:      make(chan struct{}),
 		WebSocketRouter: &WebSocketRouter{
 			handlers: make(map[string]webSocketHandler),
 		},
-		sessionPool: sync.Pool{
-			New: func() any {
-				return &model.Session{}
-			},
-		},
 		licenseListeners:          map[string]func(*model.License, *model.License){},
 		additionalClusterHandlers: map[model.ClusterEvent]einterfaces.ClusterMessageHandler{},
+		statusUpdateChan:          make(chan *model.Status, statusUpdateBufferSize),
+		statusUpdateExitSignal:    make(chan struct{}),
+		statusUpdateDoneSignal:    make(chan struct{}),
 	}
+
+	ps.goroutineCtx, ps.goroutineCancel = context.WithCancel(context.Background())
 
 	// Assume the first user account has not been created yet. A call to the DB will later check if this is really the case.
 	ps.isFirstUserAccount.Store(true)
 
-	// Step 1: Cache provider.
-	// At the moment we only have this implementation
-	// in the future the cache provider will be built based on the loaded config
-	ps.cacheProvider = cache.NewProvider()
-	if err2 := ps.cacheProvider.Connect(); err2 != nil {
-		return nil, fmt.Errorf("unable to connect to cache provider: %w", err2)
-	}
-
 	// Apply options, some of the options overrides the default config actually.
 	for _, option := range options {
-		if err := option(ps); err != nil {
-			return nil, fmt.Errorf("failed to apply option: %w", err)
+		if err2 := option(ps); err2 != nil {
+			return nil, fmt.Errorf("failed to apply option: %w", err2)
 		}
 	}
 
@@ -166,21 +221,73 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		ps.configStore = configStore
 	}
 
-	// Step 2: Start logging.
-	if err := ps.initLogging(); err != nil {
+	// Step 1: Start logging.
+	err := ps.initLogging()
+	if err != nil {
 		return nil, fmt.Errorf("failed to initialize logging: %w", err)
 	}
 
-	// This is called after initLogging() to avoid a race condition.
-	mlog.Info("Server is initializing...", mlog.String("go_version", runtime.Version()))
+	ps.Log().Info("Server is initializing...", mlog.String("go_version", runtime.Version()))
+
+	logCurrentVersion := fmt.Sprintf("Current version is %v (%v/%v/%v/%v)", model.CurrentVersion, model.BuildNumber, model.BuildDate, model.BuildHash, model.BuildHashEnterprise)
+	ps.Log().Info(
+		logCurrentVersion,
+		mlog.String("current_version", model.CurrentVersion),
+		mlog.String("build_number", model.BuildNumber),
+		mlog.String("build_date", model.BuildDate),
+		mlog.String("build_hash", model.BuildHash),
+		mlog.String("build_hash_enterprise", model.BuildHashEnterprise),
+		mlog.String("service_environment", model.GetServiceEnvironment()),
+	)
+
+	if model.BuildEnterpriseReady == "true" {
+		isTrial := false
+		if licence := ps.License(); licence != nil {
+			isTrial = licence.IsTrial
+		}
+		ps.Log().Info(
+			"Enterprise Build",
+			mlog.Bool("enterprise_build", true),
+			mlog.Bool("is_trial", isTrial),
+		)
+	} else {
+		ps.Log().Info("Team Edition Build", mlog.Bool("enterprise_build", false))
+	}
+
+	// Step 2: Cache provider.
+	cacheConfig := ps.configStore.Get().CacheSettings
+	if *cacheConfig.CacheType == model.CacheTypeLRU {
+		ps.cacheProvider = cache.NewProvider()
+	} else if *cacheConfig.CacheType == model.CacheTypeRedis {
+		var tlsConfig *tls.Config
+		tlsConfig, err = cache.NewRedisTLSConfig(cacheConfig)
+		if err != nil {
+			return nil, fmt.Errorf("unable to configure Redis TLS: %w", err)
+		}
+		ps.cacheProvider, err = cache.NewRedisProvider(
+			&cache.RedisOptions{
+				RedisAddr:        *cacheConfig.RedisAddress,
+				RedisPassword:    *cacheConfig.RedisPassword,
+				RedisDB:          *cacheConfig.RedisDB,
+				RedisCachePrefix: *cacheConfig.RedisCachePrefix,
+				TLSConfig:        tlsConfig,
+				DisableCache:     *cacheConfig.DisableClientCache,
+			},
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unable to create cache provider: %w", err)
+	}
+
+	res, err := ps.cacheProvider.Connect()
+	if err != nil {
+		return nil, fmt.Errorf("unable to connect to cache provider: %w", err)
+	}
+
+	ps.Log().Info("Successfully connected to cache backend", mlog.String("backend", *cacheConfig.CacheType), mlog.String("result", res))
 
 	// Step 3: Search Engine
 	searchEngine := searchengine.NewBroker(ps.Config())
-	bleveEngine := bleveengine.NewBleveEngine(ps.Config())
-	if err := bleveEngine.Start(); err != nil {
-		return nil, err
-	}
-	searchEngine.RegisterBleveEngine(bleveEngine)
 	ps.SearchEngine = searchEngine
 
 	// Step 4: Init Enterprise
@@ -191,6 +298,8 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 	if metricsInterfaceFn != nil && ps.metricsIFace == nil { // if the metrics interface is set by options, do not override it
 		ps.metricsIFace = metricsInterfaceFn(ps, *ps.configStore.Get().SqlSettings.DriverName, *ps.configStore.Get().SqlSettings.DataSource)
 	}
+
+	ps.cacheProvider.SetMetrics(ps.metricsIFace)
 
 	// Step 6: Store.
 	// Depends on Step 0 (config), 1 (cacheProvider), 3 (search engine), 5 (metrics) and cluster.
@@ -206,8 +315,10 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 			// Timer layer
 			// |
 			// Cache layer
-			var err error
-			ps.sqlStore, err = sqlstore.New(ps.Config().SqlSettings, ps.Log(), ps.metricsIFace)
+			opts := append(ps.storeOptions, sqlstore.WithFeatureFlags(func() *model.FeatureFlags {
+				return ps.Config().FeatureFlags
+			}))
+			ps.sqlStore, err = sqlstore.New(ps.Config().SqlSettings, ps.Log(), ps.metricsIFace, opts...)
 			if err != nil {
 				return nil, err
 			}
@@ -227,6 +338,7 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 				ps.metricsIFace,
 				ps.clusterIFace,
 				ps.cacheProvider,
+				ps.Log(),
 			)
 			if err2 != nil {
 				return nil, fmt.Errorf("cannot create local cache layer: %w", err2)
@@ -242,11 +354,64 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		}
 	}
 
+	ps.Store, err = ps.newStore()
+	if err != nil {
+		return nil, fmt.Errorf("cannot create store: %w", err)
+	}
+
+	// The markdown package needs to know what the maximum post size is, so we
+	// let it know once the store is created.
+	markdown.SetMaxPostRunes(ps.MaxPostSize())
+
+	// Step 7: initialize status and session cache.
+	// We need to do this because ps.LoadLicense() called in step 8, could
+	// end up calling InvalidateAllCaches, so the status and session caches
+	// need to be initialized before that.
+
+	// Note: we hardcode the session and status cache to LRU because they lead
+	// to a lot of SCAN calls in case of Redis. We could potentially have a
+	// reverse mapping to avoid the scan, but this needs more complicated code.
+	// Leaving this for now.
+	ps.statusCache, err = cache.NewProvider().NewCache(&cache.CacheOptions{
+		Name:           "Status",
+		Size:           model.StatusCacheSize,
+		Striped:        true,
+		StripedBuckets: max(runtime.NumCPU()-1, 1),
+		DefaultExpiry:  30 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to create status cache: %w", err)
+	}
+
+	ps.sessionCache, err = cache.NewProvider().NewCache(&cache.CacheOptions{
+		Name:           "Session",
+		Size:           model.SessionCacheSize,
+		Striped:        true,
+		StripedBuckets: max(runtime.NumCPU()-1, 1),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not create session cache: %w", err)
+	}
+
+	// Step 8: Init License
+	if model.BuildEnterpriseReady == "true" {
+		ps.LoadLicense()
+	}
 	license := ps.License()
-	// Step 3: Initialize filestore
+
+	// This is a hack because ideally we wouldn't even have started the Redis client
+	// if the license didn't have clustering. But there's an intricate deadlock
+	// where license cannot be loaded before store, and store cannot be loaded before
+	// cache. So loading license before loading cache is an uphill battle.
+	if (license == nil || !*license.Features.Cluster) && *cacheConfig.CacheType == model.CacheTypeRedis && !ps.forceEnableRedis {
+		return nil, fmt.Errorf("Redis cannot be used in an instance without a license or a license without clustering")
+	}
+
+	// Step 9: Initialize filestore
 	if ps.filestore == nil {
 		insecure := ps.Config().ServiceSettings.EnableInsecureOutgoingConnections
-		backend, err2 := filestore.NewFileBackend(filestore.NewFileBackendSettingsFromConfig(&ps.Config().FileSettings, license != nil && *license.Features.Compliance, insecure != nil && *insecure))
+		allowedUntrustedInternalConnections := model.SafeDereference(ps.Config().ServiceSettings.AllowedUntrustedInternalConnections)
+		backend, err2 := filestore.NewFileBackend(filestore.NewFileBackendSettingsFromConfig(&ps.Config().FileSettings, license != nil && *license.Features.Compliance, insecure != nil && *insecure, allowedUntrustedInternalConnections))
 		if err2 != nil {
 			return nil, fmt.Errorf("failed to initialize filebackend: %w", err2)
 		}
@@ -258,7 +423,8 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		ps.exportFilestore = ps.filestore
 		if *ps.Config().FileSettings.DedicatedExportStore {
 			mlog.Info("Setting up dedicated export filestore", mlog.String("driver_name", *ps.Config().FileSettings.ExportDriverName))
-			backend, errFileBack := filestore.NewExportFileBackend(filestore.NewExportFileBackendSettingsFromConfig(&ps.Config().FileSettings, license != nil && *license.Features.Compliance, false))
+			allowedUntrustedInternalConnections := model.SafeDereference(ps.Config().ServiceSettings.AllowedUntrustedInternalConnections)
+			backend, errFileBack := filestore.NewExportFileBackend(filestore.NewExportFileBackendSettingsFromConfig(&ps.Config().FileSettings, license != nil && *license.Features.Compliance, false, allowedUntrustedInternalConnections))
 			if errFileBack != nil {
 				return nil, fmt.Errorf("failed to initialize export filebackend: %w", errFileBack)
 			}
@@ -267,38 +433,7 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		}
 	}
 
-	var err error
-	ps.Store, err = ps.newStore()
-	if err != nil {
-		return nil, fmt.Errorf("cannot create store: %w", err)
-	}
-
-	// Needed before loading license
-	ps.statusCache, err = ps.cacheProvider.NewCache(&cache.CacheOptions{
-		Name:           "Status",
-		Size:           model.StatusCacheSize,
-		Striped:        true,
-		StripedBuckets: maxInt(runtime.NumCPU()-1, 1),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to create status cache: %w", err)
-	}
-
-	ps.sessionCache, err = ps.cacheProvider.NewCache(&cache.CacheOptions{
-		Size:           model.SessionCacheSize,
-		Striped:        true,
-		StripedBuckets: maxInt(runtime.NumCPU()-1, 1),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("could not create session cache: %w", err)
-	}
-
-	// Step 7: Init License
-	if model.BuildEnterpriseReady == "true" {
-		ps.LoadLicense()
-	}
-
-	// Step 8: Init Metrics Server depends on step 6 (store) and 7 (license)
+	// Step 10: Init Metrics Server depends on step 6 (store) and 8 (license)
 	if ps.startMetrics {
 		if mErr := ps.resetMetrics(); mErr != nil {
 			return nil, mErr
@@ -313,16 +448,19 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		})
 	}
 
-	// Step 9: Init AsymmetricSigningKey depends on step 6 (store)
+	// Step 11: Init AsymmetricSigningKey depends on step 6 (store)
 	if err = ps.EnsureAsymmetricSigningKey(); err != nil {
 		return nil, fmt.Errorf("unable to ensure asymmetric signing key: %w", err)
 	}
 
 	ps.Busy = NewBusy(ps.clusterIFace)
 
-	// Enable developer settings if this is a "dev" build
+	// Enable developer settings and mmctl local mode if this is a "dev" build
 	if model.BuildNumber == "dev" {
-		ps.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.EnableDeveloper = true })
+		ps.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.EnableDeveloper = true
+			*cfg.ServiceSettings.EnableLocalMode = true
+		})
 	}
 
 	ps.AddLicenseListener(func(oldLicense, newLicense *model.License) {
@@ -338,15 +476,24 @@ func New(sc ServiceConfig, options ...Option) (*PlatformService, error) {
 		}
 	})
 
-	ps.SearchEngine.UpdateConfig(ps.Config())
+	if err := ps.SearchEngine.UpdateConfig(ps.Config()); err != nil {
+		ps.logger.Error("Failed to update search engine config", mlog.Err(err))
+	}
+
 	searchConfigListenerId, searchLicenseListenerId := ps.StartSearchEngine()
 	ps.searchConfigListenerId = searchConfigListenerId
 	ps.searchLicenseListenerId = searchLicenseListenerId
+
+	ps.startExtractionWorkers()
 
 	return ps, nil
 }
 
 func (ps *PlatformService) Start(broadcastHooks map[string]BroadcastHook) error {
+	// Start the status update processor.
+	// Must be done before hub start.
+	go ps.processStatusUpdates()
+
 	ps.hubStart(broadcastHooks)
 
 	ps.configListenerId = ps.AddConfigListener(func(_, _ *model.Config) {
@@ -380,6 +527,14 @@ func (ps *PlatformService) ShutdownMetrics() error {
 		return ps.metrics.stopMetricsServer()
 	}
 
+	return nil
+}
+
+// GetMetricsRouter returns the metrics router. This is primarily used for testing.
+func (ps *PlatformService) GetMetricsRouter() http.Handler {
+	if ps.metrics != nil {
+		return ps.metrics.router
+	}
 	return nil
 }
 
@@ -420,8 +575,20 @@ func (ps *PlatformService) initEnterprise() {
 		ps.SearchEngine.RegisterElasticsearchEngine(elasticsearchInterface(ps))
 	}
 
+	if ldapDiagnosticInterface != nil {
+		ps.ldapDiagnostic = ldapDiagnosticInterface(ps)
+	}
+
+	if samlDiagnosticInterface != nil {
+		ps.samlDiagnostic = samlDiagnosticInterface(ps)
+	}
+
 	if licenseInterface != nil {
 		ps.licenseManager = licenseInterface(ps)
+	}
+
+	if accessControlServiceInterface != nil {
+		ps.pdpService = accessControlServiceInterface(ps)
 	}
 }
 
@@ -437,9 +604,35 @@ func (ps *PlatformService) TotalWebsocketConnections() int {
 }
 
 func (ps *PlatformService) Shutdown() error {
+	// Deferred so it still runs even if a later step below returns early
+	// (e.g. cacheProvider.Close failing). Must run last: every other step
+	// below (notably HubStop) is a candidate to still attempt a cluster send
+	// after StopInterNodeCommunication has already run, so the cluster
+	// interface's own shutdown accounting needs everything below to have
+	// already happened, which defer guarantees regardless of the early return.
+	if ps.clusterIFace != nil {
+		defer ps.clusterIFace.Shutdown()
+	}
+
 	ps.HubStop()
 
+	// Shutdown status processor.
+	// Must be done after hub shutdown.
+	close(ps.statusUpdateExitSignal)
+	// wait for it to be stopped.
+	<-ps.statusUpdateDoneSignal
+
 	ps.RemoveLicenseListener(ps.licenseListenerId)
+
+	// Stop the document extraction workers and wait for any in-flight
+	// extraction to finish before closing the store it depends on.
+	ps.stopExtractionWorkers()
+
+	// Cancel in-flight background requests (e.g. outgoing integration requests) derived from
+	// goroutineCtx so shutdown isn't blocked by their full configured timeout.
+	if ps.goroutineCancel != nil {
+		ps.goroutineCancel()
+	}
 
 	// we need to wait the goroutines to finish before closing the store
 	// and this needs to be called after hub stop because hub generates goroutines
@@ -464,10 +657,6 @@ func (ps *PlatformService) CacheProvider() cache.Provider {
 	return ps.cacheProvider
 }
 
-func (ps *PlatformService) StatusCache() cache.Cache {
-	return ps.statusCache
-}
-
 // SetSqlStore is used for plugin testing
 func (ps *PlatformService) SetSqlStore(s *sqlstore.SqlStore) {
 	ps.sqlStore = s
@@ -487,6 +676,10 @@ func (ps *PlatformService) GetSharedChannelService() SharedChannelServiceIFace {
 
 func (ps *PlatformService) SetPluginsEnvironment(runner HookRunner) {
 	ps.pluginEnv = runner
+}
+
+func (ps *PlatformService) SetPostDeliveryRecorder(fn func(marker *model.PostDeliveryMarker, userID string)) {
+	ps.postDeliveryRecorder = fn
 }
 
 // GetPluginStatuses meant to be used by cluster implementation
@@ -512,10 +705,51 @@ func (ps *PlatformService) GetPluginStatuses() (model.PluginStatuses, *model.App
 	return pluginStatuses, nil
 }
 
+func (ps *PlatformService) getPluginManifests() ([]*model.Manifest, error) {
+	if ps.pluginEnv == nil {
+		return nil, errors.New("plugin environment not initialized")
+	}
+
+	pluginsEnvironment := ps.pluginEnv.GetPluginsEnvironment()
+	if pluginsEnvironment == nil {
+		return nil, model.NewAppError("getPluginManifests", "app.plugin.disabled.app_error", nil, "", http.StatusNotImplemented)
+	}
+
+	plugins, err := pluginsEnvironment.Available()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get list of available plugins: %w", err)
+	}
+
+	manifests := make([]*model.Manifest, len(plugins))
+	for i := range plugins {
+		manifests[i] = plugins[i].Manifest
+	}
+
+	return manifests, nil
+}
+
 func (ps *PlatformService) FileBackend() filestore.FileBackend {
 	return ps.filestore
 }
 
 func (ps *PlatformService) ExportFileBackend() filestore.FileBackend {
 	return ps.exportFilestore
+}
+
+func (ps *PlatformService) LdapDiagnostic() einterfaces.LdapDiagnosticInterface {
+	return ps.ldapDiagnostic
+}
+
+func (ps *PlatformService) SamlDiagnostic() einterfaces.SamlDiagnosticInterface {
+	return ps.samlDiagnostic
+}
+
+// DatabaseTypeAndSchemaVersion returns the database type and current version of the schema
+func (ps *PlatformService) DatabaseTypeAndSchemaVersion() (string, string, error) {
+	schemaVersion, err := ps.Store.GetDBSchemaVersion()
+	if err != nil {
+		return "", "", err
+	}
+
+	return model.SafeDereference(ps.Config().SqlSettings.DriverName), strconv.Itoa(schemaVersion), nil
 }

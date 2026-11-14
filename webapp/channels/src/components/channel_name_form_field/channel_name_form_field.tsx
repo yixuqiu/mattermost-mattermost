@@ -1,7 +1,8 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState, type JSX} from 'react';
+import type {IntlShape} from 'react-intl';
 import {useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 
@@ -9,39 +10,50 @@ import type {Team} from '@mattermost/types/teams';
 
 import {getCurrentTeam} from 'mattermost-redux/selectors/entities/teams';
 
+import {isAnonymousURLEnabled} from 'selectors/config';
+
 import type {CustomMessageInputType} from 'components/widgets/inputs/input/input';
 import Input from 'components/widgets/inputs/input/input';
 import URLInput from 'components/widgets/inputs/url_input/url_input';
 
 import Constants from 'utils/constants';
 import {cleanUpUrlable, getSiteURL, validateChannelUrl} from 'utils/url';
-import {generateSlug, localizeMessage} from 'utils/utils';
+import {generateSlug} from 'utils/utils';
 
 export type Props = {
     value: string;
     name: string;
     placeholder: string;
+
+    /** Defaults to "Channel name". */
+    label?: string;
     onDisplayNameChange: (name: string) => void;
     onURLChange: (url: string) => void;
+    currentUrl?: string;
     autoFocus?: boolean;
-    onErrorStateChange?: (isError: boolean) => void;
+    onErrorStateChange?: (isError: boolean, errorMessage?: string) => void;
     team?: Team;
     urlError?: string;
-}
+    readOnly?: boolean;
+    isEditingExistingChannel?: boolean;
+
+    // The server rejects URL changes on the default channel, so it is shown read-only.
+    isDefaultChannel?: boolean;
+};
 
 import './channel_name_form_field.scss';
 
-function validateDisplayName(displayNameParam: string) {
+function validateDisplayName(intl: IntlShape, displayNameParam: string) {
     const errors: string[] = [];
 
     const displayName = displayNameParam.trim();
 
     if (displayName.length < Constants.MIN_CHANNELNAME_LENGTH) {
-        errors.push(localizeMessage('channel_modal.name.longer', 'Channel names must have at least 2 characters.'));
+        errors.push(intl.formatMessage({id: 'channel_modal.name.longer', defaultMessage: 'Channel names must have at least 1 character.'}));
     }
 
     if (displayName.length > Constants.MAX_CHANNELNAME_LENGTH) {
-        errors.push(localizeMessage('channel_modal.name.shorter', 'Channel names must have maximum 64 characters.'));
+        errors.push(intl.formatMessage({id: 'channel_modal.name.shorter', defaultMessage: 'Channel names must have maximum 64 characters.'}));
     }
 
     return errors;
@@ -52,12 +64,13 @@ function validateDisplayName(displayNameParam: string) {
 const ChannelNameFormField = (props: Props): JSX.Element => {
     const intl = useIntl();
     const {formatMessage} = intl;
+    const useAnonymousURLs = useSelector(isAnonymousURLEnabled);
 
-    const displayNameModified = useRef<boolean>(false);
+    // Track if the field has been interacted with
+    const [hasInteracted, setHasInteracted] = useState(false);
     const [displayNameError, setDisplayNameError] = useState<string>('');
-    const displayName = useRef<string>('');
     const urlModified = useRef<boolean>(false);
-    const [url, setURL] = useState<string>('');
+    const [url, setURL] = useState<string>(props.currentUrl || '');
     const [urlError, setURLError] = useState<string>('');
     const [inputCustomMessage, setInputCustomMessage] = useState<CustomMessageInputType | null>(null);
 
@@ -68,33 +81,62 @@ const ChannelNameFormField = (props: Props): JSX.Element => {
         e.preventDefault();
         const {target: {value: updatedDisplayName}} = e;
 
-        const displayNameErrors = validateDisplayName(updatedDisplayName);
+        // Mark as interacted when user types
+        if (!hasInteracted && updatedDisplayName.trim() !== '') {
+            setHasInteracted(true);
+        }
 
-        // set error if any, else clear it
-        setDisplayNameError(displayNameErrors.length ? displayNameErrors[displayNameErrors.length - 1] : '');
-        displayName.current = updatedDisplayName;
+        // Only validate if the user has interacted with the field
+        if (hasInteracted) {
+            const displayNameErrors = validateDisplayName(intl, updatedDisplayName);
+
+            if (displayNameErrors.length) {
+                setDisplayNameError(displayNameErrors[displayNameErrors.length - 1]);
+                setInputCustomMessage({
+                    type: 'error',
+                    value: displayNameErrors[displayNameErrors.length - 1],
+                });
+            } else {
+                setDisplayNameError('');
+                setInputCustomMessage(null);
+            }
+        }
+
         props.onDisplayNameChange(updatedDisplayName);
 
-        if (!urlModified.current) {
-            // if URL isn't explicitly modified, it's derived from the display name
+        if (!urlModified.current && !props.isEditingExistingChannel) {
+            // Only auto-generate URL for new channels, not when editing existing ones
             const cleanURL = cleanUpUrlable(updatedDisplayName);
             setURL(cleanURL);
             setURLError('');
             props.onURLChange(cleanURL);
         }
-    }, [props.onDisplayNameChange, props.onURLChange]);
+    }, [props.onDisplayNameChange, props.onURLChange, hasInteracted, intl]);
 
     const handleOnDisplayNameBlur = useCallback(() => {
-        if (displayName.current && !url) {
+        // Always mark as interacted on blur
+        setHasInteracted(true);
+
+        // Validate on blur - always show errors on blur regardless of interaction state
+        const displayNameErrors = validateDisplayName(intl, props.value);
+        setDisplayNameError(displayNameErrors.length ? displayNameErrors[displayNameErrors.length - 1] : '');
+
+        if (displayNameErrors.length) {
+            setInputCustomMessage({
+                type: 'error',
+                value: displayNameErrors[displayNameErrors.length - 1],
+            });
+        } else {
+            setInputCustomMessage(null);
+        }
+
+        // Handle URL generation if needed
+        if (props.value && !url) {
             const url = generateSlug();
             setURL(url);
             props.onURLChange(url);
         }
-        if (!displayNameModified.current) {
-            displayNameModified.current = true;
-            setInputCustomMessage(null);
-        }
-    }, [props.onURLChange, displayName.current, url, displayNameModified]);
+    }, [props.onURLChange, props.value, url, intl]);
 
     const handleOnURLChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         e.preventDefault();
@@ -109,14 +151,45 @@ const ChannelNameFormField = (props: Props): JSX.Element => {
         props.onURLChange(cleanURL);
     }, [props.onURLChange]);
 
+    // Add a URL blur handler to validate the URL when the user moves away from the field
+    const handleOnURLBlur = useCallback(() => {
+        // Only validate if the URL has been modified
+        if (urlModified.current) {
+            const urlErrors = validateChannelUrl(url, intl);
+            let lastError = '';
+            if (urlErrors.length && typeof urlErrors[urlErrors.length - 1] === 'string') {
+                // Safe to assert as string because we're always providing intl to validateChannelUrl and have extra type safe check
+                lastError = urlErrors[urlErrors.length - 1] as string;
+            }
+            setURLError(lastError);
+        }
+    }, [url, intl]);
+
     useEffect(() => {
+        // Only report URL errors if the URL has been explicitly modified and validated
+        // This prevents showing errors during typing
         if (props.onErrorStateChange) {
-            props.onErrorStateChange(Boolean(displayNameError) || Boolean(urlError));
+            if (displayNameError) {
+                props.onErrorStateChange(true, displayNameError);
+            } else if (urlModified.current && urlError) {
+                props.onErrorStateChange(true, urlError);
+            } else {
+                props.onErrorStateChange(false, '');
+            }
         }
     }, [displayNameError, urlError]);
 
+    // Effect to set URL from props if it's modified (used in modals for reset button event which sets the value outside the onChange event)
+    useEffect(() => {
+        if (props.currentUrl) {
+            setURL(props.currentUrl);
+        }
+    }, [props.currentUrl]);
+
+    const showURLEditor = props.isEditingExistingChannel || !useAnonymousURLs;
+
     return (
-        <React.Fragment>
+        <>
             <Input
                 type='text'
                 autoComplete='off'
@@ -125,25 +198,38 @@ const ChannelNameFormField = (props: Props): JSX.Element => {
                 name={props.name}
                 containerClassName={`${props.name}-container`}
                 inputClassName={`${props.name}-input channel-name-input-field`}
-                label={formatMessage({id: 'channel_modal.name.label', defaultMessage: 'Channel name'})}
+                label={props.label ?? formatMessage({id: 'channel_modal.name.label', defaultMessage: 'Channel name'})}
                 placeholder={props.placeholder}
                 limit={Constants.MAX_CHANNELNAME_LENGTH}
+
+                // Only pass minLength after the user has interacted with the field
+                minLength={hasInteracted ? Constants.MIN_CHANNELNAME_LENGTH : undefined}
                 value={props.value}
                 customMessage={inputCustomMessage}
                 onChange={handleOnDisplayNameChange}
                 onBlur={handleOnDisplayNameBlur}
+                disabled={props.readOnly}
             />
-            <URLInput
-                className='new-channel-modal__url'
-                base={getSiteURL()}
-                path={`${teamName}/channels`}
-                pathInfo={url}
-                limit={Constants.MAX_CHANNELNAME_LENGTH}
-                shortenLength={Constants.DEFAULT_CHANNELURL_SHORTEN_LENGTH}
-                error={urlError || props.urlError}
-                onChange={handleOnURLChange}
-            />
-        </React.Fragment>
+            {
+                showURLEditor &&
+                <URLInput
+                    className='new-channel-modal__url'
+                    base={getSiteURL()}
+                    path={`${teamName}/channels`}
+                    pathInfo={url}
+                    limit={Constants.MAX_CHANNELNAME_LENGTH}
+                    shortenLength={Constants.DEFAULT_CHANNELURL_SHORTEN_LENGTH}
+                    error={urlError || props.urlError}
+                    readOnly={props.readOnly || props.isDefaultChannel}
+                    helpText={props.isDefaultChannel ? formatMessage({
+                        id: 'channel_name_form_field.default_channel_url',
+                        defaultMessage: 'The URL of the default channel cannot be changed.',
+                    }) : undefined}
+                    onChange={handleOnURLChange}
+                    onBlur={handleOnURLBlur}
+                />
+            }
+        </>
     );
 };
 

@@ -1,15 +1,14 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {FormattedMessage} from 'react-intl';
+import React, {type JSX} from 'react';
+import {FormattedMessage, type MessageDescriptor} from 'react-intl';
 
 import type {Team} from '@mattermost/types/teams';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
-import NextIcon from 'components/widgets/icons/fa_next_icon';
-import PreviousIcon from 'components/widgets/icons/fa_previous_icon';
+import PaginationButtons from 'components/common/pagination_buttons';
 
 import type {TeamWithMembership} from './types';
 
@@ -19,31 +18,33 @@ const PAGE_SIZE = 10;
 
 type Props = {
     userId: string;
-    headerLabels: Array<Record<string, any>>;
+    headerLabels: Array<{
+        label?: MessageDescriptor;
+        style: React.CSSProperties;
+    }>;
     data: TeamWithMembership[];
     onPageChangedCallback?: (paging: Paging) => void;
     total: number;
     renderRow: (item: TeamWithMembership) => JSX.Element;
-    emptyListTextId: string;
-    emptyListTextDefaultMessage: string;
+    emptyList: MessageDescriptor;
     actions: {
         getTeamsData: (userId: string) => Promise<ActionResult<Team[]>>;
         removeGroup?: () => void;
     };
-}
+};
 
 type State = {
     loading: boolean;
     page: number;
-}
+};
 
 type Paging = {
     startCount: number;
     endCount: number;
     total: number;
-}
+};
 
-export default class AbstractList extends React.PureComponent<Props, State> {
+class AbstractList extends React.PureComponent<Props, State> {
     public static defaultProps = {
         data: [],
     };
@@ -101,13 +102,19 @@ export default class AbstractList extends React.PureComponent<Props, State> {
         if (this.props.data.length > 0) {
             return (
                 <div className='AbstractList__header'>
-                    {this.props.headerLabels.map((headerLabel, id) => (
-                        <div
-                            key={id}
-                            className='AbstractList__header-label'
-                            style={headerLabel.style}
-                        >{headerLabel.default}</div>
-                    ))}
+                    {this.props.headerLabels.map((headerLabel, id) => {
+                        const key = id;
+                        const message = headerLabel.label ? <FormattedMessage {...headerLabel.label}/> : '';
+                        return (
+                            <div
+                                key={key}
+                                className='AbstractList__header-label'
+                                style={headerLabel.style}
+                            >
+                                {message}
+                            </div>
+                        );
+                    })}
                 </div>
             );
         }
@@ -125,10 +132,7 @@ export default class AbstractList extends React.PureComponent<Props, State> {
         if (this.props.data.length === 0) {
             return (
                 <div className='AbstractList__empty'>
-                    <FormattedMessage
-                        id={this.props.emptyListTextId}
-                        defaultMessage={this.props.emptyListTextDefaultMessage}
-                    />
+                    <FormattedMessage {...this.props.emptyList}/>
                 </div>
             );
         }
@@ -161,26 +165,20 @@ export default class AbstractList extends React.PureComponent<Props, State> {
                                 }}
                             />
                         </div>
-                        <button
-                            type='button'
-                            className={'btn btn-tertiary prev ' + (firstPage ? 'disabled' : '')}
-                            onClick={firstPage ? () => null : this.previousPage}
-                            disabled={firstPage}
-                        >
-                            <PreviousIcon/>
-                        </button>
-                        <button
-                            type='button'
-                            className={'btn btn-tertiary next ' + (lastPage ? 'disabled' : '')}
-                            onClick={lastPage ? () => null : this.nextPage}
-                            disabled={lastPage}
-                        >
-                            <NextIcon/>
-                        </button>
+                        <PaginationButtons
+                            onPrevious={this.previousPage}
+                            onNext={this.nextPage}
+                            disablePrevious={firstPage}
+                            disableNext={lastPage}
+                            previousButtonClassName='prev'
+                            nextButtonClassName='next'
+                        />
                     </div>
                 }
             </div>
         );
     };
 }
+
+export default AbstractList;
 

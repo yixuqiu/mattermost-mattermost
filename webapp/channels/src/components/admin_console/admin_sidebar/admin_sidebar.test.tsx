@@ -3,7 +3,7 @@
 
 import React from 'react';
 
-import type {ExperimentalSettings, PluginSettings, SSOSettings, Office365Settings} from '@mattermost/types/config';
+import type {ExperimentalSettings, PluginSettings} from '@mattermost/types/config';
 
 import {RESOURCE_KEYS} from 'mattermost-redux/constants/permissions_sysconsole';
 
@@ -12,7 +12,7 @@ import AdminSidebar from 'components/admin_console/admin_sidebar/admin_sidebar';
 import type {Props as OriginalProps} from 'components/admin_console/admin_sidebar/admin_sidebar';
 
 import {samplePlugin1} from 'tests/helpers/admin_console_plugin_index_sample_pluings';
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 import {generateIndex} from 'utils/admin_console_index';
 
 jest.mock('utils/utils', () => {
@@ -44,7 +44,7 @@ describe('components/AdminSidebar', () => {
         buildEnterpriseReady: false,
         navigationBlocked: false,
         siteName: 'test snap',
-        subscriptionProduct: undefined,
+        isCurrentUserSystemAdmin: true,
         plugins: {
             plugin_0: {
                 active: false,
@@ -112,246 +112,75 @@ describe('components/AdminSidebar', () => {
         });
     });
 
-    test('should match snapshot', () => {
-        const props = {...defaultProps};
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot with workspace optimization dashboard enabled', () => {
+    test('should not show Workspace Optimization when Cloud license feature is enabled', () => {
         const props = {
             ...defaultProps,
-            config: {
-                ...defaultProps.config,
+            license: {
+                IsLicensed: 'true',
+                Cloud: 'true',
             },
         };
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(<AdminSidebar {...props}/>);
+        expect(screen.queryByText('Workspace Optimization')).not.toBeInTheDocument();
     });
 
-    test('should match snapshot, no access', () => {
+    describe('Site health and Workspace Optimization', () => {
+        const renderSidebar = (skuShortName: string, healthDashboard: boolean) => {
+            const props = {
+                ...defaultProps,
+                license: {IsLicensed: 'true', SkuShortName: skuShortName},
+                config: {
+                    ...defaultProps.config,
+                    FeatureFlags: {HealthDashboard: healthDashboard},
+                },
+            };
+            renderWithContext(<AdminSidebar {...props}/>);
+        };
+
+        test('shows Site health and not Workspace Optimization with the flag on and an Enterprise license', () => {
+            renderSidebar('enterprise', true);
+            expect(screen.getByText('Site health')).toBeInTheDocument();
+            expect(screen.queryByText('Workspace Optimization')).not.toBeInTheDocument();
+        });
+
+        test('shows Workspace Optimization and not Site health with the flag off', () => {
+            renderSidebar('enterprise', false);
+            expect(screen.getByText('Workspace Optimization')).toBeInTheDocument();
+            expect(screen.queryByText('Site health')).not.toBeInTheDocument();
+        });
+
+        test('shows Workspace Optimization and not Site health with the flag on below Enterprise', () => {
+            renderSidebar('professional', true);
+            expect(screen.getByText('Workspace Optimization')).toBeInTheDocument();
+            expect(screen.queryByText('Site health')).not.toBeInTheDocument();
+        });
+    });
+
+    test('places Session Attributes immediately after Attribute Management', () => {
         const props = {
             ...defaultProps,
-            consoleAccess: {read: {}, write: {}},
-        };
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, render plugins without any settings as well', () => {
-        const props: Props = {
-            license: {},
-            config: {
-                ...defaultProps.config,
-                ExperimentalSettings: {
-                    RestrictSystemAdmin: false,
-                } as ExperimentalSettings,
-                PluginSettings: {
-                    Enable: true,
-                    EnableUploads: true,
-                } as PluginSettings,
-            },
-            adminDefinition: AdminDefinition,
-            buildEnterpriseReady: false,
-            siteName: 'test snap',
-            subscriptionProduct: undefined,
-            navigationBlocked: false,
-            plugins: {
-                plugin_0: {
-                    active: false,
-                    description: 'The plugin 0.',
-                    id: 'plugin_0',
-                    name: 'Plugin 0',
-                    version: '0.1.0',
-                    settings_schema: {
-                        footer: '',
-                        header: '',
-                        settings: [],
-                    },
-                    webapp: {bundle_path: 'webapp/dist/main.js'},
-                },
-            },
-            onSearchChange: jest.fn(),
-            actions: {
-                getPlugins: jest.fn(),
-            },
-            consoleAccess: {...defaultProps.consoleAccess},
-            cloud: {...defaultProps.cloud},
-            showTaskList: false,
-        };
-
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, not prevent the console from loading when empty settings_schema provided', () => {
-        const props: Props = {
-            license: {},
-            config: {
-                ...defaultProps.config,
-                ExperimentalSettings: {
-                    RestrictSystemAdmin: false,
-                } as ExperimentalSettings,
-                PluginSettings: {
-                    Enable: true,
-                    EnableUploads: true,
-                } as PluginSettings,
-            },
-            adminDefinition: AdminDefinition,
-            buildEnterpriseReady: false,
-            siteName: 'test snap',
-            subscriptionProduct: undefined,
-            navigationBlocked: false,
-            plugins: {
-                plugin_0: {
-                    active: false,
-                    description: 'The plugin 0.',
-                    id: 'plugin_0',
-                    name: 'Plugin 0',
-                    version: '0.1.0',
-                    settings_schema: {
-                        footer: 'This is a footer',
-                        header: 'This is a header',
-                        settings: [],
-                    },
-                    webapp: {bundle_path: 'webapp/dist/main.js'},
-                },
-            },
-            onSearchChange: jest.fn(),
-            actions: {
-                getPlugins: jest.fn(),
-            },
-            consoleAccess: {...defaultProps.consoleAccess},
-            cloud: {...defaultProps.cloud},
-            showTaskList: false,
-        };
-
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, with license (without any explicit feature)', () => {
-        const props: Props = {
             license: {
                 IsLicensed: 'true',
+                SkuShortName: 'advanced',
             },
             config: {
                 ...defaultProps.config,
-                ExperimentalSettings: {
-                    RestrictSystemAdmin: false,
-                } as ExperimentalSettings,
-                PluginSettings: {
-                    Enable: true,
-                    EnableUploads: true,
-                } as PluginSettings,
-            },
-            adminDefinition: AdminDefinition,
-            buildEnterpriseReady: true,
-            navigationBlocked: false,
-            siteName: 'test snap',
-            subscriptionProduct: undefined,
-            plugins: {
-                plugin_0: {
-                    active: false,
-                    description: 'The plugin 0.',
-                    id: 'plugin_0',
-                    name: 'Plugin 0',
-                    version: '0.1.0',
-                    settings_schema: {
-                        footer: '',
-                        header: '',
-                        settings: [],
-                    },
-                    webapp: {bundle_path: 'webapp/dist/main.js'},
+                FeatureFlags: {
+                    SessionAttributes: true,
                 },
             },
-            onSearchChange: jest.fn(),
-            actions: {
-                getPlugins: jest.fn(),
-            },
-            consoleAccess: {...defaultProps.consoleAccess},
-            cloud: {...defaultProps.cloud},
-            showTaskList: false,
-        };
-
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, with license (with all feature)', () => {
-        const props: Props = {
-            license: {
-                IsLicensed: 'true',
-                DataRetention: 'true',
-                LDAPGroups: 'true',
-                LDAP: 'true',
-                Cluster: 'true',
-                SAML: 'true',
-                Compliance: 'true',
-                CustomTermsOfService: 'true',
-                MessageExport: 'true',
-                Elasticsearch: 'true',
-                CustomPermissionsSchemes: 'true',
-                OpenId: 'true',
-                GuestAccounts: 'true',
-                Announcement: 'true',
-            },
-            config: {
-                ...defaultProps.config,
-                ExperimentalSettings: {
-                    RestrictSystemAdmin: false,
-                } as ExperimentalSettings,
-                PluginSettings: {
-                    Enable: true,
-                    EnableUploads: true,
-                } as PluginSettings,
-                GoogleSettings: {
-                    Id: 'googleID',
-                    Secret: 'googleSecret',
-                    Scope: 'scope',
-                } as SSOSettings,
-                GitLabSettings: {
-                    Id: 'gitlabID',
-                    Secret: 'gitlabSecret',
-                    Scope: 'scope',
-                } as SSOSettings,
-                Office365Settings: {
-                    Id: 'office365ID',
-                    Secret: 'office365Secret',
-                    Scope: 'scope',
-                } as Office365Settings,
-            },
-            adminDefinition: AdminDefinition,
             buildEnterpriseReady: true,
-            navigationBlocked: false,
-            siteName: 'test snap',
-            subscriptionProduct: undefined,
-            plugins: {
-                plugin_0: {
-                    active: false,
-                    description: 'The plugin 0.',
-                    id: 'plugin_0',
-                    name: 'Plugin 0',
-                    version: '0.1.0',
-                    settings_schema: {
-                        footer: '',
-                        header: '',
-                        settings: [],
-                    },
-                    webapp: {bundle_path: 'webapp/dist/main.js'},
-                },
-            },
-            onSearchChange: jest.fn(),
-            actions: {
-                getPlugins: jest.fn(),
-            },
-            consoleAccess: {...defaultProps.consoleAccess},
-            cloud: {...defaultProps.cloud},
-            showTaskList: false,
         };
 
-        const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(<AdminSidebar {...props}/>);
+
+        const systemAttributes = screen.getByTestId('system_attributes');
+        const titles = Array.from(systemAttributes.querySelectorAll('.sidebar-section-title__text')).map((el) => el.textContent);
+        const attributeManagementIndex = titles.indexOf('Attribute Management');
+        const sessionAttributesIndex = titles.indexOf('Session Attributes');
+
+        expect(attributeManagementIndex).toBeGreaterThan(-1);
+        expect(sessionAttributesIndex).toBe(attributeManagementIndex + 1);
     });
 
     describe('generateIndex', () => {
@@ -371,7 +200,7 @@ describe('components/AdminSidebar', () => {
             buildEnterpriseReady: true,
             navigationBlocked: false,
             siteName: 'test snap',
-            subscriptionProduct: undefined,
+            isCurrentUserSystemAdmin: true,
             plugins: {
                 'mattermost-autolink': samplePlugin1,
             },
@@ -388,113 +217,102 @@ describe('components/AdminSidebar', () => {
             (generateIndex as jest.Mock).mockReset();
         });
 
-        test('should refresh the index in case idx is already present and there is a change in plugins or adminDefinition prop', () => {
-            (generateIndex as jest.Mock).mockReturnValue(['mocked-index']);
+        test('should refresh the index in case idx is already present and there is a change in plugins or adminDefinition prop', async () => {
+            const idx = {search: jest.fn().mockReturnValue([])};
+            (generateIndex as jest.Mock).mockReturnValue(idx);
 
-            const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-            (wrapper.instance() as any).idx = ['some value'];
+            const {container, rerender} = renderWithContext(<AdminSidebar {...props}/>);
 
-            expect(generateIndex).toHaveBeenCalledTimes(0);
+            // Trigger a search to initialize idx (lazy initialization)
+            const filterInput = container.querySelector('#adminSidebarFilter') as HTMLInputElement;
+            await userEvent.type(filterInput, 'a');
 
-            wrapper.setProps({plugins: {}});
+            // generateIndex should have been called once for the search
             expect(generateIndex).toHaveBeenCalledTimes(1);
 
-            wrapper.setProps({adminDefinition: {}});
+            (generateIndex as jest.Mock).mockClear();
+
+            // Change plugins - should trigger regeneration since idx is now set
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{}}
+                />,
+            );
+            expect(generateIndex).toHaveBeenCalledTimes(1);
+
+            // Change adminDefinition - should trigger regeneration
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{}}
+                    adminDefinition={{} as any}
+                />,
+            );
             expect(generateIndex).toHaveBeenCalledTimes(2);
         });
 
         test('should not call the generate index in case of idx is not already present', () => {
             (generateIndex as jest.Mock).mockReturnValue(['mocked-index']);
 
-            const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
+            const {rerender} = renderWithContext(<AdminSidebar {...props}/>);
 
             expect(generateIndex).toHaveBeenCalledTimes(0);
 
-            wrapper.setProps({plugins: {}});
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{}}
+                />,
+            );
             expect(generateIndex).toHaveBeenCalledTimes(0);
 
-            wrapper.setProps({adminDefinition: {}});
-            expect(generateIndex).toHaveBeenCalledTimes(0);
-        });
-
-        test('should not generate index in case of same props', () => {
-            (generateIndex as jest.Mock).mockReturnValue(['mocked-index']);
-
-            const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
-            (wrapper.instance() as any).idx = ['some value'];
-
-            expect(generateIndex).toHaveBeenCalledTimes(0);
-
-            wrapper.setProps({plugins: {
-                'mattermost-autolink': samplePlugin1,
-            }});
-            expect(generateIndex).toHaveBeenCalledTimes(0);
-
-            wrapper.setProps({adminDefinition: AdminDefinition});
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{}}
+                    adminDefinition={{} as any}
+                />,
+            );
             expect(generateIndex).toHaveBeenCalledTimes(0);
         });
-    });
 
-    describe('Plugins', () => {
-        const idx = {search: jest.fn()};
-
-        beforeEach(() => {
-            idx.search.mockReset();
+        test('should not generate index in case of same props', async () => {
+            const idx = {search: jest.fn().mockReturnValue([])};
             (generateIndex as jest.Mock).mockReturnValue(idx);
-        });
 
-        const props: Props = {
-            license: {},
-            config: {
-                ...defaultProps.config,
-                ExperimentalSettings: {
-                    RestrictSystemAdmin: false,
-                } as ExperimentalSettings,
-                PluginSettings: {
-                    Enable: true,
-                    EnableUploads: true,
-                } as PluginSettings,
-            },
-            adminDefinition: AdminDefinition,
-            buildEnterpriseReady: true,
-            navigationBlocked: false,
-            siteName: 'test snap',
-            subscriptionProduct: undefined,
-            plugins: {
-                'mattermost-autolink': samplePlugin1,
-            },
-            onSearchChange: jest.fn(),
-            actions: {
-                getPlugins: jest.fn(),
-            },
-            consoleAccess: {
-                read: {
-                    plugins: true,
-                },
-                write: {},
-            },
-            cloud: {...defaultProps.cloud},
-            showTaskList: false,
-        };
+            const {container, rerender} = renderWithContext(<AdminSidebar {...props}/>);
 
-        test('should match snapshot', () => {
-            const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
+            // Trigger a search to initialize idx
+            const filterInput = container.querySelector('#adminSidebarFilter') as HTMLInputElement;
+            await userEvent.type(filterInput, 'a');
 
-            expect(wrapper).toMatchSnapshot();
-        });
+            expect(generateIndex).toHaveBeenCalledTimes(1);
 
-        test('should filter plugins', () => {
-            const wrapper = shallowWithIntl(<AdminSidebar {...props}/>);
+            (generateIndex as jest.Mock).mockClear();
 
-            idx.search.mockReturnValue(['plugin_mattermost-autolink']);
-            wrapper.find('#adminSidebarFilter').simulate('change', {target: {value: 'autolink'}});
+            // Same plugins - should NOT trigger regeneration
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{
+                        'mattermost-autolink': samplePlugin1,
+                    }}
+                />,
+            );
+            expect(generateIndex).toHaveBeenCalledTimes(0);
 
-            expect((wrapper.instance().state as any).sections).toEqual(['plugin_mattermost-autolink']);
-            expect(wrapper).toMatchSnapshot();
-            expect(wrapper.find('AdminSidebarCategory')).toHaveLength(1);
-            expect(wrapper.find('AdminSidebarSection')).toHaveLength(1);
-            const autoLinkPluginSection = wrapper.find('AdminSidebarSection').at(0);
-            expect(autoLinkPluginSection.prop('name')).toBe('plugins/plugin_mattermost-autolink');
+            // Same adminDefinition - should NOT trigger regeneration
+            rerender(
+                <AdminSidebar
+                    {...props}
+                    plugins={{
+                        'mattermost-autolink': samplePlugin1,
+                    }}
+                    adminDefinition={AdminDefinition}
+                />,
+            );
+            expect(generateIndex).toHaveBeenCalledTimes(0);
         });
     });
 });

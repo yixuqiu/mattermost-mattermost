@@ -1,9 +1,9 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {type JSX} from 'react';
 
-import {trackEvent} from 'actions/telemetry_actions';
+import {Button} from '@mattermost/compass-ui/components/button';
 
 import useOpenSalesLink from 'components/common/hooks/useOpenSalesLink';
 
@@ -19,19 +19,21 @@ const PurchaseLink: React.FC<Props> = (props: Props) => {
 
     const handlePurchaseLinkClick = async (e: React.MouseEvent<HTMLButtonElement, MouseEvent>) => {
         e.preventDefault();
-        trackEvent('admin', props.eventID || 'in_trial_purchase_license');
 
         openSalesLink();
     };
 
     return (
-        <button
+        <Button
             id={props.eventID}
-            className={'annnouncementBar__purchaseNow'}
+            emphasis='tertiary'
+            size='x-small'
+            appearance='inverted'
+            className='annnouncementBar__purchaseNow'
             onClick={handlePurchaseLinkClick}
         >
             {props.buttonTextElement}
-        </button>
+        </Button>
     );
 };
 

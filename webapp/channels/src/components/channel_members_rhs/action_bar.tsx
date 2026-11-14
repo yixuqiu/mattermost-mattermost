@@ -71,7 +71,7 @@ export interface Props {
 const ActionBar = ({className, channelType, membersCount, canManageMembers, editing, actions}: Props) => {
     const showManageButton = channelType !== Constants.GM_CHANNEL && membersCount > 1;
 
-    const handleShortcut = useCallback((e) => {
+    const handleShortcut = useCallback((e: KeyboardEvent) => {
         if (isKeyPressed(e, Constants.KeyCodes.ESCAPE) && editing) {
             actions.stopEditing();
         }
@@ -133,7 +133,7 @@ const ActionBar = ({className, channelType, membersCount, canManageMembers, edit
                             >
                                 <ButtonIcon
                                     className='icon-account-plus-outline'
-                                    title='Add Icon'
+                                    aria-hidden='true'
                                 />
                                 <FormattedMessage
                                     id='channel_members_rhs.action_bar.add_button'

@@ -7,7 +7,6 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @system_console
 
 import {
@@ -15,9 +14,9 @@ import {
     getEmailVerifyEmailTemplate,
     getRandomId,
     verifyEmailBody,
-} from '../../../utils';
+} from '@/utils';
 
-const TIMEOUTS = require('../../../fixtures/timeouts');
+const TIMEOUTS = require('@/fixtures/timeouts');
 
 describe('User Management', () => {
     const newUsername = 'u' + getRandomId();
@@ -185,6 +184,7 @@ describe('User Management', () => {
 
             // # Search for the user.
             cy.get('#input_searchTerm').clear().type(gitlabUser.email).wait(TIMEOUTS.HALF_SEC);
+            cy.get('#systemUsersTable-cell-0_emailColumn').should('contain', gitlabUser.email);
 
             // # Open actions menu.
             cy.get('#systemUsersTable-cell-0_actionsColumn').click().wait(TIMEOUTS.HALF_SEC);
@@ -194,7 +194,7 @@ describe('User Management', () => {
 
             // # Set new password.
             cy.get('input[type=password]').type('new' + testUser.password);
-            cy.get('button[type=submit]').should('contain', 'Reset').click().wait(TIMEOUTS.HALF_SEC);
+            cy.get('button.GenericModal__button.confirm').should('contain', 'Reset').click().wait(TIMEOUTS.HALF_SEC);
 
             // * Verify Update email option is visible.
             cy.get('#systemUsersTable-cell-0_actionsColumn').click().wait(TIMEOUTS.HALF_SEC);
@@ -222,32 +222,61 @@ describe('User Management', () => {
         cy.url().should('contain', '/login');
     });
 
+    it("MM-58840 Users - can't navigate to invalid URL", () => {
+        // # Login as sysadmin.
+        cy.apiLogin(sysadmin);
+
+        // # Visit the invalid URL.
+        cy.visit('/admin_console/user_management/user/invalid');
+
+        // * Verify that the user is redirected to the default page.
+        cy.url().should('include', '/admin_console/about/license');
+    });
+
+    it('Admin cannot access Manage User Settings option on a unlicensed instance', () => {
+        // # Login as sysadmin.
+        cy.apiLogin(sysadmin);
+        cy.visit('/admin_console/user_management/users');
+        cy.intercept('**api/v4/reports/users?**').as('getUserList');
+        cy.get('#input_searchTerm').clear().type(testUser.id);
+        cy.wait('@getUserList');
+        cy.get('#systemUsersTable-cell-0_emailColumn').should('have.text', testUser.email).as('userRow');
+        cy.get('#actionMenuButton-systemUsersTable-0 > span').click();
+        cy.get('ul#actionMenu-systemUsersTable-0').should('be.visible').find('li').should('not.contain.text', 'Manage User Settings');
+        cy.get('@userRow').click({force: true});
+        cy.get('.manageUserSettingsBtn').
+            should('be.visible').
+            should('contain.text', 'Manage User Settings').
+            should('have.class', 'disabled');
+    });
+
     function resetUserEmail(oldEmail, newEmail, errorMsg) {
         cy.visit('/admin_console/user_management/users');
 
         // # Search for the user.
         cy.get('#input_searchTerm').clear().type(oldEmail).wait(TIMEOUTS.HALF_SEC);
+        cy.get('#systemUsersTable-cell-0_emailColumn').should('contain', oldEmail);
 
         cy.get('#systemUsersTable-cell-0_actionsColumn').click().wait(TIMEOUTS.HALF_SEC);
         cy.findByText('Update email').click().wait(TIMEOUTS.HALF_SEC);
 
         // # Verify the modal opened.
-        cy.findByTestId('resetEmailModal').should('exist');
+        cy.get('#resetEmailModal').should('exist');
 
         // # Type the new e-mail address.
         if (newEmail.length > 0) {
             cy.get('input[type=email]').eq(0).clear().type(newEmail);
         }
 
-        // # Click the "Reset" button.
-        cy.findByTestId('resetEmailButton').click();
+        // # Click the "Update" button.
+        cy.get('button.GenericModal__button.confirm').click();
 
         // * Check for the error messages, if any.
         if (errorMsg.length > 0) {
-            cy.get('form.form-horizontal').find('.has-error p.error').should('be.visible').and('contain', errorMsg);
+            cy.get('.Input___error').should('be.visible').and('contain', errorMsg);
 
             // # Close the modal.
-            cy.findByLabelText('Close').click();
+            cy.get('#resetEmailModal').find('button[aria-label="Close"]').click();
         }
     }
 

@@ -1,12 +1,13 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {UserProfile as UserProfileType} from '@mattermost/types/users';
 
 import {Preferences} from 'mattermost-redux/constants';
+
+import {render, screen} from 'tests/react_testing_utils';
 
 import UserProfile from './user_profile';
 
@@ -18,50 +19,25 @@ describe('components/UserProfile', () => {
         user: {username: 'username'} as UserProfileType,
         userId: 'user_id',
         theme: Preferences.THEMES.onyx,
+        isShared: false,
+        remoteNames: [],
+        actions: {
+            fetchRemoteClusterInfo: jest.fn(),
+        },
+        dispatch: jest.fn(),
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<UserProfile {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, with colorization', () => {
+    test('should render ImportedInactiveTag for imported inactive user', () => {
         const props = {
             ...baseProps,
-            colorize: true,
+            user: {username: 'username', props: {importedInactive: 'true'}} as unknown as UserProfileType,
         };
-
-        const wrapper = shallow(<UserProfile {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        render(<UserProfile {...props}/>);
+        expect(screen.getByText('IMPORTED - INACTIVE')).toBeInTheDocument();
     });
 
-    test('should match snapshot, when user is shared', () => {
-        const props = {
-            ...baseProps,
-            isShared: true,
-        };
-
-        const wrapper = shallow(<UserProfile {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, when popover is disabled', () => {
-        const wrapper = shallow(
-            <UserProfile
-                {...baseProps}
-                disablePopover={true}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, when displayUsername is enabled', () => {
-        const wrapper = shallow(
-            <UserProfile
-                {...baseProps}
-                displayUsername={true}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
+    test('should not render ImportedInactiveTag for regular user', () => {
+        render(<UserProfile {...baseProps}/>);
+        expect(screen.queryByText('IMPORTED - INACTIVE')).not.toBeInTheDocument();
     });
 });

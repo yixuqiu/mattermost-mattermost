@@ -10,7 +10,7 @@
 // Stage: @prod
 // Group: @channels @enterprise
 
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 describe('Channel members test', () => {
     let testChannel;
@@ -49,9 +49,8 @@ describe('Channel members test', () => {
         cy.get('#channelMembers').scrollIntoView().should('be.visible');
 
         // # Click the sync group members switch
-        cy.findByTestId('syncGroupSwitch').
+        cy.findByTestId('syncGroupSwitch-button').
             scrollIntoView().
-            findByRole('button').
             click({force: true});
 
         // * Assert that the members block is no longer visible
@@ -119,7 +118,7 @@ describe('Channel members test', () => {
         cy.get('#addChannelMembers').click();
 
         // # Enter user1 and user2 emails
-        cy.findByRole('textbox', {name: 'Search for people or groups'}).typeWithForce(`${user1.email}{enter}${user2.email}{enter}`);
+        cy.findByRole('combobox', {name: 'Search for people or groups'}).typeWithForce(`${user1.email}{enter}${user2.email}{enter}`);
 
         // # Confirm add the users
         cy.get('#addUsersToChannelModal #saveItems').click();

@@ -1,7 +1,6 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {Post} from '@mattermost/types/posts';
@@ -12,6 +11,7 @@ import {sendAddToChannelEphemeralPost} from 'actions/global_actions';
 import PostAddChannelMember from 'components/post_view/post_add_channel_member/post_add_channel_member';
 import type {Props} from 'components/post_view/post_add_channel_member/post_add_channel_member';
 
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
 
 jest.mock('actions/global_actions', () => {
@@ -20,7 +20,12 @@ jest.mock('actions/global_actions', () => {
     };
 });
 
+jest.mock('components/at_mention', () => ({mentionName}: {mentionName: string}) => (
+    <span>{`@${mentionName}`}</span>
+));
+
 describe('components/post_view/PostAddChannelMember', () => {
+    let generateMentionsSpy: jest.SpyInstance;
     const post: Post = TestHelper.getPostMock({
         id: 'post_id_1',
         root_id: 'root_id',
@@ -43,70 +48,77 @@ describe('components/post_view/PostAddChannelMember', () => {
             addChannelMember: jest.fn(),
         },
         noGroupsUsernames: [],
+        isPolicyEnforced: false,
     };
 
-    test('should match snapshot, empty postId', () => {
-        const props: Props = {
-            ...requiredProps,
-            postId: '',
-        };
-        const wrapper = shallow(<PostAddChannelMember {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+    beforeEach(() => {
+        generateMentionsSpy = jest.spyOn(PostAddChannelMember.prototype, 'generateAtMentions').mockImplementation((usernames = []) => {
+            if (usernames.length > 3) {
+                const otherUsersCount = usernames.length - 2;
+                return (
+                    <span>
+                        <span>{`@${usernames[0]}`}</span>
+                        <a className='PostBody_otherUsersLink'>{`${otherUsersCount} others`}</a>
+                        <span>{`@${usernames[usernames.length - 1]}`}</span>
+                    </span>
+                );
+            }
+
+            return (
+                <span>
+                    {usernames.map((username) => (
+                        <span key={username}>{`@${username}`}</span>
+                    ))}
+                </span>
+            );
+        });
     });
 
-    test('should match snapshot, empty channelType', () => {
-        const props: Props = {
-            ...requiredProps,
-            channelType: '',
-        };
-        const wrapper = shallow(<PostAddChannelMember {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+    afterEach(() => {
+        generateMentionsSpy.mockRestore();
     });
 
-    test('should match snapshot, public channel', () => {
-        const wrapper = shallow(<PostAddChannelMember {...requiredProps}/>);
-        expect(wrapper).toMatchSnapshot();
+    test('says board for a post in a board', () => {
+        renderWithContext(
+            <PostAddChannelMember
+                {...requiredProps}
+                channelKind='board'
+            />,
+        );
+
+        expect(screen.getByText(/they are not in the board\. Would you like to/)).toBeInTheDocument();
+        expect(screen.getByText('add them to the board')).toBeInTheDocument();
+        expect(screen.queryByText(/not in the channel/)).not.toBeInTheDocument();
     });
 
-    test('should match snapshot, private channel', () => {
-        const props: Props = {
-            ...requiredProps,
-            channelType: 'P',
-        };
+    test('says private board for a post in a private board', () => {
+        renderWithContext(
+            <PostAddChannelMember
+                {...requiredProps}
+                channelType='P'
+                channelKind='board'
+            />,
+        );
 
-        const wrapper = shallow(<PostAddChannelMember {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByText('add them to this private board')).toBeInTheDocument();
     });
 
-    test('should match snapshot, more than 3 users', () => {
-        const userIds = ['user_id_1', 'user_id_2', 'user_id_3', 'user_id_4'];
-        const usernames = ['username_1', 'username_2', 'username_3', 'username_4'];
-        const props: Props = {
-            ...requiredProps,
-            userIds,
-            usernames,
-        };
-
-        const wrapper = shallow(<PostAddChannelMember {...props}/>);
-        expect(wrapper.state('expanded')).toEqual(false);
-        expect(wrapper).toMatchSnapshot();
-
-        wrapper.find('.PostBody_otherUsersLink').simulate('click');
-        expect(wrapper.state('expanded')).toEqual(true);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('actions should have been called', () => {
+    test('actions should have been called', async () => {
         const actions = {
             removePost: jest.fn(),
             addChannelMember: jest.fn(),
         };
         const props: Props = {...requiredProps, actions};
-        const wrapper = shallow(
+        renderWithContext(
             <PostAddChannelMember {...props}/>,
         );
 
-        wrapper.find('.PostBody_addChannelMemberLink').simulate('click');
+        const user = userEvent.setup();
+        const addToChannelLink = screen.getByText(/add them to the channel/i).closest('a');
+        if (!addToChannelLink) {
+            throw new Error('Add to channel link not found');
+        }
+        await user.click(addToChannelLink);
 
         expect(actions.addChannelMember).toHaveBeenCalledTimes(1);
         expect(actions.addChannelMember).toHaveBeenCalledWith(post.channel_id, requiredProps.userIds[0], post.root_id);
@@ -116,7 +128,7 @@ describe('components/post_view/PostAddChannelMember', () => {
         expect(actions.removePost).toHaveBeenCalledWith(post);
     });
 
-    test('addChannelMember should have been called multiple times', () => {
+    test('addChannelMember should have been called multiple times', async () => {
         const userIds = ['user_id_1', 'user_id_2', 'user_id_3', 'user_id_4'];
         const usernames = ['username_1', 'username_2', 'username_3', 'username_4'];
         const actions = {
@@ -124,20 +136,40 @@ describe('components/post_view/PostAddChannelMember', () => {
             addChannelMember: jest.fn(),
         };
         const props: Props = {...requiredProps, userIds, usernames, actions};
-        const wrapper = shallow(
+        renderWithContext(
             <PostAddChannelMember {...props}/>,
         );
 
-        wrapper.find('.PostBody_addChannelMemberLink').simulate('click');
+        const user = userEvent.setup();
+        const addToChannelLink = screen.getByText(/add them to the channel/i).closest('a');
+        if (!addToChannelLink) {
+            throw new Error('Add to channel link not found');
+        }
+        await user.click(addToChannelLink);
         expect(actions.addChannelMember).toHaveBeenCalledTimes(4);
     });
 
-    test('should match snapshot, with no-groups usernames', () => {
+    test('should never show invite links when policy is enforced (ABAC channels)', () => {
         const props: Props = {
             ...requiredProps,
-            noGroupsUsernames: ['user_id_2'],
+            usernames: ['username_1', 'username_2'],
+            noGroupsUsernames: [],
+            isPolicyEnforced: true,
         };
-        const wrapper = shallow(<PostAddChannelMember {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(<PostAddChannelMember {...props}/>);
+        expect(screen.queryByRole('link', {name: /add them/i})).not.toBeInTheDocument();
+    });
+
+    test('should show single consolidated message for ABAC channels regardless of user types', () => {
+        const props: Props = {
+            ...requiredProps,
+            usernames: ['user1', 'user2'],
+            noGroupsUsernames: ['user3'],
+            isPolicyEnforced: true,
+        };
+        renderWithContext(<PostAddChannelMember {...props}/>);
+
+        expect(screen.getByText('did not get notified by this mention because they are not in the channel.')).toBeInTheDocument();
+        expect(screen.queryByRole('link', {name: /add them/i})).not.toBeInTheDocument();
     });
 });

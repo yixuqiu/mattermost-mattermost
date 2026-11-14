@@ -2,17 +2,16 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {FormattedMessage} from 'react-intl';
+import {defineMessage} from 'react-intl';
 
 import type {CloudState} from '@mattermost/types/cloud';
 import type {AdminConfig, EnvironmentConfig} from '@mattermost/types/config';
 
-import SchemaText from 'components/admin_console/schema_text';
+import {defaultIntl} from 'tests/helpers/intl-test-helper';
+import {act, renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
-
-import SchemaAdminSettings from './schema_admin_settings';
-import type {SchemaAdminSettings as SchemaAdminSettingsClass} from './schema_admin_settings';
+import {it} from './admin_definition_helpers';
+import SchemaAdminSettings, {SchemaAdminSettings as SchemaAdminSettingsClass, getConfigFromState} from './schema_admin_settings';
 import type {ConsoleAccess, AdminDefinitionSubSectionSchema, AdminDefinitionSettingInput} from './types';
 import ValidationResult from './validation';
 
@@ -249,8 +248,8 @@ describe('components/admin_console/SchemaAdminSettings', () => {
         } as Partial<EnvironmentConfig>;
     });
 
-    test('should match snapshot with settings and plugin', () => {
-        const wrapper = shallowWithIntl(
+    test('should render settings from schema', () => {
+        renderWithContext(
             <SchemaAdminSettings
                 {...DefaultProps}
                 config={config}
@@ -259,11 +258,21 @@ describe('components/admin_console/SchemaAdminSettings', () => {
                 patchConfig={jest.fn()}
             />,
         );
-        expect(wrapper).toMatchSnapshot();
+
+        // Verify the form structure is rendered
+        expect(screen.getByRole('form')).toBeInTheDocument();
+
+        // Verify key settings from schema are rendered (different types)
+        expect(screen.getByText('label-a')).toBeInTheDocument(); // Text input setting
+        expect(screen.getByText('label-b')).toBeInTheDocument(); // Bool setting
+        expect(screen.getByText('label-c')).toBeInTheDocument(); // Dropdown setting
+
+        // Verify setting inputs are rendered
+        expect(screen.getByRole('textbox', {name: /label-a/i})).toBeInTheDocument();
     });
 
-    test('should match snapshot with custom component', () => {
-        const wrapper = shallowWithIntl(
+    test('should render custom component from schema', () => {
+        renderWithContext(
             <SchemaAdminSettings
                 {...DefaultProps}
                 config={config}
@@ -272,10 +281,33 @@ describe('components/admin_console/SchemaAdminSettings', () => {
                 patchConfig={jest.fn()}
             />,
         );
-        expect(wrapper).toMatchSnapshot();
+
+        // Verify the custom component is rendered
+        expect(screen.getByText('Test')).toBeInTheDocument();
     });
 
-    test('should render header using a SchemaText', () => {
+    test('should render a component-only section without settings', () => {
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={{
+                    id: 'Config',
+                    name: 'config',
+                    sections: [{
+                        key: 'component-only',
+                        component: () => <p>{'Component-only section'}</p>,
+                    }],
+                } as unknown as AdminDefinitionSubSectionSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        expect(screen.getByText('Component-only section')).toBeInTheDocument();
+    });
+
+    test('should render header text with markdown links', () => {
         const headerText = 'This is [a link](!https://example.com) in the header';
         const props = {
             ...DefaultProps,
@@ -288,17 +320,19 @@ describe('components/admin_console/SchemaAdminSettings', () => {
             patchConfig: jest.fn(),
         };
 
-        const wrapper = shallowWithIntl(<SchemaAdminSettings {...props}/>);
+        const {container} = renderWithContext(<SchemaAdminSettings {...props}/>);
 
-        const header = wrapper.find(SchemaText);
-        expect(header.exists()).toBe(true);
-        expect(header.props()).toMatchObject({
-            text: headerText,
-            isMarkdown: true,
-        });
+        // Verify the markdown link is rendered as an anchor element with the correct text
+        const link = screen.getByRole('link', {name: 'a link'});
+        expect(link).toBeInTheDocument();
+        expect(link).toHaveAttribute('href', 'https://example.com');
+
+        // Verify the surrounding text is present
+        expect(container.textContent).toContain('This is');
+        expect(container.textContent).toContain('in the header');
     });
 
-    test('should render footer using a SchemaText', () => {
+    test('should render footer text with markdown links', () => {
         const footerText = 'This is [a link](https://example.com) in the footer';
         const props = {
             ...DefaultProps,
@@ -311,14 +345,118 @@ describe('components/admin_console/SchemaAdminSettings', () => {
             patchConfig: jest.fn(),
         };
 
-        const wrapper = shallowWithIntl(<SchemaAdminSettings {...props}/>);
+        const {container} = renderWithContext(<SchemaAdminSettings {...props}/>);
 
-        const footer = wrapper.find(SchemaText);
-        expect(footer.exists()).toBe(true);
-        expect(footer.props()).toMatchObject({
-            text: footerText,
-            isMarkdown: true,
-        });
+        // Verify the markdown link is rendered as an anchor element with the correct text
+        const link = screen.getByRole('link', {name: 'a link'});
+        expect(link).toBeInTheDocument();
+        expect(link).toHaveAttribute('href', 'https://example.com');
+
+        // Verify the surrounding text is present
+        expect(container.textContent).toContain('This is');
+        expect(container.textContent).toContain('in the footer');
+    });
+
+    test('should render a schema footer after all sections', () => {
+        const props = {
+            ...DefaultProps,
+            config,
+            environmentConfig,
+            schema: {
+                id: 'Config',
+                name: 'config',
+                header: 'Schema header',
+                footer: 'Schema footer',
+                sections: [{
+                    key: 'section',
+                    title: 'Plugin section',
+                    settings: [],
+                }],
+            } as AdminDefinitionSubSectionSchema,
+            patchConfig: jest.fn(),
+        };
+
+        const {container} = renderWithContext(<SchemaAdminSettings {...props}/>);
+        const text = container.textContent || '';
+
+        expect(text.indexOf('Schema header')).toBeLessThan(text.indexOf('Plugin section'));
+        expect(text.indexOf('Plugin section')).toBeLessThan(text.indexOf('Schema footer'));
+    });
+
+    test('should stack schema sections in admin-console__schema-sections for content gap', () => {
+        const props = {
+            ...DefaultProps,
+            config,
+            environmentConfig,
+            schema: {
+                id: 'Config',
+                name: 'config',
+                sections: [
+                    {
+                        key: 'section-a',
+                        title: 'Section A',
+                        description: 'Description A',
+                        settings: [],
+                    },
+                    {
+                        key: 'section-b',
+                        title: 'Section B',
+                        description: 'Description B',
+                        settings: [],
+                    },
+                ],
+            } as AdminDefinitionSubSectionSchema,
+            patchConfig: jest.fn(),
+        };
+
+        const {container} = renderWithContext(<SchemaAdminSettings {...props}/>);
+        const stack = container.querySelector('.admin-console__schema-sections');
+
+        expect(stack).toBeInTheDocument();
+        expect(stack?.querySelectorAll(':scope > .AdminPanel.AdminSectionPanel')).toHaveLength(2);
+        expect(screen.getByRole('heading', {name: 'Section A'})).toBeInTheDocument();
+        expect(screen.getByRole('heading', {name: 'Section B'})).toBeInTheDocument();
+    });
+
+    test('should render top-level settings and sections between the schema header and footer', () => {
+        const props = {
+            ...DefaultProps,
+            config,
+            environmentConfig,
+            schema: {
+                id: 'Config',
+                name: 'config',
+                header: 'Schema header',
+                footer: 'Schema footer',
+                settings: [{
+                    key: 'ServiceSettings.SiteURL',
+                    label: 'Top-level Setting',
+                    type: 'text' as const,
+                }],
+                sections: [{
+                    key: 'section',
+                    title: 'Plugin section',
+                    settings: [{
+                        key: 'ServiceSettings.ConnectionURL',
+                        label: 'Section Setting',
+                        type: 'text' as const,
+                    }],
+                }],
+            } as AdminDefinitionSubSectionSchema,
+            patchConfig: jest.fn(),
+        };
+
+        const {container} = renderWithContext(<SchemaAdminSettings {...props}/>);
+        const text = container.textContent || '';
+
+        expect(screen.getByText('Schema header')).toBeInTheDocument();
+        expect(screen.getByText('Schema footer')).toBeInTheDocument();
+        expect(screen.getByText('Top-level Setting')).toBeInTheDocument();
+        expect(screen.getByText('Section Setting')).toBeInTheDocument();
+        expect(text.indexOf('Schema header')).toBeLessThan(text.indexOf('Top-level Setting'));
+        expect(text.indexOf('Top-level Setting')).toBeLessThan(text.indexOf('Plugin section'));
+        expect(text.indexOf('Plugin section')).toBeLessThan(text.indexOf('Section Setting'));
+        expect(text.indexOf('Section Setting')).toBeLessThan(text.indexOf('Schema footer'));
     });
 
     test('should render page not found', () => {
@@ -330,14 +468,10 @@ describe('components/admin_console/SchemaAdminSettings', () => {
             patchConfig: jest.fn(),
         };
 
-        const wrapper = shallowWithIntl(<SchemaAdminSettings {...props}/>);
+        renderWithContext(<SchemaAdminSettings {...props}/>);
 
-        expect(wrapper.contains(
-            <FormattedMessage
-                id='error.plugin_not_found.title'
-                defaultMessage='Plugin Not Found'
-            />,
-        )).toEqual(true);
+        // Verify the "Plugin Not Found" message is rendered
+        expect(screen.getByText('Plugin Not Found')).toBeInTheDocument();
     });
 
     test('should not try to validate when a setting does not contain a key', () => {
@@ -361,12 +495,18 @@ describe('components/admin_console/SchemaAdminSettings', () => {
             environmentConfig,
             schema: localSchema,
             patchConfig: jest.fn(),
+            intl: defaultIntl,
         };
 
-        const wrapper = shallowWithIntl(<SchemaAdminSettings {...props}/>);
-        const instance = wrapper.instance() as SchemaAdminSettingsClass;
+        const ref = React.createRef<SchemaAdminSettingsClass>();
+        renderWithContext(
+            <SchemaAdminSettingsClass
+                ref={ref}
+                {...props}
+            />,
+        );
 
-        expect(instance.canSave()).toBe(true);
+        expect(ref.current?.canSave()).toBe(true);
         expect(mockValidate).not.toHaveBeenCalled();
     });
 
@@ -390,12 +530,752 @@ describe('components/admin_console/SchemaAdminSettings', () => {
             environmentConfig,
             schema: localSchema,
             patchConfig: jest.fn(),
+            intl: defaultIntl,
         };
 
-        const wrapper = shallowWithIntl(<SchemaAdminSettings {...props}/>);
-        const instance = wrapper.instance() as SchemaAdminSettingsClass;
+        const ref = React.createRef<SchemaAdminSettingsClass>();
+        renderWithContext(
+            <SchemaAdminSettingsClass
+                ref={ref}
+                {...props}
+            />,
+        );
 
-        expect(instance.canSave()).toBe(true);
+        expect(ref.current?.canSave()).toBe(true);
         expect(mockValidate).toHaveBeenCalled();
+    });
+
+    test('should persist permissions from sections in a mixed schema', async () => {
+        const permissionKey = 'Permissions.enableTeamCreation';
+        const editRole = jest.fn().mockResolvedValue({});
+        const roles = {
+            system_user: {
+                name: 'system_user',
+                permissions: [],
+            },
+        };
+        const mixedSchema = {
+            id: 'Config',
+            name: 'config',
+            settings: [{
+                key: 'ServiceSettings.SiteURL',
+                label: 'Site URL',
+                type: 'text' as const,
+            }],
+            sections: [{
+                key: 'permissions',
+                settings: [{
+                    key: permissionKey,
+                    label: 'Enable Team Creation',
+                    type: 'permission' as const,
+                    permissions_mapping_name: 'enableTeamCreation' as const,
+                }],
+            }],
+        };
+        const ref = React.createRef<SchemaAdminSettingsClass>();
+        renderWithContext(
+            <SchemaAdminSettingsClass
+                ref={ref}
+                {...DefaultProps}
+                config={config}
+                editRole={editRole}
+                environmentConfig={environmentConfig}
+                roles={roles as any}
+                schema={mixedSchema}
+                patchConfig={jest.fn()}
+                intl={defaultIntl}
+            />,
+        );
+
+        act(() => {
+            ref.current!.setState({
+                [permissionKey]: true,
+                saveNeeded: 'permissions',
+            } as any);
+        });
+        await ref.current!.handleSubmit({preventDefault: jest.fn()} as any);
+
+        expect(editRole).toHaveBeenCalledWith(expect.objectContaining({
+            name: 'system_user',
+            permissions: ['create_team'],
+        }));
+    });
+
+    test('should validate top-level and section settings in a mixed schema', () => {
+        const topLevelValidate = jest.fn(() => new ValidationResult(true, ''));
+        const sectionValidate = jest.fn(() => new ValidationResult(false, 'Invalid section setting'));
+        const mixedSchema = {
+            id: 'Config',
+            name: 'config',
+            settings: [{
+                key: 'ServiceSettings.SiteURL',
+                label: 'Site URL',
+                type: 'text' as const,
+                validate: topLevelValidate,
+            }],
+            sections: [{
+                key: 'connection',
+                settings: [{
+                    key: 'ServiceSettings.ConnectionURL',
+                    label: 'Connection URL',
+                    type: 'text' as const,
+                    validate: sectionValidate,
+                }],
+            }],
+        };
+        const ref = React.createRef<SchemaAdminSettingsClass>();
+        renderWithContext(
+            <SchemaAdminSettingsClass
+                ref={ref}
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={mixedSchema}
+                patchConfig={jest.fn()}
+                intl={defaultIntl}
+            />,
+        );
+
+        expect(ref.current?.canSave()).toBe(false);
+        expect(topLevelValidate).toHaveBeenCalled();
+        expect(sectionValidate).toHaveBeenCalled();
+    });
+
+    test('should handle changing text input values', async () => {
+        // Use a simplified schema without username/jobstable fields to avoid async complications
+        const simpleSchema = {
+            id: 'Config',
+            name: 'config',
+            name_default: 'Configuration',
+            settings: [
+                {
+                    key: 'FirstSettings.settinga',
+                    label: 'label-a',
+                    label_default: 'Setting One',
+                    type: 'text',
+                    default: 'setting_default',
+                },
+            ],
+        } as unknown as AdminDefinitionSubSectionSchema;
+
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={simpleSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        // Find the text input by its label
+        const textInput = screen.getByRole('textbox', {name: /label-a/i});
+        expect(textInput).toBeInTheDocument();
+
+        // Change the value
+        await userEvent.clear(textInput);
+        await userEvent.type(textInput, 'new value');
+
+        // Verify the value changed
+        expect(textInput).toHaveValue('new value');
+    });
+
+    test('should toggle boolean settings', async () => {
+        // Use a simplified schema without username/jobstable fields to avoid async complications
+        const simpleSchema = {
+            id: 'Config',
+            name: 'config',
+            name_default: 'Configuration',
+            settings: [
+                {
+                    key: 'FirstSettings.settingb',
+                    label: 'label-b',
+                    label_default: 'Setting Two',
+                    type: 'bool',
+                    default: true,
+                },
+            ],
+        } as unknown as AdminDefinitionSubSectionSchema;
+
+        const {container} = renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={simpleSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        // Boolean settings render as radio buttons (True/False) using data-testid
+        const trueRadio = container.querySelector('[data-testid="FirstSettings.settingbtrue"]') as HTMLInputElement;
+        const falseRadio = container.querySelector('[data-testid="FirstSettings.settingbfalse"]') as HTMLInputElement;
+
+        expect(trueRadio).toBeInTheDocument();
+        expect(falseRadio).toBeInTheDocument();
+
+        // Initially false should be checked (default: false in config)
+        expect(falseRadio?.checked).toBe(true);
+        expect(trueRadio?.checked).toBe(false);
+
+        // Click true radio button
+        await userEvent.click(trueRadio);
+
+        // Now true should be checked
+        expect(trueRadio?.checked).toBe(true);
+        expect(falseRadio?.checked).toBe(false);
+    });
+
+    test('should disable save button when validation fails', () => {
+        const mockValidate = jest.fn(() => {
+            return new ValidationResult(false, 'Validation error');
+        });
+
+        const localSchema = {...schema} as AdminDefinitionSubSectionSchema & {settings: AdminDefinitionSettingInput[]};
+        localSchema.settings = [
+            {
+                key: 'FirstSettings.settinga',
+                label: 'label-a',
+                type: 'text',
+                validate: mockValidate,
+            },
+        ];
+
+        const props = {
+            ...DefaultProps,
+            config,
+            environmentConfig,
+            schema: localSchema,
+            patchConfig: jest.fn(),
+            intl: defaultIntl,
+        };
+
+        const ref = React.createRef<SchemaAdminSettingsClass>();
+        renderWithContext(
+            <SchemaAdminSettingsClass
+                ref={ref}
+                {...props}
+            />,
+        );
+
+        // canSave should return false due to validation failure
+        expect(ref.current?.canSave()).toBe(false);
+    });
+
+    test('should enable save button when changes are made', async () => {
+        // Use a simplified schema without username/jobstable fields to avoid async complications
+        const simpleSchema = {
+            id: 'Config',
+            name: 'config',
+            name_default: 'Configuration',
+            settings: [
+                {
+                    key: 'FirstSettings.settinga',
+                    label: 'label-a',
+                    label_default: 'Setting One',
+                    type: 'text',
+                    default: 'setting_default',
+                },
+            ],
+        } as unknown as AdminDefinitionSubSectionSchema;
+
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={simpleSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        // Find save button - should be disabled initially (no changes)
+        const saveButton = screen.getByRole('button', {name: /save/i});
+        expect(saveButton).toBeDisabled();
+
+        // Make a change to a text input
+        const textInput = screen.getByRole('textbox', {name: /label-a/i});
+        await userEvent.clear(textInput);
+        await userEvent.type(textInput, 'changed value');
+
+        // Wait for save button to be enabled
+        await waitFor(() => {
+            expect(saveButton).not.toBeDisabled();
+        });
+    });
+
+    test('should render dropdown setting', () => {
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={{...schema} as AdminDefinitionSubSectionSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        // Verify dropdown label is rendered
+        expect(screen.getByText('label-c')).toBeInTheDocument();
+
+        // Verify dropdown options are available
+        const dropdown = screen.getByRole('combobox', {name: /label-c/i});
+        expect(dropdown).toBeInTheDocument();
+    });
+
+    const samlHelpUrl = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1';
+
+    const buildDropdownOptionSchema = (option: object) => ({
+        id: 'Config',
+        name: 'config',
+        name_default: 'Configuration',
+        settings: [
+            {
+                key: 'FirstSettings.settingc',
+                label: 'label-c',
+                label_default: 'Setting Three',
+                type: 'dropdown',
+                default: 'option1',
+                options: [option],
+            },
+        ],
+    } as unknown as AdminDefinitionSubSectionSchema);
+
+    const dropdownOptionConfig = {
+        FirstSettings: {
+            settingc: 'option1',
+        },
+    } as Partial<AdminConfig>;
+
+    test('should render the selected dropdown option help text with markdown links as anchors', () => {
+        // Production help text is a MessageDescriptor (defineMessage), so render through
+        // that branch to exercise the same path the SAML settings use.
+        const {container} = renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={dropdownOptionConfig}
+                environmentConfig={environmentConfig}
+                schema={buildDropdownOptionSchema({
+                    display_name: 'Option 1',
+                    value: 'option1',
+                    help_text: defineMessage({
+                        id: 'test.dropdown.option.help',
+                        defaultMessage: `See [${samlHelpUrl}](${samlHelpUrl})`,
+                    }),
+                    help_text_markdown: true,
+                })}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        const link = screen.getByRole('link', {name: samlHelpUrl});
+        expect(link).toBeInTheDocument();
+        expect(link).toHaveAttribute('href', samlHelpUrl);
+        expect(screen.getAllByRole('link')).toHaveLength(1);
+
+        // The non-link portion of the help text should remain intact.
+        expect(container.textContent).toContain('See ');
+    });
+
+    test('should render the selected dropdown option help text as plain text without help_text_markdown', () => {
+        const {container} = renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={dropdownOptionConfig}
+                environmentConfig={environmentConfig}
+                schema={buildDropdownOptionSchema({
+                    display_name: 'Option 1',
+                    value: 'option1',
+                    help_text: defineMessage({
+                        id: 'test.dropdown.option.help.plain',
+                        defaultMessage: `See ${samlHelpUrl}`,
+                    }),
+                })}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        expect(screen.queryByRole('link')).not.toBeInTheDocument();
+        expect(container.textContent).toContain(`See ${samlHelpUrl}`);
+    });
+
+    test('should render radio button setting', () => {
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={{...schema} as AdminDefinitionSubSectionSchema}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        // Verify radio button label is rendered
+        expect(screen.getByText('label-d')).toBeInTheDocument();
+
+        // Verify radio buttons are rendered
+        const radioButtons = screen.getAllByRole('radio');
+        expect(radioButtons.length).toBeGreaterThan(0);
+    });
+
+    describe('production_warning callout', () => {
+        const WARNING_TITLE = 'Enabling this is not recommended for production environments';
+        const WARNING_TEXT = 'This configuration exposes the server to attacks. Enable only for testing.';
+
+        const buildBoolWarningSchema = () => ({
+            id: 'Config',
+            name: 'config',
+            settings: [
+                {
+                    key: 'FirstSettings.dangerSetting',
+                    label: 'danger-label',
+                    type: 'bool',
+                    default: false,
+                    help_text: 'danger-help-text',
+                    production_warning: {
+                        isEnabled: it.stateIsTrue('FirstSettings.dangerSetting'),
+                        title: defineMessage({id: 'test.production.warning.title', defaultMessage: WARNING_TITLE}),
+                        text: defineMessage({id: 'test.production.warning.text', defaultMessage: WARNING_TEXT}),
+                    },
+                },
+            ],
+        } as unknown as AdminDefinitionSubSectionSchema);
+
+        const renderBoolWarning = (settingValue: boolean) => renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={{FirstSettings: {dangerSetting: settingValue}} as Partial<AdminConfig>}
+                environmentConfig={{}}
+                schema={buildBoolWarningSchema()}
+                patchConfig={jest.fn()}
+            />,
+        );
+
+        test('renders a danger callout when the bool setting is at its insecure value', () => {
+            const {container} = renderBoolWarning(true);
+
+            // The danger SectionNotice renders with its title and body copy.
+            expect(screen.getByText(WARNING_TITLE)).toBeInTheDocument();
+            expect(screen.getByText(WARNING_TEXT)).toBeInTheDocument();
+            expect(container.querySelector('[class*="section-notice--type-danger"]')).toBeInTheDocument();
+
+            // The normal help text still renders alongside the callout.
+            expect(screen.getByText('danger-help-text')).toBeInTheDocument();
+        });
+
+        test('does not render the callout when the bool setting is at its recommended value', () => {
+            const {container} = renderBoolWarning(false);
+
+            expect(screen.queryByText(WARNING_TITLE)).not.toBeInTheDocument();
+            expect(screen.queryByText(WARNING_TEXT)).not.toBeInTheDocument();
+            expect(container.querySelector('[class*="section-notice--type-danger"]')).not.toBeInTheDocument();
+
+            // The normal help text is unaffected.
+            expect(screen.getByText('danger-help-text')).toBeInTheDocument();
+        });
+
+        test('shows and hides the callout reactively as the value is toggled without saving', async () => {
+            const {container} = renderBoolWarning(false);
+
+            const trueRadio = container.querySelector('[data-testid="FirstSettings.dangerSettingtrue"]') as HTMLInputElement;
+            const falseRadio = container.querySelector('[data-testid="FirstSettings.dangerSettingfalse"]') as HTMLInputElement;
+
+            // Starts at the recommended value with no callout.
+            expect(screen.queryByText(WARNING_TITLE)).not.toBeInTheDocument();
+
+            // Selecting the insecure value reveals the callout immediately.
+            await userEvent.click(trueRadio);
+            expect(await screen.findByText(WARNING_TITLE)).toBeInTheDocument();
+
+            // Reverting to the recommended value hides it again.
+            await userEvent.click(falseRadio);
+            await waitFor(() => {
+                expect(screen.queryByText(WARNING_TITLE)).not.toBeInTheDocument();
+            });
+        });
+
+        test('renders the callout for a text setting only when it matches the insecure value', async () => {
+            const textWarningSchema = {
+                id: 'Config',
+                name: 'config',
+                settings: [
+                    {
+                        key: 'FirstSettings.corsSetting',
+                        label: 'cors-label',
+                        type: 'text',
+                        default: '',
+                        help_text: 'cors-help-text',
+                        production_warning: {
+                            isEnabled: it.stateEquals('FirstSettings.corsSetting', '*'),
+                            title: defineMessage({id: 'test.production.cors.title', defaultMessage: WARNING_TITLE}),
+                            text: defineMessage({id: 'test.production.cors.text', defaultMessage: WARNING_TEXT}),
+                        },
+                    },
+                ],
+            } as unknown as AdminDefinitionSubSectionSchema;
+
+            renderWithContext(
+                <SchemaAdminSettings
+                    {...DefaultProps}
+                    config={{FirstSettings: {corsSetting: 'https://trusted.example.com'}} as Partial<AdminConfig>}
+                    environmentConfig={{}}
+                    schema={textWarningSchema}
+                    patchConfig={jest.fn()}
+                />,
+            );
+
+            // A specific trusted origin is safe, so no callout.
+            expect(screen.queryByText(WARNING_TITLE)).not.toBeInTheDocument();
+
+            // Replacing it with the wildcard origin surfaces the callout.
+            const textInput = screen.getByRole('textbox', {name: /cors-label/i});
+            await userEvent.clear(textInput);
+            await userEvent.type(textInput, '*');
+            expect(await screen.findByText(WARNING_TITLE)).toBeInTheDocument();
+        });
+
+        test('renders the callout when a setting warns on its false value', () => {
+            const schemaWarnOnFalse = {
+                id: 'Config',
+                name: 'config',
+                settings: [
+                    {
+                        key: 'FirstSettings.verifySetting',
+                        label: 'verify-label',
+                        type: 'bool',
+                        default: true,
+                        help_text: 'verify-help-text',
+                        production_warning: {
+                            isEnabled: it.stateIsFalse('FirstSettings.verifySetting'),
+                            title: defineMessage({id: 'test.production.verify.title', defaultMessage: WARNING_TITLE}),
+                            text: defineMessage({id: 'test.production.verify.text', defaultMessage: WARNING_TEXT}),
+                        },
+                    },
+                ],
+            } as unknown as AdminDefinitionSubSectionSchema;
+
+            const {container} = renderWithContext(
+                <SchemaAdminSettings
+                    {...DefaultProps}
+                    config={{FirstSettings: {verifySetting: false}} as Partial<AdminConfig>}
+                    environmentConfig={{}}
+                    schema={schemaWarnOnFalse}
+                    patchConfig={jest.fn()}
+                />,
+            );
+
+            expect(screen.getByText(WARNING_TITLE)).toBeInTheDocument();
+            expect(container.querySelector('[class*="section-notice--type-danger"]')).toBeInTheDocument();
+        });
+
+        test('does not render the callout when the setting is disabled even at the insecure value', () => {
+            const disabledSchema = {
+                id: 'Config',
+                name: 'config',
+                settings: [
+                    {
+                        key: 'FirstSettings.dangerSetting',
+                        label: 'danger-label',
+                        type: 'bool',
+                        default: false,
+                        help_text: 'danger-help-text',
+                        isDisabled: true,
+                        production_warning: {
+                            isEnabled: it.stateIsTrue('FirstSettings.dangerSetting'),
+                            title: defineMessage({id: 'test.production.disabled.title', defaultMessage: WARNING_TITLE}),
+                            text: defineMessage({id: 'test.production.disabled.text', defaultMessage: WARNING_TEXT}),
+                        },
+                    },
+                ],
+            } as unknown as AdminDefinitionSubSectionSchema;
+
+            const {container} = renderWithContext(
+                <SchemaAdminSettings
+                    {...DefaultProps}
+                    config={{FirstSettings: {dangerSetting: true}} as Partial<AdminConfig>}
+                    environmentConfig={{}}
+                    schema={disabledSchema}
+                    patchConfig={jest.fn()}
+                />,
+            );
+
+            expect(screen.queryByText(WARNING_TITLE)).not.toBeInTheDocument();
+            expect(container.querySelector('[class*="section-notice--type-danger"]')).not.toBeInTheDocument();
+        });
+    });
+
+    test('should call patchConfig on form submission', async () => {
+        const mockPatchConfig = jest.fn(() => Promise.resolve({data: true}));
+
+        // Use a simplified schema without username/jobstable fields to avoid async complications
+        const simpleSchema = {
+            id: 'Config',
+            name: 'config',
+            name_default: 'Configuration',
+            settings: [
+                {
+                    key: 'FirstSettings.settinga',
+                    label: 'label-a',
+                    label_default: 'Setting One',
+                    type: 'text',
+                    default: 'setting_default',
+                },
+            ],
+        } as unknown as AdminDefinitionSubSectionSchema;
+
+        renderWithContext(
+            <SchemaAdminSettings
+                {...DefaultProps}
+                config={config}
+                environmentConfig={environmentConfig}
+                schema={simpleSchema}
+                patchConfig={mockPatchConfig}
+            />,
+        );
+
+        // Make a change
+        const textInput = screen.getByRole('textbox', {name: /label-a/i});
+        await userEvent.clear(textInput);
+        await userEvent.type(textInput, 'new value');
+
+        // Wait for save button to be enabled
+        const saveButton = screen.getByRole('button', {name: /save/i});
+        await waitFor(() => {
+            expect(saveButton).not.toBeDisabled();
+        });
+
+        // Click save button
+        await userEvent.click(saveButton);
+
+        // patchConfig should be called
+        await waitFor(() => {
+            expect(mockPatchConfig).toHaveBeenCalled();
+        });
+    });
+
+    describe('fileupload setting', () => {
+        const renderFileUpload = (uploadAction: jest.Mock) => {
+            const fileUploadSchema = {
+                id: 'Config',
+                name: 'config',
+                name_default: 'Configuration',
+                settings: [
+                    {
+                        key: 'SamlSettings.IdpCertificateFile',
+                        label: 'label-file',
+                        label_default: 'Certificate',
+                        type: 'fileupload',
+                        remove_button_text: 'Remove Certificate',
+                        upload_action: uploadAction,
+                        remove_action: jest.fn(),
+                    },
+                ],
+            } as unknown as AdminDefinitionSubSectionSchema;
+
+            const {container} = renderWithContext(
+                <SchemaAdminSettings
+                    {...DefaultProps}
+                    config={config}
+                    environmentConfig={environmentConfig}
+                    schema={fileUploadSchema}
+                    patchConfig={jest.fn()}
+                />,
+            );
+
+            return container.querySelector('input[type="file"]') as HTMLInputElement;
+        };
+
+        test('should show the server error when an upload is rejected', async () => {
+            const uploadAction = jest.fn((file, success, error) => error({message: 'Invalid certificate'}));
+            const fileInput = renderFileUpload(uploadAction);
+
+            await userEvent.upload(fileInput, new File(['junk'], 'junk.crt'));
+            await userEvent.click(screen.getByRole('button', {name: 'Upload'}));
+
+            expect(uploadAction).toHaveBeenCalled();
+            expect(screen.getByText('Invalid certificate')).toBeInTheDocument();
+            expect(screen.queryByRole('button', {name: 'Remove Certificate'})).not.toBeInTheDocument();
+        });
+
+        test('should clear the error after a successful upload', async () => {
+            const uploadAction = jest.fn().
+                mockImplementationOnce((file, success, error) => error({message: 'Invalid certificate'})).
+                mockImplementationOnce((file, success) => success('saml-idp.crt'));
+            const fileInput = renderFileUpload(uploadAction);
+
+            await userEvent.upload(fileInput, new File(['junk'], 'junk.crt'));
+            await userEvent.click(screen.getByRole('button', {name: 'Upload'}));
+            expect(screen.getByText('Invalid certificate')).toBeInTheDocument();
+
+            await userEvent.upload(fileInput, new File(['cert'], 'valid.crt'));
+            await userEvent.click(screen.getByRole('button', {name: 'Upload'}));
+
+            expect(screen.queryByText('Invalid certificate')).not.toBeInTheDocument();
+            expect(screen.getByText('saml-idp.crt')).toBeInTheDocument();
+            expect(screen.getByRole('button', {name: 'Remove Certificate'})).toBeInTheDocument();
+        });
+    });
+});
+
+describe('components/admin_console/SchemaAdminSettings/getConfigFromState', () => {
+    const buildSchema = (setting: AdminDefinitionSettingInput) => ({
+        id: 'ServiceSettings',
+        name: 'Service Settings',
+        settings: [setting],
+    } as unknown as AdminDefinitionSubSectionSchema);
+
+    const multipleSetting = {
+        type: 'text',
+        key: 'ServiceSettings.DCRRedirectURIAllowlist',
+        label: 'label',
+        multiple: true,
+    } as AdminDefinitionSettingInput;
+
+    test('should trim whitespace from a multiple text setting', () => {
+        const config = getConfigFromState(
+            {},
+            {'ServiceSettings.DCRRedirectURIAllowlist': ['https://one.example.com', ' https://two.example.com']},
+            buildSchema(multipleSetting),
+            () => false,
+        );
+
+        expect(config.ServiceSettings?.DCRRedirectURIAllowlist).toEqual(['https://one.example.com', 'https://two.example.com']);
+    });
+
+    test('should drop empty entries from a multiple text setting', () => {
+        const config = getConfigFromState(
+            {},
+            {'ServiceSettings.DCRRedirectURIAllowlist': ['https://one.example.com', '', '   ']},
+            buildSchema(multipleSetting),
+            () => false,
+        );
+
+        expect(config.ServiceSettings?.DCRRedirectURIAllowlist).toEqual(['https://one.example.com']);
+    });
+
+    test('should save an empty array for a blank multiple text setting', () => {
+        const config = getConfigFromState(
+            {},
+            {'ServiceSettings.DCRRedirectURIAllowlist': [' ']},
+            buildSchema(multipleSetting),
+            () => false,
+        );
+
+        expect(config.ServiceSettings?.DCRRedirectURIAllowlist).toEqual([]);
+    });
+
+    test('should preserve whitespace in a text setting that is not multiple', () => {
+        const config = getConfigFromState(
+            {},
+            {'ServiceSettings.SiteURL': ' https://example.com '},
+            buildSchema({
+                type: 'text',
+                key: 'ServiceSettings.SiteURL',
+                label: 'label',
+            } as AdminDefinitionSettingInput),
+            () => false,
+        );
+
+        expect(config.ServiceSettings?.SiteURL).toBe(' https://example.com ');
     });
 });

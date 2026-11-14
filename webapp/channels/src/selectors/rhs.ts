@@ -6,18 +6,19 @@ import type {Post, PostType} from '@mattermost/types/posts';
 
 import {createSelector} from 'mattermost-redux/selectors/create_selector';
 import {makeGetChannel} from 'mattermost-redux/selectors/entities/channels';
+import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {getCurrentUserId} from 'mattermost-redux/selectors/entities/users';
 
 import {makeGetGlobalItem, makeGetGlobalItemWithDefault} from 'selectors/storage';
 
 import type {SidebarSize} from 'components/resizable_sidebar/constants';
 
-import {PostTypes, StoragePrefixes} from 'utils/constants';
+import {PostTypes, RHSStates, StoragePrefixes} from 'utils/constants';
 import {localizeMessage} from 'utils/utils';
 
 import type {GlobalState} from 'types/store';
 import type {PostDraft} from 'types/store/draft';
-import type {RhsState, FakePost, SearchType} from 'types/store/rhs';
+import type {RhsState, FakePost, MentionFilters, SearchType} from 'types/store/rhs';
 
 export function getSelectedPostId(state: GlobalState): Post['id'] {
     return state.views.rhs.selectedPostId;
@@ -57,7 +58,7 @@ export const getSelectedChannel = (() => {
     return (state: GlobalState) => {
         const channelId = getSelectedChannelId(state);
 
-        return getChannel(state, {id: channelId});
+        return getChannel(state, channelId);
     };
 })();
 
@@ -81,7 +82,12 @@ export const getSelectedPost = createSelector(
     getRealSelectedPost,
     getSelectedChannelId,
     getCurrentUserId,
-    (selectedPostId: Post['id'], selectedPost: Post, selectedPostChannelId: Channel['id'], currentUserId): Post|FakePost => {
+    (
+        selectedPostId: Post['id'],
+        selectedPost: Post,
+        selectedPostChannelId: Channel['id'],
+        currentUserId,
+    ): Post | FakePost => {
         if (selectedPost) {
             return selectedPost;
         }
@@ -91,11 +97,27 @@ export const getSelectedPost = createSelector(
             id: selectedPostId,
             exists: false,
             type: PostTypes.FAKE_PARENT_DELETED as PostType,
-            message: localizeMessage('rhs_thread.rootPostDeletedMessage.body', 'Part of this thread has been deleted due to a data retention policy. You can no longer reply to this thread.'),
+            message: localizeMessage({
+                id: 'rhs_thread.rootPostDeletedMessage.body',
+                defaultMessage:
+                    'Part of this thread has been deleted due to a data retention policy. You can no longer reply to this thread.',
+            }),
             channel_id: selectedPostChannelId,
             user_id: currentUserId,
             reply_count: 0,
         };
+    },
+);
+
+export const getCurrentSearchForSearchTeam: (state: GlobalState) => Record<string, any> = createSelector(
+    'getCurrentSearchForSearchTeam',
+    (state: GlobalState) => state.entities.search.current,
+    getSearchTeam,
+    getExplicitSearchTeam,
+    (state: GlobalState) => getRhsState(state) === RHSStates.MENTION,
+    (current, teamId, explicitTeamId, isMentionSearch) => {
+        const team = (isMentionSearch && !explicitTeamId) ? 'ALL_TEAMS' : teamId || 'ALL_TEAMS';
+        return current[team];
     },
 );
 
@@ -114,12 +136,41 @@ export function getSearchTerms(state: GlobalState): string {
     return state.views.rhs.searchTerms;
 }
 
+// getSearchTeam returns the team ID that the search is currently scoped to, or current team if no team was specified.
+export function getSearchTeam(state: GlobalState): string {
+    return state.views.rhs.searchTeam ?? getCurrentTeamId(state);
+}
+
+// getRegularSearchTeam returns the team a new message search starts on. In the mentions view the stored
+// team is the one the mentions are filtered to, so a new search starts on the current team instead, as
+// it would from anywhere else.
+export function getRegularSearchTeam(state: GlobalState): string {
+    if (getRhsState(state) === RHSStates.MENTION) {
+        return getCurrentTeamId(state);
+    }
+    return getSearchTeam(state);
+}
+
+// getExplicitSearchTeam returns the team ID the search was explicitly scoped to, or null when it wasn't
+// scoped to one. Recent mentions search every team unless scoped, so callers need to tell the two apart.
+export function getExplicitSearchTeam(state: GlobalState): string | null {
+    return state.views.rhs.searchTeam;
+}
+
+export function getMentionFilters(state: GlobalState): MentionFilters {
+    return state.views.rhs.mentionFilters;
+}
+
 export function getSearchType(state: GlobalState): SearchType {
     return state.views.rhs.searchType;
 }
 
 export function getSearchResultsTerms(state: GlobalState): string {
     return state.views.rhs.searchResultsTerms;
+}
+
+export function getSearchResultsType(state: GlobalState): string {
+    return state.views.rhs.searchResultsType;
 }
 
 export function getIsSearchingTerm(state: GlobalState): boolean {
@@ -139,10 +190,22 @@ export function getIsSearchGettingMore(state: GlobalState): boolean {
 }
 
 export function makeGetChannelDraft() {
-    const defaultDraft = Object.freeze({message: '', fileInfos: [], uploadsInProgress: [], createAt: 0, updateAt: 0, channelId: '', rootId: ''});
+    const defaultDraft = Object.freeze({
+        message: '',
+        fileInfos: [],
+        uploadsInProgress: [],
+        createAt: 0,
+        updateAt: 0,
+        channelId: '',
+        rootId: '',
+    });
     const getDraft = makeGetGlobalItemWithDefault(defaultDraft);
 
-    return (state: GlobalState, channelId: string): PostDraft => {
+    return (state: GlobalState, channelId?: string): PostDraft => {
+        if (!channelId) {
+            return defaultDraft;
+        }
+
         const draft = getDraft(state, StoragePrefixes.DRAFT + channelId);
         if (
             typeof draft.message !== 'undefined' &&
@@ -157,7 +220,15 @@ export function makeGetChannelDraft() {
 }
 
 export function getPostDraft(state: GlobalState, prefixId: string, suffixId: string): PostDraft {
-    const defaultDraft = {message: '', fileInfos: [], uploadsInProgress: [], createAt: 0, updateAt: 0, channelId: '', rootId: ''};
+    const defaultDraft = {
+        message: '',
+        fileInfos: [],
+        uploadsInProgress: [],
+        createAt: 0,
+        updateAt: 0,
+        channelId: '',
+        rootId: '',
+    };
 
     if (prefixId === StoragePrefixes.COMMENT_DRAFT) {
         defaultDraft.rootId = suffixId;

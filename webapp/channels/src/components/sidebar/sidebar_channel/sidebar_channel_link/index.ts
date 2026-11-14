@@ -7,10 +7,15 @@ import type {Dispatch} from 'redux';
 
 import type {Channel} from '@mattermost/types/channels';
 
-import {makeGetChannelUnreadCount} from 'mattermost-redux/selectors/entities/channels';
+import {fetchChannelRemotes} from 'mattermost-redux/actions/shared_channels';
+import {Permissions} from 'mattermost-redux/constants';
+import {makeGetChannelUnreadCount, getPendingJoinRequestsCount} from 'mattermost-redux/selectors/entities/channels';
 import {getCurrentUserId, getMyChannelMemberships} from 'mattermost-redux/selectors/entities/common';
-import {getConfig} from 'mattermost-redux/selectors/entities/general';
+import {getConfig, isDiscoverableChannelsEnabled} from 'mattermost-redux/selectors/entities/general';
 import {getInt} from 'mattermost-redux/selectors/entities/preferences';
+import {haveIChannelPermission} from 'mattermost-redux/selectors/entities/roles';
+import {getRemoteNamesForChannel} from 'mattermost-redux/selectors/entities/shared_channels';
+import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {isChannelMuted} from 'mattermost-redux/utils/channel_utils';
 
 import {markMostRecentPostInChannelAsUnread, unsetEditingPost} from 'actions/post_actions';
@@ -27,13 +32,15 @@ import {
 } from 'components/onboarding_tasks';
 import {FINISHED, OnboardingTourSteps, TutorialTourName} from 'components/tours';
 
+import Constants from 'utils/constants';
+
 import type {GlobalState} from 'types/store';
 
 import SidebarChannelLink from './sidebar_channel_link';
 
 type OwnProps = {
     channel: Channel;
-}
+};
 
 function makeMapStateToProps() {
     const getUnreadCount = makeGetChannelUnreadCount();
@@ -41,7 +48,6 @@ function makeMapStateToProps() {
     return (state: GlobalState, ownProps: OwnProps) => {
         const member = getMyChannelMemberships(state)[ownProps.channel.id];
         const unreadCount = getUnreadCount(state, ownProps.channel.id);
-        const firstChannelName = getFirstChannelName(state);
         const config = getConfig(state);
         const enableTutorial = config.EnableTutorial === 'true';
         const currentUserId = getCurrentUserId(state);
@@ -51,6 +57,27 @@ function makeMapStateToProps() {
         const isOnboardingFlowEnabled = config.EnableOnboardingFlow;
         const showChannelsTour = enableTutorial && tutorialStep === OnboardingTourSteps.CHANNELS_AND_DIRECT_MESSAGES;
         const showChannelsTutorialStep = showChannelsTour && channelTourTriggered && isOnboardingFlowEnabled === 'true';
+
+        const remoteNames = ownProps.channel?.shared ?
+            getRemoteNamesForChannel(state, ownProps.channel.id) : [];
+
+        const teamId = getCurrentTeamId(state);
+        const channel = ownProps.channel;
+        const discoverableFeatureEnabled = isDiscoverableChannelsEnabled(state);
+        const canManageJoinRequests = discoverableFeatureEnabled &&
+            channel.type === Constants.PRIVATE_CHANNEL &&
+            channel.discoverable === true &&
+            haveIChannelPermission(
+                state,
+                teamId,
+                channel.id,
+                Permissions.MANAGE_CHANNEL_JOIN_REQUESTS,
+            );
+        const hasPendingJoinRequests = Boolean(
+            canManageJoinRequests &&
+            getPendingJoinRequestsCount(state, channel.id) > 0,
+        );
+
         return {
             unreadMentions: unreadCount.mentions,
             unreadMsgs: unreadCount.messages,
@@ -58,10 +85,12 @@ function makeMapStateToProps() {
             isMuted: isChannelMuted(member),
             hasUrgent: unreadCount.hasUrgent,
             isChannelSelected: isChannelSelected(state, ownProps.channel.id),
-            firstChannelName: showChannelsTutorialStep ? firstChannelName : '',
+            firstChannelName: showChannelsTutorialStep ? getFirstChannelName(state) : '',
             showChannelsTutorialStep,
             rhsState: getRhsState(state),
             rhsOpen: getIsRhsOpen(state),
+            remoteNames,
+            hasPendingJoinRequests,
         };
     };
 }
@@ -75,6 +104,7 @@ function mapDispatchToProps(dispatch: Dispatch) {
             multiSelectChannelTo,
             multiSelectChannelAdd,
             closeRightHandSide,
+            fetchChannelRemotes,
         }, dispatch),
     };
 }

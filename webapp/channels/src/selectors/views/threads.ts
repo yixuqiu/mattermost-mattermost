@@ -10,15 +10,16 @@ import type {UserThread} from '@mattermost/types/threads';
 import {createSelector} from 'mattermost-redux/selectors/create_selector';
 import {getCurrentUser} from 'mattermost-redux/selectors/entities/common';
 import {makeGetPostsForIds} from 'mattermost-redux/selectors/entities/posts';
-import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
+import {getCurrentTeam, getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {getThreads} from 'mattermost-redux/selectors/entities/threads';
 import {createIdsSelector} from 'mattermost-redux/utils/helpers';
-import {DATE_LINE, makeCombineUserActivityPosts, START_OF_NEW_MESSAGES, CREATE_COMMENT} from 'mattermost-redux/utils/post_list';
+import {DATE_LINE, START_OF_NEW_MESSAGES} from 'mattermost-redux/utils/post_list';
 import {getUserCurrentTimezone} from 'mattermost-redux/utils/timezone_utils';
 
 import {getIsRhsOpen, getSelectedPostId} from 'selectors/rhs';
 
-import {isFromWebhook} from 'utils/post_utils';
+import {isThreadPopoutWindow} from 'utils/popouts/popout_windows';
+import {isFromWebhook, isNotificationSuppressed} from 'utils/post_utils';
 
 import type {GlobalState} from 'types/store';
 import type {ViewsState} from 'types/store/views';
@@ -79,12 +80,17 @@ export function makeGetThreadLastViewedAt(): (state: GlobalState, threadId: Post
 export const isThreadOpen = (state: GlobalState, threadId: UserThread['id']): boolean => {
     return (
         threadId === getSelectedThreadIdInCurrentTeam(state) ||
-        (getIsRhsOpen(state) && threadId === getSelectedPostId(state))
+        (getIsRhsOpen(state) && threadId === getSelectedPostId(state)) ||
+        isThreadPopoutWindow(getCurrentTeam(state)?.name || '', threadId)
     );
 };
 
 export const isThreadManuallyUnread = (state: GlobalState, threadId: UserThread['id']): boolean => {
     return state.views.threads.manuallyUnread[threadId] || false;
+};
+
+export const getThreadLastUpdateAt = (state: GlobalState, threadId: UserThread['id']): number => {
+    return state.views.threads.lastUpdateAt[threadId] || 0;
 };
 
 // Returns a selector that, given the state and an object containing an array of postIds and an optional
@@ -140,6 +146,7 @@ export function makeFilterRepliesAndAddSeparators() {
                     post.create_at >= lastViewedAt &&
                     (i < posts.length - 1) &&
                     (post.user_id !== currentUser.id || isFromWebhook(post)) &&
+                    !isNotificationSuppressed(post) &&
                     !addedNewMessagesIndicator
                 ) {
                     out.push(START_OF_NEW_MESSAGES);
@@ -149,21 +156,10 @@ export function makeFilterRepliesAndAddSeparators() {
                 out.push(post.id);
             }
 
-            out.push(CREATE_COMMENT);
-
             // Flip it back to newest to oldest
             return out.reverse();
         },
     );
-}
-
-export function makePrepareReplyIdsForThreadViewer() {
-    const filterRepliesAndAddSeparators = makeFilterRepliesAndAddSeparators();
-    const combineUserActivityPosts = makeCombineUserActivityPosts();
-    return (state: GlobalState, options: PostFilterOptions) => {
-        const postIds = filterRepliesAndAddSeparators(state, options);
-        return combineUserActivityPosts(state, postIds);
-    };
 }
 
 export function getThreadToastStatus(state: GlobalState) {

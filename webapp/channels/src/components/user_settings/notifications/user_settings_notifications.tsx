@@ -4,13 +4,18 @@
 /* eslint-disable max-lines */
 
 import React from 'react';
-import type {ChangeEvent} from 'react';
+import type {ChangeEvent, JSX} from 'react';
 import type {WrappedComponentProps} from 'react-intl';
 import {FormattedMessage, injectIntl} from 'react-intl';
-import type {Styles as ReactSelectStyles, ValueType} from 'react-select';
+import type {InputProps, OnChangeValue, StylesConfig} from 'react-select';
+import {components} from 'react-select';
 import CreatableReactSelect from 'react-select/creatable';
 
 import {LightbulbOutlineIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Radio} from '@mattermost/compass-ui/components/radio';
 import type {UserNotifyProps, UserProfile} from '@mattermost/types/users';
 
 import ExternalLink from 'components/external_link';
@@ -19,18 +24,19 @@ import SettingItemMax from 'components/setting_item_max';
 import RestrictedIndicator from 'components/widgets/menu/menu_items/restricted_indicator';
 
 import Constants, {NotificationLevels, MattermostFeatures, LicenseSkus, UserSettingsNotificationSections} from 'utils/constants';
-import {stopTryNotificationRing} from 'utils/notification_sounds';
+import {notificationSoundKeys, stopTryNotificationRing} from 'utils/notification_sounds';
 import {a11yFocus} from 'utils/utils';
 
 import DesktopAndMobileNotificationSettings from './desktop_and_mobile_notification_setting';
 import DesktopNotificationSoundsSettings from './desktop_notification_sounds_setting';
 import EmailNotificationSetting from './email_notification_setting';
 import ManageAutoResponder from './manage_auto_responder/manage_auto_responder';
+import SendTestNotificationNotice from './send_test_notification_notice';
 
 import SettingDesktopHeader from '../headers/setting_desktop_header';
 import SettingMobileHeader from '../headers/setting_mobile_header';
 
-import type {PropsFromRedux} from './index';
+import type {OwnProps, PropsFromRedux} from './index';
 
 const WHITE_SPACE_REGEX = /\s+/g;
 const COMMA_REGEX = /,/g;
@@ -38,15 +44,7 @@ const COMMA_REGEX = /,/g;
 type MultiInputValue = {
     label: string;
     value: string;
-}
-
-type OwnProps = {
-    user: UserProfile;
-    updateSection: (section: string) => void;
-    activeSection: string;
-    closeModal: () => void;
-    collapseModal: () => void;
-}
+};
 
 export type Props = PropsFromRedux & OwnProps & WrappedComponentProps;
 
@@ -70,6 +68,7 @@ type State = {
     customKeysWithHighlightInputValue: string;
     firstNameKey: boolean;
     channelKey: boolean;
+    channelMentionAutoFollow: boolean;
     autoResponderActive: boolean;
     autoResponderMessage: UserNotifyProps['auto_responder_message'];
     notifyCommentsLevel: UserNotifyProps['comments'];
@@ -85,7 +84,7 @@ function getDefaultStateFromProps(props: Props): State {
     let emailThreads: UserNotifyProps['email_threads'] = NotificationLevels.ALL;
     let sound: UserNotifyProps['desktop_sound'] = 'true';
     let callsSound: UserNotifyProps['calls_desktop_sound'] = 'true';
-    let desktopNotificationSound: UserNotifyProps['desktop_notification_sound'] = 'Bing';
+    let desktopNotificationSound: UserNotifyProps['desktop_notification_sound'] = notificationSoundKeys[0] as UserNotifyProps['desktop_notification_sound'];
     let callsNotificationSound: UserNotifyProps['calls_notification_sound'] = 'Calm';
     let comments: UserNotifyProps['comments'] = 'never';
     let enableEmail: UserNotifyProps['email'] = 'true';
@@ -152,6 +151,7 @@ function getDefaultStateFromProps(props: Props): State {
     let usernameKey = false;
     let firstNameKey = false;
     let channelKey = false;
+    let channelMentionAutoFollow = true;
     let isCustomKeysWithNotificationInputChecked = false;
     const customKeysWithNotification: MultiInputValue[] = [];
     const customKeysWithHighlight: MultiInputValue[] = [];
@@ -188,6 +188,7 @@ function getDefaultStateFromProps(props: Props): State {
 
         firstNameKey = props.user.notify_props?.first_name === 'true';
         channelKey = props.user.notify_props?.channel === 'true';
+        channelMentionAutoFollow = props.user.notify_props?.channel_mention_auto_follow_threads !== 'false';
     }
 
     return {
@@ -210,6 +211,7 @@ function getDefaultStateFromProps(props: Props): State {
         customKeysWithHighlightInputValue: '',
         firstNameKey,
         channelKey,
+        channelMentionAutoFollow,
         autoResponderActive,
         autoResponderMessage,
         notifyCommentsLevel: comments,
@@ -218,6 +220,18 @@ function getDefaultStateFromProps(props: Props): State {
         desktopAndMobileSettingsDifferent,
     };
 }
+
+export const CreatableReactSelectInput = (props: InputProps<MultiInputValue, true>) => {
+    const ariaProps = {
+        'aria-labelledby': 'settingTitle',
+    };
+
+    return (
+        <components.Input
+            {...props}
+            {...ariaProps}
+        />);
+};
 
 class NotificationsTab extends React.PureComponent<Props, State> {
     static defaultProps = {
@@ -231,7 +245,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
     }
 
     handleSubmit = async () => {
-        const data: UserNotifyProps = {} as UserNotifyProps;
+        const data: UserNotifyProps = {...this.props.user.notify_props};
         data.email = this.state.enableEmail;
         data.desktop_sound = this.state.desktopSound;
         data.calls_desktop_sound = this.state.callsDesktopSound;
@@ -246,6 +260,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         data.auto_responder_message = this.state.autoResponderMessage;
         data.first_name = this.state.firstNameKey ? 'true' : 'false';
         data.channel = this.state.channelKey ? 'true' : 'false';
+        data.channel_mention_auto_follow_threads = this.state.channelMentionAutoFollow ? 'true' : 'false';
 
         if (this.state.desktopAndMobileSettingsDifferent) {
             data.push = this.state.pushActivity;
@@ -284,7 +299,20 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         this.setState({isSaving: true});
         stopTryNotificationRing();
 
-        const {data: updatedUser, error} = await this.props.updateMe({notify_props: data});
+        let updatedUser: UserProfile | undefined;
+        let error;
+
+        if (this.props.adminMode) {
+            const payloadUser = {...this.props.user, notify_props: data};
+            const response = await this.props.patchUser(payloadUser);
+            updatedUser = response.data;
+            error = response.error;
+        } else {
+            const response = await this.props.updateMe({notify_props: data});
+            updatedUser = response.data;
+            error = response.error;
+        }
+
         if (updatedUser) {
             this.handleUpdateSection('');
             this.setState(getDefaultStateFromProps(this.props));
@@ -311,7 +339,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
     };
 
     setStateValue = (key: string, value: string | boolean): void => {
-        const data: {[key: string]: string | boolean } = {};
+        const data: {[key: string]: string | boolean} = {};
         data[key] = value;
         this.setState((prevState) => ({...prevState, ...data}));
     };
@@ -340,12 +368,16 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         this.setState({channelKey: checked});
     };
 
+    handleChangeForChannelMentionAutoFollowRadio = (value: boolean) => {
+        this.setState({channelMentionAutoFollow: value});
+    };
+
     handleChangeForCustomKeysWithNotificationCheckbox = (event: ChangeEvent<HTMLInputElement>) => {
         const {target: {checked}} = event;
         this.setState({isCustomKeysWithNotificationInputChecked: checked});
     };
 
-    handleChangeForCustomKeysWithNotificationInput = (values: ValueType<{ value: string }>) => {
+    handleChangeForCustomKeysWithNotificationInput = (values: OnChangeValue<{value: string}, true>) => {
         if (values && Array.isArray(values) && values.length > 0) {
             // Check the custom keys input checkbox when atleast a single key is entered
             if (this.state.isCustomKeysWithNotificationInputChecked === false) {
@@ -413,7 +445,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         }
     };
 
-    handleChangeForCustomKeysWithHightlightInput = (values: ValueType<{ value: string }>) => {
+    handleChangeForCustomKeysWithHighlightInput = (values: OnChangeValue<{value: string}, true>) => {
         if (values && Array.isArray(values) && values.length > 0) {
             const customKeysWithHighlight = values.
                 map((value: MultiInputValue) => {
@@ -468,6 +500,90 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         this.props.closeModal();
     };
 
+    createChannelMentionAutoFollowSection = () => {
+        const serverError = this.state.serverError;
+        const isSectionExpanded = this.props.activeSection === UserSettingsNotificationSections.CHANNEL_MENTION_AUTO_FOLLOW;
+
+        let max = null;
+        if (isSectionExpanded) {
+            max = (
+                <SettingItemMax
+                    title={this.props.intl.formatMessage({id: 'user.settings.notifications.channelMentionAutoFollow.title', defaultMessage: 'Auto-follow threads on channel-wide mentions'})}
+                    inputs={
+                        <fieldset>
+                            <legend className='form-legend hidden-label'>
+                                <FormattedMessage
+                                    id='user.settings.notifications.channelMentionAutoFollow.title'
+                                    defaultMessage='Auto-follow threads on channel-wide mentions'
+                                />
+                            </legend>
+                            <div className='settings-radio-group'>
+                                <Radio
+                                    id='channelMentionAutoFollowOn'
+                                    name='channelMentionAutoFollow'
+                                    checked={this.state.channelMentionAutoFollow}
+                                    onChange={() => this.handleChangeForChannelMentionAutoFollowRadio(true)}
+                                >
+                                    <FormattedMessage
+                                        id='user.settings.notifications.channelMentionAutoFollow.on'
+                                        defaultMessage='On'
+                                    />
+                                </Radio>
+                                <Radio
+                                    id='channelMentionAutoFollowOff'
+                                    name='channelMentionAutoFollow'
+                                    checked={!this.state.channelMentionAutoFollow}
+                                    onChange={() => this.handleChangeForChannelMentionAutoFollowRadio(false)}
+                                >
+                                    <FormattedMessage
+                                        id='user.settings.notifications.channelMentionAutoFollow.off'
+                                        defaultMessage='Off'
+                                    />
+                                </Radio>
+                            </div>
+                        </fieldset>
+                    }
+                    extraInfo={
+                        <span>
+                            <FormattedMessage
+                                id='user.settings.notifications.channelMentionAutoFollow.description'
+                                defaultMessage='When enabled, @channel, @all, and @here mentions auto-follow the thread. Disabling stops the auto-follow. Notifications may still trigger based on your keyword settings.'
+                            />
+                        </span>
+                    }
+                    submit={this.handleSubmit}
+                    saving={this.state.isSaving}
+                    serverError={serverError}
+                    updateSection={this.handleUpdateSection}
+                />
+            );
+        }
+
+        const describe = this.state.channelMentionAutoFollow ? (
+            <FormattedMessage
+                id='user.settings.notifications.channelMentionAutoFollow.on'
+                defaultMessage='On'
+            />
+        ) : (
+            <FormattedMessage
+                id='user.settings.notifications.channelMentionAutoFollow.off'
+                defaultMessage='Off'
+            />
+        );
+
+        return (
+            <SettingItem
+                title={this.props.intl.formatMessage({id: 'user.settings.notifications.channelMentionAutoFollow.title', defaultMessage: 'Auto-follow threads on channel-wide mentions'})}
+                active={isSectionExpanded}
+                describe={describe}
+                section={UserSettingsNotificationSections.CHANNEL_MENTION_AUTO_FOLLOW}
+                updateSection={this.handleUpdateSection}
+                max={max}
+                areAllSectionsInactive={this.props.activeSection === ''}
+            />
+        );
+    };
+
     createKeywordsWithNotificationSection = () => {
         const serverError = this.state.serverError;
         const user = this.props.user;
@@ -480,14 +596,12 @@ class NotificationsTab extends React.PureComponent<Props, State> {
             if (user.first_name) {
                 inputs.push(
                     <div key='userNotificationFirstNameOption'>
-                        <div className='checkbox'>
-                            <label>
-                                <input
-                                    id='notificationTriggerFirst'
-                                    type='checkbox'
-                                    checked={this.state.firstNameKey}
-                                    onChange={this.handleChangeForFirstNameKeyCheckbox}
-                                />
+                        <div className='checkbox no-padding'>
+                            <Checkbox
+                                id='notificationTriggerFirst'
+                                checked={this.state.firstNameKey}
+                                onChange={this.handleChangeForFirstNameKeyCheckbox}
+                            >
                                 <FormattedMessage
                                     id='user.settings.notifications.sensitiveName'
                                     defaultMessage='Your case-sensitive first name "{first_name}"'
@@ -495,7 +609,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                                         first_name: user.first_name,
                                     }}
                                 />
-                            </label>
+                            </Checkbox>
                         </div>
                     </div>,
                 );
@@ -503,14 +617,12 @@ class NotificationsTab extends React.PureComponent<Props, State> {
 
             inputs.push(
                 <div key='userNotificationUsernameOption'>
-                    <div className='checkbox'>
-                        <label>
-                            <input
-                                id='notificationTriggerUsername'
-                                type='checkbox'
-                                checked={this.state.usernameKey}
-                                onChange={this.handleChangeForUsernameKeyCheckbox}
-                            />
+                    <div className='checkbox no-padding'>
+                        <Checkbox
+                            id='notificationTriggerUsername'
+                            checked={this.state.usernameKey}
+                            onChange={this.handleChangeForUsernameKeyCheckbox}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.sensitiveUsername'
                                 defaultMessage='Your non case-sensitive username "{username}"'
@@ -518,26 +630,24 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                                     username: user.username,
                                 }}
                             />
-                        </label>
+                        </Checkbox>
                     </div>
                 </div>,
             );
 
             inputs.push(
                 <div key='userNotificationChannelOption'>
-                    <div className='checkbox'>
-                        <label>
-                            <input
-                                id='notificationTriggerShouts'
-                                type='checkbox'
-                                checked={this.state.channelKey}
-                                onChange={this.handleChangeForChannelKeyCheckbox}
-                            />
+                    <div className='checkbox no-padding'>
+                        <Checkbox
+                            id='notificationTriggerShouts'
+                            checked={this.state.channelKey}
+                            onChange={this.handleChangeForChannelKeyCheckbox}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.channelWide'
                                 defaultMessage='Channel-wide mentions "@channel", "@all", "@here"'
                             />
-                        </label>
+                        </Checkbox>
                     </div>
                 </div>,
             );
@@ -547,19 +657,17 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                     key='userNotificationCustomOption'
                     className='customKeywordsWithNotificationSubsection'
                 >
-                    <div className='checkbox'>
-                        <label>
-                            <input
-                                id='notificationTriggerCustom'
-                                type='checkbox'
-                                checked={this.state.isCustomKeysWithNotificationInputChecked}
-                                onChange={this.handleChangeForCustomKeysWithNotificationCheckbox}
-                            />
+                    <div className='checkbox no-padding'>
+                        <Checkbox
+                            id='notificationTriggerCustom'
+                            checked={this.state.isCustomKeysWithNotificationInputChecked}
+                            onChange={this.handleChangeForCustomKeysWithNotificationCheckbox}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.sensitiveCustomWords'
                                 defaultMessage='Other non case-sensitive words, press Tab or use commas to separate keywords:'
                             />
-                        </label>
+                        </Checkbox>
                     </div>
                     <CreatableReactSelect
                         inputId='notificationTriggerCustomText'
@@ -572,8 +680,8 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                             DropdownIndicator: () => null,
                             Menu: () => null,
                             MenuList: () => null,
+                            Input: CreatableReactSelectInput,
                         }}
-                        aria-labelledby='notificationTriggerCustom'
                         onChange={this.handleChangeForCustomKeysWithNotificationInput}
                         value={this.state.customKeysWithNotification}
                         inputValue={this.state.customKeysWithNotificationInputValue}
@@ -597,7 +705,16 @@ class NotificationsTab extends React.PureComponent<Props, State> {
             expandedSection = (
                 <SettingItemMax
                     title={this.props.intl.formatMessage({id: 'user.settings.notifications.keywordsWithNotification.title', defaultMessage: 'Keywords that trigger notifications'})}
-                    inputs={inputs}
+                    inputs={
+                        <fieldset>
+                            <legend className='hidden-label'>
+                                {this.props.intl.formatMessage({id: 'user.settings.notifications.keywordsWithNotification.title', defaultMessage: 'Keywords that trigger notifications'})}
+                            </legend>
+                            <div>
+                                {inputs}
+                            </div>
+                        </fieldset>
+                    }
                     submit={this.handleSubmit}
                     saving={this.state.isSaving}
                     serverError={serverError}
@@ -666,7 +783,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                             MenuList: () => null,
                         }}
                         aria-labelledby='mentionKeysWithHighlightInput'
-                        onChange={this.handleChangeForCustomKeysWithHightlightInput}
+                        onChange={this.handleChangeForCustomKeysWithHighlightInput}
                         value={this.state.customKeysWithHighlight}
                         inputValue={this.state.customKeysWithHighlightInputValue}
                         onInputChange={this.handleChangeForCustomKeysWithHighlightInputValue}
@@ -697,14 +814,14 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         }
 
         let collapsedDescription = this.props.intl.formatMessage({id: 'user.settings.notifications.keywordsWithHighlight.none', defaultMessage: 'None'});
-        if (!this.props.isEnterpriseOrCloudOrSKUStarterFree && this.props.isEnterpriseReady && this.state.customKeysWithHighlight.length > 0) {
+        if (!this.props.isEnterpriseOrSKUStarterFree && this.props.isEnterpriseReady && this.state.customKeysWithHighlight.length > 0) {
             const customKeysWithHighlightStringArray = this.state.customKeysWithHighlight.map((key) => key.value);
             collapsedDescription = customKeysWithHighlightStringArray.map((key) => `"${key}"`).join(', ');
         }
 
         const collapsedEditButtonWhenDisabled = (
             <RestrictedIndicator
-                blocked={this.props.isEnterpriseOrCloudOrSKUStarterFree && this.props.isEnterpriseReady}
+                blocked={this.props.isEnterpriseOrSKUStarterFree && this.props.isEnterpriseReady}
                 feature={MattermostFeatures.HIGHLIGHT_WITHOUT_NOTIFICATION}
                 minimumPlanRequiredForFeature={LicenseSkus.Professional}
                 tooltipTitle={this.props.intl.formatMessage({
@@ -765,7 +882,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                 describe={collapsedDescription}
                 updateSection={this.handleUpdateSection}
                 max={expandedSection}
-                isDisabled={this.props.isEnterpriseOrCloudOrSKUStarterFree && this.props.isEnterpriseReady}
+                isDisabled={this.props.isEnterpriseOrSKUStarterFree && this.props.isEnterpriseReady}
                 collapsedEditButtonWhenDisabled={collapsedEditButtonWhenDisabled}
             />);
     };
@@ -794,52 +911,40 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                             defaultMessage='Reply notifications'
                         />
                     </legend>
-                    <div className='radio'>
-                        <label>
-                            <input
-                                id='notificationCommentsAny'
-                                type='radio'
-                                name='commentsNotificationLevel'
-                                checked={commentsActive[0]}
-                                onChange={this.handleNotifyCommentsRadio.bind(this, 'any')}
-                            />
+                    <div className='settings-radio-group'>
+                        <Radio
+                            id='notificationCommentsAny'
+                            name='commentsNotificationLevel'
+                            checked={commentsActive[0]}
+                            onChange={this.handleNotifyCommentsRadio.bind(this, 'any')}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.commentsAny'
                                 defaultMessage='Trigger notifications on messages in reply threads that I start or participate in'
                             />
-                        </label>
-                        <br/>
-                    </div>
-                    <div className='radio'>
-                        <label>
-                            <input
-                                id='notificationCommentsRoot'
-                                type='radio'
-                                name='commentsNotificationLevel'
-                                checked={commentsActive[1]}
-                                onChange={this.handleNotifyCommentsRadio.bind(this, 'root')}
-                            />
+                        </Radio>
+                        <Radio
+                            id='notificationCommentsRoot'
+                            name='commentsNotificationLevel'
+                            checked={commentsActive[1]}
+                            onChange={this.handleNotifyCommentsRadio.bind(this, 'root')}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.commentsRoot'
                                 defaultMessage='Trigger notifications on messages in threads that I start'
                             />
-                        </label>
-                        <br/>
-                    </div>
-                    <div className='radio'>
-                        <label>
-                            <input
-                                id='notificationCommentsNever'
-                                type='radio'
-                                name='commentsNotificationLevel'
-                                checked={commentsActive[2]}
-                                onChange={this.handleNotifyCommentsRadio.bind(this, 'never')}
-                            />
+                        </Radio>
+                        <Radio
+                            id='notificationCommentsNever'
+                            name='commentsNotificationLevel'
+                            checked={commentsActive[2]}
+                            onChange={this.handleNotifyCommentsRadio.bind(this, 'never')}
+                        >
                             <FormattedMessage
                                 id='user.settings.notifications.commentsNever'
                                 defaultMessage="Do not trigger notifications on messages in reply threads unless I'm mentioned"
                             />
-                        </label>
+                        </Radio>
                     </div>
                 </fieldset>,
             );
@@ -948,6 +1053,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
     };
 
     render() {
+        const channelMentionAutoFollowSection = this.createChannelMentionAutoFollowSection();
         const keywordsWithNotificationSection = this.createKeywordsWithNotificationSection();
         const keywordsWithHighlightSection = this.createKeywordsWithHighlightSection();
         const commentsSection = this.createCommentsSection();
@@ -956,7 +1062,11 @@ class NotificationsTab extends React.PureComponent<Props, State> {
         const areAllSectionsInactive = this.props.activeSection === '';
 
         return (
-            <div id='notificationSettings'>
+            <div
+                id='notificationsSettings'
+                aria-labelledby='notificationsButton'
+                role='tabpanel'
+            >
                 <SettingMobileHeader
                     closeModal={this.props.closeModal}
                     collapseModal={this.props.collapseModal}
@@ -983,14 +1093,20 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                                 id='user.settings.notifications.learnMore'
                                 defaultMessage='<a>Learn more about notifications</a>'
                                 values={{
-                                    a: (chunks: string) => ((
-                                        <ExternalLink
-                                            href='https://mattermost.com/pl/about-notifications'
-                                            className='btn btn-link'
+                                    a: (chunks) => ((
+                                        <Button
+                                            asChild={true}
+                                            emphasis='quaternary'
+                                            size='small'
+                                            leadingIcon={<Icon glyph={<LightbulbOutlineIcon/>}/>}
                                         >
-                                            <LightbulbOutlineIcon className='circular-border'/>
-                                            <span>{chunks}</span>
-                                        </ExternalLink>
+                                            <ExternalLink
+                                                location='user_settings_notifications'
+                                                href='https://mattermost.com/pl/about-notifications'
+                                            >
+                                                <span>{chunks}</span>
+                                            </ExternalLink>
+                                        </Button>
                                     )),
                                 }}
                             />
@@ -1047,8 +1163,10 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                         threads={this.state.emailThreads || ''}
                     />
                     <div className='divider-light'/>
+                    {channelMentionAutoFollowSection}
+                    <div className='divider-light'/>
                     {keywordsWithNotificationSection}
-                    {(!this.props.isEnterpriseOrCloudOrSKUStarterFree && this.props.isEnterpriseReady) && (
+                    {(!this.props.isEnterpriseOrSKUStarterFree && this.props.isEnterpriseReady) && (
                         <>
                             <div className='divider-light'/>
                             {keywordsWithHighlightSection}
@@ -1069,13 +1187,13 @@ class NotificationsTab extends React.PureComponent<Props, State> {
                     )}
 
                     {/*  We placed the disabled items in the last */}
-                    {(this.props.isEnterpriseOrCloudOrSKUStarterFree && this.props.isEnterpriseReady) && (
+                    {(this.props.isEnterpriseOrSKUStarterFree && this.props.isEnterpriseReady) && (
                         <>
                             <div className='divider-light'/>
                             {keywordsWithHighlightSection}
                         </>
                     )}
-                    <div className='divider-dark'/>
+                    <SendTestNotificationNotice adminMode={this.props.adminMode}/>
                 </div>
             </div>
 
@@ -1083,7 +1201,7 @@ class NotificationsTab extends React.PureComponent<Props, State> {
     }
 }
 
-const customKeywordsSelectorStyles: ReactSelectStyles = {
+const customKeywordsSelectorStyles = {
     container: ((baseStyle) => ({
         ...baseStyle,
         marginBlockStart: '10px',
@@ -1121,13 +1239,16 @@ const customKeywordsSelectorStyles: ReactSelectStyles = {
             color: 'rgba(var(--center-channel-color-rgb), 0.56);',
         },
     })),
-};
+} satisfies StylesConfig<MultiInputValue, true>;
 
 const validNotificationLevels = Object.values(NotificationLevels);
 
+/**
+ * Check's if user's global notification settings for desktop and mobile are different
+ */
 export function areDesktopAndMobileSettingsDifferent(
     desktopActivity: UserNotifyProps['desktop'],
-    pushActivity: UserNotifyProps['push'],
+    pushActivity?: UserNotifyProps['push'],
     desktopThreads?: UserNotifyProps['desktop_threads'],
     pushThreads?: UserNotifyProps['push_threads'],
     isCollapsedThreadsEnabled?: boolean,

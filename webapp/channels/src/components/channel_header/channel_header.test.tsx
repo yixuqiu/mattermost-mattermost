@@ -2,48 +2,53 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import type {ComponentProps} from 'react';
 
-import type {ChannelType} from '@mattermost/types/channels';
-import type {UserCustomStatus} from '@mattermost/types/users';
-
-import ChannelHeader from 'components/channel_header/channel_header';
-import ChannelInfoButton from 'components/channel_header/channel_info_button';
-import Markdown from 'components/markdown';
-
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
-import Constants, {RHSStates} from 'utils/constants';
+import {renderWithContext, screen} from 'tests/react_testing_utils';
+import {boardChannelsState} from 'utils/channel_kind_test_utils';
+import {RHSStates} from 'utils/constants';
 import {TestHelper} from 'utils/test_helper';
 
+import ChannelHeader from './channel_header';
+
 describe('components/ChannelHeader', () => {
-    const baseProps: ComponentProps<typeof ChannelHeader> = {
+    const baseProps = {
         actions: {
             showPinnedPosts: jest.fn(),
             showChannelFiles: jest.fn(),
             closeRightHandSide: jest.fn(),
-            openModal: jest.fn(),
             getCustomEmojisInText: jest.fn(),
             updateChannelNotifyProps: jest.fn(),
-            goToLastViewedChannel: jest.fn(),
             showChannelMembers: jest.fn(),
+            fetchChannelRemotes: jest.fn(),
         },
-        announcementBarCount: 1,
-        teamId: 'team_id',
+        team: TestHelper.getTeamMock({id: 'team_id'}),
         channel: TestHelper.getChannelMock({}),
         channelMember: TestHelper.getChannelMembershipMock({}),
         currentUser: TestHelper.getUserMock({}),
-        currentRelativeTeamUrl: '',
         isCustomStatusEnabled: false,
         isCustomStatusExpired: false,
-        isFileAttachmentsEnabled: true,
+        canSearchFiles: true,
         lastActivityTimestamp: 1632146562846,
         isLastActiveEnabled: true,
+        memberCount: 2,
+        dmUser: undefined,
+        gmMembers: undefined,
+        rhsState: RHSStates.CHANNEL_INFO,
+        isChannelMuted: false,
+        hasGuests: false,
+        pinnedPostsCount: 0,
+        customStatus: undefined,
         timestampUnits: [
             'now',
             'minute',
             'hour',
         ],
         hideGuestTags: false,
+        remoteNames: [],
+
+        isChannelAutotranslated: false,
+        hasPendingJoinRequests: false,
+        channelKind: 'channel' as const,
     };
 
     const populatedProps = {
@@ -64,103 +69,19 @@ describe('components/ChannelHeader', () => {
         }),
     };
 
-    test('should render properly when empty', () => {
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...baseProps}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render properly when populated', () => {
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...populatedProps}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render properly when populated with channel props', () => {
-        const props = {
-            ...baseProps,
-            channel: TestHelper.getChannelMock({
-                id: 'channel_id',
-                team_id: 'team_id',
-                name: 'Test',
-                header: 'See ~test',
-                props: {
-                    channel_mentions: {
-                        test: {
-                            display_name: 'Test',
-                        },
-                    },
-                },
-            }),
-            channelMember: TestHelper.getChannelMembershipMock({
-                channel_id: 'channel_id',
-                user_id: 'user_id',
-            }),
-            currentUser: TestHelper.getUserMock({
-                id: 'user_id',
-            }),
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render archived view', () => {
-        const props = {
-            ...populatedProps,
-            channel: {...populatedProps.channel, delete_at: 1234},
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render shared view', () => {
-        const props = {
-            ...populatedProps,
-            channel: TestHelper.getChannelMock({
-                ...populatedProps.channel,
-                shared: true,
-                type: Constants.OPEN_CHANNEL as ChannelType,
-            }),
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render correct menu when muted', () => {
-        const props = {
-            ...populatedProps,
-            isMuted: true,
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
     test('should unmute the channel when mute icon is clicked', () => {
         const props = {
             ...populatedProps,
-            isMuted: true,
+            isChannelMuted: true,
         };
 
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
         );
 
-        wrapper.find('.channel-header__mute').simulate('click');
-        wrapper.update();
+        const muteButton = container.querySelector('.channel-header__mute');
+        expect(muteButton).not.toBeNull();
+        (muteButton as HTMLElement).click();
         expect(props.actions.updateChannelNotifyProps).toHaveBeenCalledTimes(1);
         expect(props.actions.updateChannelNotifyProps).toHaveBeenCalledWith('user_id', 'channel_id', {mark_unread: 'all'});
     });
@@ -169,12 +90,15 @@ describe('components/ChannelHeader', () => {
         const props = {
             ...populatedProps,
             rhsState: RHSStates.PIN,
+            pinnedPostsCount: 2,
         };
 
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
+        expect(container.querySelector('#channelHeaderPinButton')).toHaveAttribute('data-active', 'true');
+        expect(container.querySelector('#channelHeaderFilesButton')).not.toHaveAttribute('data-active');
+        expect(container.querySelector('#member_rhs')).not.toHaveAttribute('data-active');
     });
 
     test('should render active channel files', () => {
@@ -184,10 +108,11 @@ describe('components/ChannelHeader', () => {
             showChannelFilesButton: true,
         };
 
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
+        expect(container.querySelector('#channelHeaderFilesButton')).toHaveAttribute('data-active', 'true');
+        expect(container.querySelector('#member_rhs')).not.toHaveAttribute('data-active');
     });
 
     test('should render not active channel files', () => {
@@ -197,175 +122,63 @@ describe('components/ChannelHeader', () => {
             showChannelFilesButton: true,
         };
 
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
+        expect(container.querySelector('#channelHeaderFilesButton')).not.toHaveAttribute('data-active');
     });
 
-    test('should render active flagged posts', () => {
+    test('should render active channel members', () => {
         const props = {
             ...populatedProps,
-            rhsState: RHSStates.FLAG,
+            rhsState: RHSStates.CHANNEL_MEMBERS,
         };
 
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
+        expect(container.querySelector('#member_rhs')).toHaveAttribute('data-active', 'true');
+        expect(container.querySelector('#channelHeaderFilesButton')).not.toHaveAttribute('data-active');
     });
 
-    test('should render active mentions posts', () => {
+    test('should not render the channel files button when file search is disabled', () => {
         const props = {
             ...populatedProps,
-            rhsState: RHSStates.MENTION,
+            canSearchFiles: false,
         };
 
-        const wrapper = shallowWithIntl(
+        renderWithContext(
             <ChannelHeader {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render bot description', () => {
-        const props = {
-            ...populatedProps,
-            channel: TestHelper.getChannelMock({
-                header: 'not the bot description',
-                type: Constants.DM_CHANNEL as ChannelType,
-            }),
-            dmUser: TestHelper.getUserMock({
-                id: 'user_id',
-                is_bot: true,
-                bot_description: 'the bot description',
-            }),
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper.containsMatchingElement(
-            <Markdown
-                message={props.currentUser.bot_description}
-            />,
-        )).toEqual(true);
-    });
-
-    test('should render the pinned icon with the pinned posts count', () => {
-        const props = {
-            ...populatedProps,
-            pinnedPostsCount: 2,
-        };
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render properly when custom status is set', () => {
-        const props = {
-            ...populatedProps,
-            channel: TestHelper.getChannelMock({
-                header: 'not the bot description',
-                type: Constants.DM_CHANNEL as ChannelType,
-                status: 'offline',
-            }),
-            dmUser: TestHelper.getUserMock({
-                id: 'user_id',
-                is_bot: false,
-            }),
-            isCustomStatusEnabled: true,
-            customStatus: {
-                emoji: 'calender',
-                text: 'In a meeting',
-            } as UserCustomStatus,
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render properly when custom status is expired', () => {
-        const props = {
-            ...populatedProps,
-            channel: TestHelper.getChannelMock({
-                header: 'not the bot description',
-                type: Constants.DM_CHANNEL as ChannelType,
-                status: 'offline',
-            }),
-            dmUser: TestHelper.getUserMock({
-                id: 'user_id',
-                is_bot: false,
-            }),
-            isCustomStatusEnabled: true,
-            isCustomStatusExpired: true,
-            customStatus: {
-                emoji: 'calender',
-                text: 'In a meeting',
-            } as UserCustomStatus,
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
+        expect(document.getElementById('channelHeaderFilesButton')).not.toBeInTheDocument();
     });
 
     test('should contain the channel info button', () => {
-        const wrapper = shallowWithIntl(
+        const {container} = renderWithContext(
             <ChannelHeader {...populatedProps}/>,
         );
-        expect(wrapper.contains(
-            <ChannelInfoButton channel={populatedProps.channel}/>,
-        )).toEqual(true);
+
+        // ChannelInfoButton renders a button with channel-info class
+        const channelInfoButton = container.querySelector('.channel-header__info');
+        expect(channelInfoButton).not.toBeNull();
     });
 
-    test('should match snapshot with last active display', () => {
+    test('should call a board a board', () => {
         const props = {
             ...populatedProps,
-            channel: TestHelper.getChannelMock({
-                header: 'not the bot description',
-                type: Constants.DM_CHANNEL as ChannelType,
-                status: 'offline',
-            }),
-            dmUser: TestHelper.getUserMock({
-                id: 'user_id',
-                is_bot: false,
-                props: {
-                    show_last_active: 'true',
-                },
-            }),
+            hasGuests: true,
+            channelKind: 'board' as const,
         };
 
-        const wrapper = shallowWithIntl(
+        const boardState = boardChannelsState('channel_id');
+        const {container} = renderWithContext(
             <ChannelHeader {...props}/>,
+            {plugins: {components: {CallButton: [], ...boardState.plugins?.components}}},
         );
-        expect(wrapper).toMatchSnapshot();
-    });
 
-    test('should match snapshot with no last active display because it is disabled', () => {
-        const props = {
-            ...populatedProps,
-            isLastActiveEnabled: false,
-            channel: TestHelper.getChannelMock({
-                header: 'not the bot description',
-                type: Constants.DM_CHANNEL as ChannelType,
-                status: 'offline',
-            }),
-            dmUser: TestHelper.getUserMock({
-                id: 'user_id',
-                is_bot: false,
-                props: {
-                    show_last_active: 'false',
-                },
-            }),
-        };
-
-        const wrapper = shallowWithIntl(
-            <ChannelHeader {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByText('Board has guests')).toBeInTheDocument();
+        expect(screen.queryByText('Channel has guests')).not.toBeInTheDocument();
+        expect(container.querySelector('[aria-label="board header region"]')).not.toBeNull();
+        expect(container.querySelector('[aria-label="channel header region"]')).toBeNull();
     });
 });

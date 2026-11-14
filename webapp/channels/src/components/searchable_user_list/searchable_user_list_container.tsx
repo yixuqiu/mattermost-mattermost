@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useState, type JSX} from 'react';
 
 import type {Channel, ChannelMembership} from '@mattermost/types/channels';
 import type {TeamMembership} from '@mattermost/types/teams';
@@ -15,8 +15,9 @@ type Props = {
     total: number;
     extraInfo?: {[key: string]: Array<string | JSX.Element>};
     nextPage: (page: number) => void;
+    previousPage?: (page: number) => void;
     search: (term: string) => void;
-    actions?: React.ReactNode[];
+    actions?: Array<React.ComponentType<any>>;
     actionProps?: {
         mfaEnabled: boolean;
         enableUserAccessTokens: boolean;
@@ -36,7 +37,7 @@ type Props = {
         };
     };
     focusOnMount?: boolean;
-}
+};
 
 export default function SearchableUserListContainer(props: Props) {
     const [term, setTerm] = useState('');
@@ -53,6 +54,7 @@ export default function SearchableUserListContainer(props: Props) {
 
     const previousPage = () => {
         setPage(page - 1);
+        props.previousPage?.(page - 1);
     };
 
     const search = (term: string) => {

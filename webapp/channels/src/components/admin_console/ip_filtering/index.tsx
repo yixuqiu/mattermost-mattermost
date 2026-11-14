@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, type JSX} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useDispatch} from 'react-redux';
 
@@ -23,7 +23,7 @@ import EnableSectionContent from './enable_section';
 import {isIPAddressInRanges} from './ip_filtering_utils';
 import SaveConfirmationModal from './save_confirmation_modal';
 
-import SaveChangesPanel from '../team_channel_settings/save_changes_panel';
+import SaveChangesPanel from '../save_changes_panel';
 
 import './ip_filtering.scss';
 
@@ -256,7 +256,7 @@ const IPFiltering = () => {
                     id={'admin.ip_filtering.no_filters_added'}
                     defaultMessage={'Are you sure you want to apply these IP filter changes? There are currently no filters added, so <strong>all IP addresses will have access to the workspace.</strong>'}
                     values={{
-                        strong: (content: string) => <strong>{content}</strong>,
+                        strong: (content) => <strong>{content}</strong>,
                     }}
                 />
             );
@@ -269,7 +269,7 @@ const IPFiltering = () => {
                     id={'admin.ip_filtering.turn_off_ip_filtering'}
                     defaultMessage={'Are you sure you want to turn off IP Filtering? <strong>All IP addresses will have access to the workspace.</strong>'}
                     values={{
-                        strong: (content: string) => <strong>{content}</strong>,
+                        strong: (content) => <strong>{content}</strong>,
                     }}
                 />
             );
@@ -282,7 +282,7 @@ const IPFiltering = () => {
                     id={'admin.ip_filtering.apply_ip_filter_changes_are_you_sure'}
                     defaultMessage={'Are you sure you want to apply these IP Filter changes? <strong>Users with IP addresses outside of the IP ranges provided will no longer have access to the workspace.</strong>'}
                     values={{
-                        strong: (content: string) => <strong>{content}</strong>,
+                        strong: (content) => <strong>{content}</strong>,
                     }}
                 />
             );
@@ -316,7 +316,7 @@ const IPFiltering = () => {
     return (
         <div className='IPFiltering wrapper--fixed'>
             <AdminHeader>
-                {formatMessage({id: 'admin.ip_filtering.ip_filtering', defaultMessage: 'IP Filtering'})}
+                <span>{formatMessage({id: 'admin.ip_filtering.ip_filtering', defaultMessage: 'IP Filtering'})}</span>
             </AdminHeader>
             <div className='MainPanel admin-console__wrapper'>
                 <>

@@ -1,6 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import classNames from 'classnames';
 import React from 'react';
 import {useSelector} from 'react-redux';
 import {Link} from 'react-router-dom';
@@ -11,12 +12,13 @@ import BackButton from 'components/common/back_button';
 import Logo from 'components/common/svg_images_components/logo_dark_blue_svg';
 
 import './header.scss';
+import {LicenseSkus} from 'utils/constants';
 
 export type HeaderProps = {
-    alternateLink?: React.ReactElement;
+    alternateLink?: React.ReactElement<any>;
     backButtonURL?: string;
     onBackButtonClick?: React.EventHandler<React.MouseEvent>;
-}
+};
 
 const Header = ({alternateLink, backButtonURL, onBackButtonClick}: HeaderProps) => {
     const {SiteName} = useSelector(getConfig);
@@ -26,7 +28,9 @@ const Header = ({alternateLink, backButtonURL, onBackButtonClick}: HeaderProps) 
 
     let freeBanner = null;
     if (license.IsLicensed === 'false') {
-        freeBanner = <><Logo/><span className='freeBadge'>{'FREE EDITION'}</span></>;
+        freeBanner = <><Logo/><span className='freeBadge'>{'TEAM EDITION'}</span></>;
+    } else if (license.SkuShortName === LicenseSkus.Entry) {
+        freeBanner = <><Logo/><span className='freeBadge'>{'ENTRY EDITION'}</span></>;
     }
 
     let title: React.ReactNode = SiteName;
@@ -39,11 +43,15 @@ const Header = ({alternateLink, backButtonURL, onBackButtonClick}: HeaderProps) 
     }
 
     return (
-        <div className='hfroute-header'>
+        <div
+            data-testid='hfroute-header'
+            className={classNames('hfroute-header', {'has-free-banner': freeBanner, 'has-custom-site-name': title})}
+        >
             <div className='header-main'>
                 <div>
                     {freeBanner &&
                         <Link
+                            data-testid='header-logo-link'
                             className='header-logo-link'
                             to='/'
                             aria-label={ariaLabel}
@@ -53,6 +61,7 @@ const Header = ({alternateLink, backButtonURL, onBackButtonClick}: HeaderProps) 
                     }
                     {title &&
                         <Link
+                            data-testid='header-logo-link'
                             className='header-logo-link'
                             to='/'
                             aria-label={ariaLabel}

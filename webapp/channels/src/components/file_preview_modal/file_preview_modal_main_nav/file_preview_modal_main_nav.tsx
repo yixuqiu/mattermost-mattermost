@@ -2,14 +2,17 @@
 // See LICENSE.txt for license information.
 
 import React, {memo} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
+
+import ChevronLeftIcon from '@mattermost/compass-icons/components/chevron-left';
+import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
+
+import {FILE_PREVIEW_ICON_BUTTON_CLASS, FILE_PREVIEW_ICON_BUTTON_PROPS} from '../icon_button';
 
 import './file_preview_modal_main_nav.scss';
-
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
-
-import Constants from 'utils/constants';
 
 interface Props {
     fileIndex: number;
@@ -19,57 +22,59 @@ interface Props {
 }
 
 const FilePreviewModalMainNav: React.FC<Props> = (props: Props) => {
+    const {formatMessage} = useIntl();
+    const prevLabel = formatMessage({id: 'file_preview_modal_main_nav.prevAriaLabel', defaultMessage: 'Previous file'});
+    const nextLabel = formatMessage({id: 'file_preview_modal_main_nav.nextAriaLabel', defaultMessage: 'Next file'});
+
     const leftArrow = (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
+        <WithTooltip
             key='previewArrowLeft'
-            placement='bottom'
-            overlay={
-                <Tooltip id='close-icon-tooltip'>
-                    <FormattedMessage
-                        id='generic.close'
-                        defaultMessage='Close'
-                    />
-                </Tooltip>
+            title={
+                <FormattedMessage
+                    id='generic.previous'
+                    defaultMessage='Previous'
+                />
             }
         >
-            <button
+            <IconButton
                 id='previewArrowLeft'
-                className='file_preview_modal_main_nav__prev'
+                className={`${FILE_PREVIEW_ICON_BUTTON_CLASS} file_preview_modal_main_nav__prev`}
+                {...FILE_PREVIEW_ICON_BUTTON_PROPS}
+                icon={<Icon glyph={<ChevronLeftIcon/>}/>}
                 onClick={props.handlePrev}
-            >
-                <i className='icon icon-chevron-left'/>
-            </button>
-        </OverlayTrigger>
+                aria-label={prevLabel}
+            />
+        </WithTooltip>
     );
 
     const rightArrow = (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            key='publicLink'
-            placement='bottom'
-            overlay={
-                <Tooltip id='close-icon-tooltip'>
-                    <FormattedMessage
-                        id='generic.next'
-                        defaultMessage='Next'
-                    />
-                </Tooltip>
+        <WithTooltip
+            key='previewArrowRight'
+            title={
+                <FormattedMessage
+                    id='generic.next'
+                    defaultMessage='Next'
+                />
             }
         >
-            <button
+            <IconButton
                 id='previewArrowRight'
-                className='file_preview_modal_main_nav__next'
+                className={`${FILE_PREVIEW_ICON_BUTTON_CLASS} file_preview_modal_main_nav__next`}
+                {...FILE_PREVIEW_ICON_BUTTON_PROPS}
+                icon={<Icon glyph={<ChevronRightIcon/>}/>}
                 onClick={props.handleNext}
-            >
-                <i className='icon icon-chevron-right'/>
-            </button>
-        </OverlayTrigger>
+                aria-label={nextLabel}
+            />
+        </WithTooltip>
     );
     return (
-        <div className='file_preview_modal_main_nav'>
+        <div className='file_preview_modal_main_nav icon-buttons-on-dark'>
             {leftArrow}
-            <span className='modal-bar-file-count'>
+            <span
+                className='modal-bar-file-count'
+                aria-live='polite'
+                aria-atomic='true'
+            >
                 <FormattedMessage
                     id='file_preview_modal_main_nav.file'
                     defaultMessage='{count, number} of {total, number}'

@@ -9,6 +9,7 @@ import PostEmoji from './post_emoji';
 
 describe('PostEmoji', () => {
     const baseProps = {
+        children: ':emoji:',
         imageUrl: '/api/v4/emoji/1234/image',
         name: 'emoji',
     };
@@ -17,7 +18,7 @@ describe('PostEmoji', () => {
         renderWithContext(<PostEmoji {...baseProps}/>);
 
         expect(screen.queryByTestId('postEmoji.:' + baseProps.name + ':')).toBeInTheDocument();
-        expect(screen.queryByTestId('postEmoji.:' + baseProps.name + ':')).toHaveStyle(`backgroundImage: url(${baseProps.imageUrl})}`);
+        expect(screen.queryByTestId('postEmoji.:' + baseProps.name + ':')).toHaveStyle({backgroundImage: `url(${baseProps.imageUrl})`});
     });
 
     test('should render shortcode text within span when imageUrl is provided', () => {
@@ -26,7 +27,7 @@ describe('PostEmoji', () => {
         expect(screen.queryByTestId('postEmoji.:' + baseProps.name + ':')).toHaveTextContent(`:${baseProps.name}:`);
     });
 
-    test('should render original text when imageUrl is empty', () => {
+    test('should render children as fallback when imageUrl is empty', () => {
         const props = {
             ...baseProps,
             imageUrl: '',

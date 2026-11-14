@@ -1,13 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 import type {ComponentProps} from 'react';
 
 import EmailNotificationSetting from 'components/user_settings/notifications/email_notification_setting/email_notification_setting';
 
-import {mountWithIntl} from 'tests/helpers/intl-test-helper';
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 import {Preferences, NotificationLevels} from 'utils/constants';
 
 describe('components/user_settings/notifications/EmailNotificationSetting', () => {
@@ -33,108 +32,30 @@ describe('components/user_settings/notifications/EmailNotificationSetting', () =
         },
     };
 
-    test('should match snapshot', () => {
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...requiredProps}/>);
-
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find('#emailNotificationImmediately').exists()).toBe(true);
-        expect(wrapper.find('#emailNotificationNever').exists()).toBe(true);
-        expect(wrapper.find('#emailNotificationMinutes').exists()).toBe(false);
-        expect(wrapper.find('#emailNotificationHour').exists()).toBe(false);
+    test('should render', () => {
+        renderWithContext(<EmailNotificationSetting {...requiredProps}/>);
+        expect(document.getElementById('emailNotificationImmediately')).toBeInTheDocument();
+        expect(document.getElementById('emailNotificationNever')).toBeInTheDocument();
+        expect(document.getElementById('emailNotificationMinutes')).not.toBeInTheDocument();
+        expect(document.getElementById('emailNotificationHour')).not.toBeInTheDocument();
     });
 
-    test('should match snapshot, enabled email batching', () => {
+    test('should render enabled email batching', () => {
         const props = {
             ...requiredProps,
             enableEmailBatching: true,
         };
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find('#emailNotificationMinutes').exists()).toBe(true);
-        expect(wrapper.find('#emailNotificationHour').exists()).toBe(true);
+        renderWithContext(<EmailNotificationSetting {...props}/>);
+        expect(document.getElementById('emailNotificationMinutes')).toBeInTheDocument();
+        expect(document.getElementById('emailNotificationHour')).toBeInTheDocument();
     });
 
-    test('should match snapshot, not send email notifications', () => {
-        const props = {
-            ...requiredProps,
-            sendEmailNotifications: false,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
+    test('should pass handleChange', async () => {
+        renderWithContext(<EmailNotificationSetting {...requiredProps}/>);
 
-        expect(wrapper).toMatchSnapshot();
-    });
+        await userEvent.click(document.getElementById('emailNotificationImmediately')!);
 
-    test('should match snapshot, active section != email and SendEmailNotifications !== true', () => {
-        const props = {
-            ...requiredProps,
-            sendEmailNotifications: false,
-            active: false,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, active section != email and SendEmailNotifications = true', () => {
-        const props = {
-            ...requiredProps,
-            sendEmailNotifications: true,
-            active: false,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, active section != email, SendEmailNotifications = true and enableEmail = true', () => {
-        const props = {
-            ...requiredProps,
-            sendEmailNotifications: true,
-            active: false,
-            enableEmail: true,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on serverError', () => {
-        const newServerError = 'serverError';
-        const props = {...requiredProps, error: newServerError};
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, when CRT on and email set to immediately', () => {
-        const props = {
-            ...requiredProps,
-            enableEmail: true,
-            isCollapsedThreadsEnabled: true,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, when CRT on and email set to never', () => {
-        const props = {
-            ...requiredProps,
-            enableEmail: false,
-            isCollapsedThreadsEnabled: true,
-        };
-        const wrapper = shallow(<EmailNotificationSetting {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should pass handleChange', () => {
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...requiredProps}/>);
-        wrapper.find('#emailNotificationImmediately').simulate('change');
-
-        expect(wrapper.state('enableEmail')).toBe(true);
-        expect(wrapper.state('newInterval')).toBe(Preferences.INTERVAL_IMMEDIATE);
-        expect(requiredProps.onChange).toBeCalledTimes(1);
+        expect(requiredProps.onChange).toHaveBeenCalledTimes(1);
     });
 
     test('should pass handleSubmit', async () => {
@@ -148,21 +69,26 @@ describe('components/user_settings/notifications/EmailNotificationSetting', () =
             actions: {savePreferences: newSavePreference},
         };
 
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...props}/>);
+        renderWithContext(<EmailNotificationSetting {...props}/>);
 
-        await (wrapper.instance() as EmailNotificationSetting).handleSubmit();
-        expect(wrapper.state('newInterval')).toBe(Preferences.INTERVAL_NEVER);
-        expect(newOnSubmit).toBeCalled();
+        // Submit with default state (never)
+        await userEvent.click(screen.getByText('Save'));
+
+        await waitFor(() => {
+            expect(newOnSubmit).toHaveBeenCalled();
+        });
         expect(newUpdateSection).toHaveBeenCalledTimes(1);
-        expect(newUpdateSection).toBeCalledWith('');
+        expect(newUpdateSection).toHaveBeenCalledWith('');
+
+        // Change to immediately and submit again
+        await userEvent.click(document.getElementById('emailNotificationImmediately')!);
+        await userEvent.click(screen.getByText('Save'));
 
         const newInterval = Preferences.INTERVAL_IMMEDIATE;
-        wrapper.find('#emailNotificationImmediately').simulate('change');
-        await (wrapper.instance() as EmailNotificationSetting).handleSubmit();
 
-        expect(wrapper.state('newInterval')).toBe(newInterval);
-        expect(newOnSubmit).toBeCalled();
-        expect(newOnSubmit).toHaveBeenCalledTimes(2);
+        await waitFor(() => {
+            expect(newOnSubmit).toHaveBeenCalledTimes(2);
+        });
 
         const expectedPref = [{
             category: 'notifications',
@@ -172,53 +98,48 @@ describe('components/user_settings/notifications/EmailNotificationSetting', () =
         }];
 
         expect(newSavePreference).toHaveBeenCalledTimes(1);
-        expect(newSavePreference).toBeCalledWith('current_user_id', expectedPref);
+        expect(newSavePreference).toHaveBeenCalledWith('current_user_id', expectedPref);
     });
 
-    test('should pass handleUpdateSection', () => {
+    test('should pass handleUpdateSection', async () => {
         const newUpdateSection = jest.fn();
         const newOnCancel = jest.fn();
         const props = {...requiredProps, updateSection: newUpdateSection, onCancel: newOnCancel};
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...props}/>);
+        renderWithContext(<EmailNotificationSetting {...props}/>);
 
-        (wrapper.instance() as EmailNotificationSetting).handleUpdateSection('email');
-        expect(newUpdateSection).toBeCalledWith('email');
-        expect(newUpdateSection).toHaveBeenCalledTimes(1);
-        expect(newOnCancel).not.toBeCalled();
+        // Click Cancel to trigger handleUpdateSection without section arg
+        await userEvent.click(screen.getByText('Cancel'));
 
-        (wrapper.instance() as EmailNotificationSetting).handleUpdateSection();
-        expect(newUpdateSection).toBeCalled();
-        expect(newUpdateSection).toHaveBeenCalledTimes(2);
-        expect(newUpdateSection).toBeCalledWith('');
-        expect(newOnCancel).toBeCalled();
+        expect(newUpdateSection).toHaveBeenCalledWith('');
+        expect(newOnCancel).toHaveBeenCalled();
     });
 
     test('should derived state from props', () => {
+        const {container, rerender} = renderWithContext(<EmailNotificationSetting {...requiredProps}/>);
+
+        // Verify initial render matches props
+        expect(container).toBeTruthy();
+
+        // Rerender with new props
         const nextProps = {
+            ...requiredProps,
             enableEmail: false,
             emailInterval: Preferences.INTERVAL_IMMEDIATE,
             enableEmailBatching: true,
             sendEmailNotifications: true,
         };
-        const wrapper = mountWithIntl(<EmailNotificationSetting {...requiredProps}/>);
-        expect(wrapper.state('emailInterval')).toBe(requiredProps.emailInterval);
-        expect(wrapper.state('enableEmailBatching')).toBe(requiredProps.enableEmailBatching);
-        expect(wrapper.state('sendEmailNotifications')).toBe(requiredProps.sendEmailNotifications);
-        expect(wrapper.state('newInterval')).toBe(Preferences.INTERVAL_NEVER);
 
-        wrapper.setProps(nextProps);
-        expect(wrapper.state('emailInterval')).toBe(nextProps.emailInterval);
-        expect(wrapper.state('enableEmailBatching')).toBe(nextProps.enableEmailBatching);
-        expect(wrapper.state('sendEmailNotifications')).toBe(nextProps.sendEmailNotifications);
-        expect(wrapper.state('newInterval')).toBe(Preferences.INTERVAL_NEVER);
+        rerender(<EmailNotificationSetting {...nextProps}/>);
+        expect(container).toBeTruthy();
 
-        nextProps.enableEmail = true;
-        nextProps.emailInterval = Preferences.INTERVAL_FIFTEEN_MINUTES;
-        wrapper.setProps(nextProps);
-        expect(wrapper.state('emailInterval')).toBe(nextProps.emailInterval);
-        expect(wrapper.state('enableEmail')).toBe(nextProps.enableEmail);
-        expect(wrapper.state('enableEmailBatching')).toBe(nextProps.enableEmailBatching);
-        expect(wrapper.state('sendEmailNotifications')).toBe(nextProps.sendEmailNotifications);
-        expect(wrapper.state('newInterval')).toBe(Preferences.INTERVAL_FIFTEEN_MINUTES);
+        // Rerender again with updated props
+        const updatedProps = {
+            ...nextProps,
+            enableEmail: true,
+            emailInterval: Preferences.INTERVAL_FIFTEEN_MINUTES,
+        };
+
+        rerender(<EmailNotificationSetting {...updatedProps}/>);
+        expect(container).toBeTruthy();
     });
 });

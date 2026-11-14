@@ -3,8 +3,7 @@
 
 import classNames from 'classnames';
 import isEqual from 'lodash/isEqual';
-import React from 'react';
-import Scrollbars from 'react-custom-scrollbars';
+import React, {type JSX} from 'react';
 import {FormattedMessage, injectIntl} from 'react-intl';
 import type {IntlShape} from 'react-intl';
 
@@ -14,6 +13,7 @@ import AdminSidebarCategory from 'components/admin_console/admin_sidebar/admin_s
 import AdminSidebarSection from 'components/admin_console/admin_sidebar/admin_sidebar_section';
 import AdminSidebarHeader from 'components/admin_console/admin_sidebar_header';
 import SearchKeywordMarking from 'components/admin_console/search_keyword_marking';
+import Scrollbars from 'components/common/scrollbars';
 import QuickInput from 'components/quick_input';
 import SearchIcon from 'components/widgets/icons/search_icon';
 
@@ -33,31 +33,10 @@ export interface Props extends PropsFromRedux {
 type State = {
     sections: string[] | null;
     filter: string;
-}
-
-const renderScrollView = (props: Props) => (
-    <div
-        {...props}
-        className='scrollbar--view'
-    />
-);
-
-const renderScrollThumbHorizontal = (props: Props) => (
-    <div
-        {...props}
-        className='scrollbar--horizontal'
-    />
-);
-
-const renderScrollThumbVertical = (props: Props) => (
-    <div
-        {...props}
-        className='scrollbar--vertical'
-    />
-);
+};
 
 class AdminSidebar extends React.PureComponent<Props, State> {
-    searchRef: React.RefObject<HTMLInputElement>;
+    searchRef: React.RefObject<HTMLInputElement | null>;
     idx: Index | null;
 
     static defaultProps = {
@@ -79,7 +58,8 @@ class AdminSidebar extends React.PureComponent<Props, State> {
             this.props.actions.getPlugins();
         }
 
-        if (this.searchRef.current) {
+        if (this.searchRef.current && !getHistory().location.hash) {
+            // default focus if no other target/hash is specified for auto-focus
             this.searchRef.current.focus();
         }
 
@@ -143,7 +123,7 @@ class AdminSidebar extends React.PureComponent<Props, State> {
     };
 
     visibleSections = () => {
-        const {config, license, buildEnterpriseReady, consoleAccess, adminDefinition, cloud} = this.props;
+        const {config, license, buildEnterpriseReady, consoleAccess, adminDefinition, cloud, isCurrentUserSystemAdmin} = this.props;
         const isVisible = (item: any) => {
             if (!item.schema) {
                 return false;
@@ -153,7 +133,7 @@ class AdminSidebar extends React.PureComponent<Props, State> {
                 return false;
             }
 
-            if (item.isHidden && item.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud)) {
+            if (item.isHidden && item.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud, isCurrentUserSystemAdmin)) {
                 return false;
             }
             return true;
@@ -170,12 +150,12 @@ class AdminSidebar extends React.PureComponent<Props, State> {
     };
 
     renderRootMenu = (definition: typeof AdminDefinition) => {
-        const {config, license, buildEnterpriseReady, consoleAccess, cloud, subscriptionProduct} = this.props;
+        const {config, license, buildEnterpriseReady, consoleAccess, cloud, isCurrentUserSystemAdmin} = this.props;
         const sidebarSections: JSX.Element[] = [];
         Object.entries(definition).forEach(([key, section]) => {
             let isSectionHidden = false;
             if (section.isHidden) {
-                isSectionHidden = typeof section.isHidden === 'function' ? section.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud) : Boolean(section.isHidden);
+                isSectionHidden = typeof section.isHidden === 'function' ? section.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud, isCurrentUserSystemAdmin) : Boolean(section.isHidden);
             }
             if (!isSectionHidden) {
                 const sidebarItems: JSX.Element[] = [];
@@ -185,7 +165,7 @@ class AdminSidebar extends React.PureComponent<Props, State> {
                     }
 
                     if (item.isHidden) {
-                        if (typeof item.isHidden === 'function' ? item.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud) : Boolean(item.isHidden)) {
+                        if (typeof item.isHidden === 'function' ? item.isHidden(config, this.state, license, buildEnterpriseReady, consoleAccess, cloud, isCurrentUserSystemAdmin) : Boolean(item.isHidden)) {
                             return;
                         }
                     }
@@ -207,14 +187,12 @@ class AdminSidebar extends React.PureComponent<Props, State> {
                             key={subDefinitionKey}
                             definitionKey={subDefinitionKey}
                             name={item.url}
-                            restrictedIndicator={item.restrictedIndicator?.shouldDisplay(license, subscriptionProduct) ? item.restrictedIndicator.value(cloud) : undefined}
-                            title={
-                                typeof item.title === 'string' ?
-                                    item.title :
-                                    <FormattedMessage
-                                        {...item.title}
-                                    />
-                            }
+                            restrictedIndicator={item.restrictedIndicator?.shouldDisplay() ? item.restrictedIndicator.value(cloud) : undefined}
+                            title={typeof item.title === 'string' ? item.title : (
+                                <FormattedMessage
+                                    {...item.title}
+                                />
+                            )}
                         />
                     ));
                 });
@@ -236,14 +214,11 @@ class AdminSidebar extends React.PureComponent<Props, State> {
                         definitionKey={key}
                         parentLink='/admin_console'
                         icon={section.icon}
-                        sectionClass=''
-                        title={
-                            typeof section.sectionTitle === 'string' ?
-                                section.sectionTitle :
-                                <FormattedMessage
-                                    {...section.sectionTitle}
-                                />
-                        }
+                        title={typeof section.sectionTitle === 'string' ? section.sectionTitle : (
+                            <FormattedMessage
+                                {...section.sectionTitle}
+                            />
+                        )}
                     >
                         {sidebarItems}
                     </AdminSidebarCategory>
@@ -292,7 +267,10 @@ class AdminSidebar extends React.PureComponent<Props, State> {
     render() {
         const {showTaskList} = this.props;
         return (
-            <div className='admin-sidebar'>
+            <div
+                className='admin-sidebar'
+                data-testid='admin-sidebar'
+            >
                 <AdminSidebarHeader/>
                 <div className='filter-container'>
                     <SearchIcon
@@ -311,14 +289,7 @@ class AdminSidebar extends React.PureComponent<Props, State> {
                         onClear={this.handleClearFilter}
                     />
                 </div>
-                <Scrollbars
-                    autoHide={true}
-                    autoHideTimeout={500}
-                    autoHideDuration={500}
-                    renderThumbHorizontal={renderScrollThumbHorizontal}
-                    renderThumbVertical={renderScrollThumbVertical}
-                    renderView={renderScrollView}
-                >
+                <Scrollbars>
                     <div className='nav-pills__container'>
                         <SearchKeywordMarking keyword={this.state.filter}>
                             <ul className={classNames('nav nav-pills nav-stacked', {'task-list-shown': showTaskList})}>

@@ -8,8 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
@@ -18,25 +19,36 @@ import (
 
 // AutocompleteDynamicArgProvider dynamically provides auto-completion args for built-in commands.
 type AutocompleteDynamicArgProvider interface {
-	GetAutoCompleteListItems(c request.CTX, a *App, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error)
+	GetAutoCompleteListItems(rctx request.CTX, a *App, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error)
+}
+
+// AutocompleteQuotedArgProvider is implemented by built-in commands whose parser accepts single and
+// curly quotes, so autocomplete ends a quoted text argument where the command does. Other commands,
+// including plugins that split on whitespace, only treat straight double quotes as grouping words.
+type AutocompleteQuotedArgProvider interface {
+	// SplitQuotedArg returns the input after the quoted value that in starts with. quoted is false
+	// if in does not start with a quote, and closed is false while the command would not accept the
+	// value as typed, e.g. until its closing quote is typed or when text follows the closing quote.
+	SplitQuotedArg(in string) (rest string, quoted, closed bool)
 }
 
 // GetSuggestions returns suggestions for user input.
-func (a *App) GetSuggestions(c request.CTX, commandArgs *model.CommandArgs, commands []*model.Command, roleID string) []model.AutocompleteSuggestion {
-	sort.Slice(commands, func(i, j int) bool {
-		return strings.Compare(strings.ToLower(commands[i].Trigger), strings.ToLower(commands[j].Trigger)) < 0
+func (a *App) GetSuggestions(rctx request.CTX, commandArgs *model.CommandArgs, commands []*model.Command, roleID string) []model.AutocompleteSuggestion {
+	slices.SortFunc(commands, func(a, b *model.Command) int {
+		return strings.Compare(strings.ToLower(a.Trigger), strings.ToLower(b.Trigger))
 	})
 
-	autocompleteData := []*model.AutocompleteData{}
+	pluginCommands := a.CommandsForTeam(commandArgs.TeamId)
+	userInput := commandArgs.Command
+	suggestions := []model.AutocompleteSuggestion{}
 	for _, command := range commands {
 		if command.AutocompleteData == nil {
 			command.AutocompleteData = model.NewAutocompleteData(command.Trigger, command.AutoCompleteHint, command.AutoCompleteDesc)
 		}
-		autocompleteData = append(autocompleteData, command.AutocompleteData)
+		quotes := builtInQuotedArgProvider(command, pluginCommands)
+		suggestions = append(suggestions, a.getSuggestions(rctx, commandArgs, []*model.AutocompleteData{command.AutocompleteData}, "", userInput, roleID, quotes)...)
 	}
 
-	userInput := commandArgs.Command
-	suggestions := a.getSuggestions(c, commandArgs, autocompleteData, "", userInput, roleID)
 	for i, suggestion := range suggestions {
 		for _, command := range commands {
 			if strings.HasPrefix(suggestion.Complete, command.Trigger) {
@@ -49,7 +61,7 @@ func (a *App) GetSuggestions(c request.CTX, commandArgs *model.CommandArgs, comm
 	return suggestions
 }
 
-func (a *App) getSuggestions(c request.CTX, commandArgs *model.CommandArgs, commands []*model.AutocompleteData, inputParsed, inputToBeParsed, roleID string) []model.AutocompleteSuggestion {
+func (a *App) getSuggestions(rctx request.CTX, commandArgs *model.CommandArgs, commands []*model.AutocompleteData, inputParsed, inputToBeParsed, roleID string, quotes AutocompleteQuotedArgProvider) []model.AutocompleteSuggestion {
 	suggestions := []model.AutocompleteSuggestion{}
 	index := strings.Index(inputToBeParsed, " ")
 
@@ -80,12 +92,12 @@ func (a *App) getSuggestions(c request.CTX, commandArgs *model.CommandArgs, comm
 
 		if len(command.Arguments) == 0 {
 			// Seek recursively in subcommands
-			subSuggestions := a.getSuggestions(c, commandArgs, command.SubCommands, parsed, toBeParsed, roleID)
+			subSuggestions := a.getSuggestions(rctx, commandArgs, command.SubCommands, parsed, toBeParsed, roleID, quotes)
 			suggestions = append(suggestions, subSuggestions...)
 			continue
 		}
 
-		found, _, _, suggestion := a.parseArguments(c, commandArgs, command.Arguments, parsed, toBeParsed)
+		found, _, _, suggestion := a.parseArguments(rctx, commandArgs, command.Arguments, parsed, toBeParsed, quotes)
 		if found {
 			suggestions = append(suggestions, suggestion...)
 		}
@@ -94,27 +106,27 @@ func (a *App) getSuggestions(c request.CTX, commandArgs *model.CommandArgs, comm
 	return suggestions
 }
 
-func (a *App) parseArguments(c request.CTX, commandArgs *model.CommandArgs, args []*model.AutocompleteArg, parsed, toBeParsed string) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
+func (a *App) parseArguments(rctx request.CTX, commandArgs *model.CommandArgs, args []*model.AutocompleteArg, parsed, toBeParsed string, quotes AutocompleteQuotedArgProvider) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
 	if len(args) == 0 {
 		return false, parsed, toBeParsed, suggestions
 	}
 
 	if args[0].Required {
-		found, changedParsed, changedToBeParsed, suggestion := a.parseArgument(c, commandArgs, args[0], parsed, toBeParsed)
+		found, changedParsed, changedToBeParsed, suggestion := a.parseArgument(rctx, commandArgs, args[0], parsed, toBeParsed, quotes)
 		if found {
 			suggestions = append(suggestions, suggestion...)
 			return true, changedParsed, changedToBeParsed, suggestions
 		}
-		return a.parseArguments(c, commandArgs, args[1:], changedParsed, changedToBeParsed)
+		return a.parseArguments(rctx, commandArgs, args[1:], changedParsed, changedToBeParsed, quotes)
 	}
 
 	// Handling optional arguments. Optional argument can be inputted or not,
 	// so we have to pase both cases recursively and output combined suggestions.
-	foundWithOptional, changedParsedWithOptional, changedToBeParsedWithOptional, suggestionsWithOptional := a.parseArgument(c, commandArgs, args[0], parsed, toBeParsed)
+	foundWithOptional, changedParsedWithOptional, changedToBeParsedWithOptional, suggestionsWithOptional := a.parseArgument(rctx, commandArgs, args[0], parsed, toBeParsed, quotes)
 	if foundWithOptional {
 		suggestions = append(suggestions, suggestionsWithOptional...)
 	} else {
-		foundWithOptionalRest, changedParsedWithOptionalRest, changedToBeParsedWithOptionalRest, suggestionsWithOptionalRest := a.parseArguments(c, commandArgs, args[1:], changedParsedWithOptional, changedToBeParsedWithOptional)
+		foundWithOptionalRest, changedParsedWithOptionalRest, changedToBeParsedWithOptionalRest, suggestionsWithOptionalRest := a.parseArguments(rctx, commandArgs, args[1:], changedParsedWithOptional, changedToBeParsedWithOptional, quotes)
 		if foundWithOptionalRest {
 			suggestions = append(suggestions, suggestionsWithOptionalRest...)
 		}
@@ -123,7 +135,7 @@ func (a *App) parseArguments(c request.CTX, commandArgs *model.CommandArgs, args
 		changedToBeParsedWithOptional = changedToBeParsedWithOptionalRest
 	}
 
-	foundWithoutOptional, changedParsedWithoutOptional, changedToBeParsedWithoutOptional, suggestionsWithoutOptional := a.parseArguments(c, commandArgs, args[1:], parsed, toBeParsed)
+	foundWithoutOptional, changedParsedWithoutOptional, changedToBeParsedWithoutOptional, suggestionsWithoutOptional := a.parseArguments(rctx, commandArgs, args[1:], parsed, toBeParsed, quotes)
 	if foundWithoutOptional {
 		suggestions = append(suggestions, suggestionsWithoutOptional...)
 	}
@@ -142,7 +154,7 @@ func (a *App) parseArguments(c request.CTX, commandArgs *model.CommandArgs, args
 	return foundWithoutOptional, changedParsedWithoutOptional, changedToBeParsedWithoutOptional, suggestions
 }
 
-func (a *App) parseArgument(c request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
+func (a *App) parseArgument(rctx request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string, quotes AutocompleteQuotedArgProvider) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
 	if arg.Name != "" { //Parse the --name first
 		found, changedParsed, changedToBeParsed, suggestion := parseNamedArgument(arg, parsed, toBeParsed)
 		if found {
@@ -160,7 +172,7 @@ func (a *App) parseArgument(c request.CTX, commandArgs *model.CommandArgs, arg *
 	}
 
 	if arg.Type == model.AutocompleteArgTypeText {
-		found, changedParsed, changedToBeParsed, suggestion := parseInputTextArgument(arg, parsed, toBeParsed)
+		found, changedParsed, changedToBeParsed, suggestion := parseInputTextArgument(arg, parsed, toBeParsed, quotes)
 		if found {
 			suggestions = append(suggestions, suggestion)
 			return true, changedParsed, changedToBeParsed, suggestions
@@ -176,7 +188,7 @@ func (a *App) parseArgument(c request.CTX, commandArgs *model.CommandArgs, arg *
 		parsed = changedParsed
 		toBeParsed = changedToBeParsed
 	} else if arg.Type == model.AutocompleteArgTypeDynamicList {
-		found, changedParsed, changedToBeParsed, dynamicListSuggestions := a.getDynamicListArgument(c, commandArgs, arg, parsed, toBeParsed)
+		found, changedParsed, changedToBeParsed, dynamicListSuggestions := a.getDynamicListArgument(rctx, commandArgs, arg, parsed, toBeParsed)
 		if found {
 			suggestions = append(suggestions, dynamicListSuggestions...)
 			return true, changedParsed, changedToBeParsed, suggestions
@@ -207,13 +219,32 @@ func parseNamedArgument(arg *model.AutocompleteArg, parsed, toBeParsed string) (
 	return false, parsed + namedArg + " ", in[len(namedArg)+1:], model.AutocompleteSuggestion{}
 }
 
-func parseInputTextArgument(arg *model.AutocompleteArg, parsed, toBeParsed string) (found bool, alreadyParsed string, yetToBeParsed string, suggestion model.AutocompleteSuggestion) {
+// builtInQuotedArgProvider returns the quote parser of command if it is a built-in command that has one.
+// Plugin and custom team commands take precedence over a built-in command with the same trigger.
+func builtInQuotedArgProvider(command *model.Command, pluginCommands []*model.Command) AutocompleteQuotedArgProvider {
+	if command.Id != "" || slices.ContainsFunc(pluginCommands, func(pc *model.Command) bool { return pc.Trigger == command.Trigger }) {
+		return nil
+	}
+	provider, _ := GetCommandProvider(command.Trigger).(AutocompleteQuotedArgProvider)
+	return provider
+}
+
+func parseInputTextArgument(arg *model.AutocompleteArg, parsed, toBeParsed string, quotes AutocompleteQuotedArgProvider) (found bool, alreadyParsed string, yetToBeParsed string, suggestion model.AutocompleteSuggestion) {
 	in := strings.TrimPrefix(toBeParsed, " ")
 	a := arg.Data.(*model.AutocompleteTextArg)
 	if in == "" { //The user has not started typing the argument.
 		return true, parsed + toBeParsed, "", model.AutocompleteSuggestion{Complete: parsed + toBeParsed, Suggestion: "", Hint: a.Hint, Description: arg.HelpText}
 	}
-	if in[0] == '"' { //input with multiple words
+	if quotes != nil {
+		if rest, quoted, closed := quotes.SplitQuotedArg(in); quoted {
+			// A closing quote at the end of the input may still be an apostrophe being typed.
+			if !closed || rest == "" {
+				return true, parsed + toBeParsed, "", model.AutocompleteSuggestion{Complete: parsed + toBeParsed, Suggestion: "", Hint: a.Hint, Description: arg.HelpText}
+			}
+			next := strings.TrimLeftFunc(rest, unicode.IsSpace)
+			return false, parsed + toBeParsed[:len(toBeParsed)-len(next)], next, model.AutocompleteSuggestion{}
+		}
+	} else if in[0] == '"' { //input with multiple words
 		indexOfSecondQuote := strings.Index(in[1:], `"`)
 		if indexOfSecondQuote == -1 { //typing of the multiple word argument is not finished
 			return true, parsed + toBeParsed, "", model.AutocompleteSuggestion{Complete: parsed + toBeParsed, Suggestion: "", Hint: a.Hint, Description: arg.HelpText}
@@ -239,13 +270,13 @@ func parseStaticListArgument(arg *model.AutocompleteArg, parsed, toBeParsed stri
 	return parseListItems(a.PossibleArguments, parsed, toBeParsed)
 }
 
-func (a *App) getDynamicListArgument(c request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
+func (a *App) getDynamicListArgument(rctx request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) (found bool, alreadyParsed string, yetToBeParsed string, suggestions []model.AutocompleteSuggestion) {
 	dynamicArg := arg.Data.(*model.AutocompleteDynamicListArg)
 
 	if strings.HasPrefix(dynamicArg.FetchURL, "builtin:") {
-		listItems, err := a.getBuiltinDynamicListArgument(c, commandArgs, arg, parsed, toBeParsed)
+		listItems, err := a.getBuiltinDynamicListArgument(rctx, commandArgs, arg, parsed, toBeParsed)
 		if err != nil {
-			c.Logger().Error("Can't fetch dynamic list arguments for", mlog.String("url", dynamicArg.FetchURL), mlog.Err(err))
+			rctx.Logger().Error("Can't fetch dynamic list arguments for", mlog.String("url", dynamicArg.FetchURL), mlog.Err(err))
 			return false, parsed, toBeParsed, []model.AutocompleteSuggestion{}
 		}
 		return parseListItems(listItems, parsed, toBeParsed)
@@ -257,7 +288,7 @@ func (a *App) getDynamicListArgument(c request.CTX, commandArgs *model.CommandAr
 
 	// Encode the information normally provided to a plugin slash command handler into the request parameters
 	// Encode PluginContext:
-	pluginContext := pluginContext(c)
+	pluginContext := pluginContext(rctx)
 	params.Add("request_id", pluginContext.RequestId)
 	params.Add("session_id", pluginContext.SessionId)
 	params.Add("ip_address", pluginContext.IPAddress)
@@ -269,18 +300,23 @@ func (a *App) getDynamicListArgument(c request.CTX, commandArgs *model.CommandAr
 	params.Add("team_id", commandArgs.TeamId)
 	params.Add("root_id", commandArgs.RootId)
 	params.Add("user_id", commandArgs.UserId)
-	params.Add("site_url", commandArgs.SiteURL)
 
-	resp, err := a.doPluginRequest(c, "GET", dynamicArg.FetchURL, params, nil)
+	// Use configured SiteURL to prevent SSRF via Host header spoofing (MM-67142)
+	siteURL := *a.Config().ServiceSettings.SiteURL
+	if siteURL != "" {
+		params.Add("site_url", siteURL)
+	}
+
+	resp, err := a.doPluginRequest(rctx, "GET", dynamicArg.FetchURL, params, nil)
 
 	if err != nil {
-		c.Logger().Error("Can't fetch dynamic list arguments for", mlog.String("url", dynamicArg.FetchURL), mlog.Err(err))
+		rctx.Logger().Error("Can't fetch dynamic list arguments for", mlog.String("url", dynamicArg.FetchURL), mlog.Err(err))
 		return false, parsed, toBeParsed, []model.AutocompleteSuggestion{}
 	}
 
 	var listItems []model.AutocompleteListItem
 	if jsonErr := json.NewDecoder(resp.Body).Decode(&listItems); jsonErr != nil {
-		c.Logger().Warn("Failed to decode from JSON", mlog.Err(jsonErr))
+		rctx.Logger().Warn("Failed to decode from JSON", mlog.Err(jsonErr))
 	}
 
 	return parseListItems(listItems, parsed, toBeParsed)
@@ -307,7 +343,7 @@ func parseListItems(items []model.AutocompleteListItem, parsed, toBeParsed strin
 	return true, parsed + toBeParsed, "", suggestions
 }
 
-func (a *App) getBuiltinDynamicListArgument(c request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error) {
+func (a *App) getBuiltinDynamicListArgument(rctx request.CTX, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error) {
 	dynamicArg := arg.Data.(*model.AutocompleteDynamicListArg)
 	arr := strings.Split(dynamicArg.FetchURL, ":")
 	if len(arr) < 2 {
@@ -325,5 +361,5 @@ func (a *App) getBuiltinDynamicListArgument(c request.CTX, commandArgs *model.Co
 		return nil, fmt.Errorf("auto-completion not available for built-in command %s", cmdName)
 	}
 
-	return dp.GetAutoCompleteListItems(c, a, commandArgs, arg, parsed, toBeParsed)
+	return dp.GetAutoCompleteListItems(rctx, a, commandArgs, arg, parsed, toBeParsed)
 }

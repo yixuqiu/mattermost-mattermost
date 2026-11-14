@@ -1,5 +1,3 @@
-@import 'components/toggle';
-
 .InviteAs {
     &__label {
         color: var(--center-channel-color);
@@ -9,18 +7,10 @@
         }
     }
 
-    .radio {
+    .radio-list__option {
         display: flex;
         align-items: center;
         gap: 8px;
-
-        &:first-child {
-            margin-top: 0;
-        }
-
-        &:last-child {
-            margin-bottom: 0;
-        }
 
         .disabled-legend {
             opacity: 0.73;
@@ -44,10 +34,10 @@
                 height: 24px;
                 align-items: center;
                 padding: 0 12px;
-                border: 1px solid rgba(var(--denim-button-bg-rgb), 0.08);
+                border: 1px solid rgba(var(--button-bg-rgb), 0.08);
                 border-radius: 20px;
-                background: rgba(var(--denim-button-bg-rgb), 0.04);
-                color: var(--denim-button-bg);
+                background: rgba(var(--button-bg-rgb), 0.04);
+                color: var(--button-bg);
 
                 .RestrictedIndicator__icon-tooltip-container {
                     padding: 0;

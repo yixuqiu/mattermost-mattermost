@@ -5,6 +5,8 @@ import React, {memo} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {Link} from 'react-router-dom';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
 import Permissions from 'mattermost-redux/constants/permissions';
 
 import AnyTeamPermissionGate from 'components/permissions_gates/any_team_permission_gate';
@@ -12,10 +14,10 @@ import AnyTeamPermissionGate from 'components/permissions_gates/any_team_permiss
 interface Props {
     customEmojisEnabled: boolean;
     currentTeamName: string;
-    handleEmojiPickerClose: () => void;
+    onClick: () => void;
 }
 
-function EmojiPickerCustomEmojiButton({customEmojisEnabled, currentTeamName, handleEmojiPickerClose}: Props) {
+function EmojiPickerCustomEmojiButton({customEmojisEnabled, currentTeamName, onClick}: Props) {
     if (!customEmojisEnabled) {
         return null;
     }
@@ -27,16 +29,21 @@ function EmojiPickerCustomEmojiButton({customEmojisEnabled, currentTeamName, han
     return (
         <AnyTeamPermissionGate permissions={[Permissions.CREATE_EMOJIS]}>
             <div className='emoji-picker__custom'>
-                <Link
-                    className='btn btn-tertiary'
-                    to={`/${currentTeamName}/emoji`}
-                    onClick={handleEmojiPickerClose}
+                <Button
+                    asChild={true}
+                    emphasis='tertiary'
+                    size='small'
                 >
-                    <FormattedMessage
-                        id='emoji_picker.custom_emoji'
-                        defaultMessage='Custom Emoji'
-                    />
-                </Link>
+                    <Link
+                        to={`/${currentTeamName}/emoji`}
+                        onClick={onClick}
+                    >
+                        <FormattedMessage
+                            id='emoji_picker.custom_emoji'
+                            defaultMessage='Custom Emoji'
+                        />
+                    </Link>
+                </Button>
             </div>
         </AnyTeamPermissionGate>
     );

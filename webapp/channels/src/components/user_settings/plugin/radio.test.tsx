@@ -1,7 +1,6 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {screen, fireEvent} from '@testing-library/react';
 import type {ComponentProps} from 'react';
 import React from 'react';
 
@@ -9,7 +8,7 @@ import type {DeepPartial} from '@mattermost/types/utilities';
 
 import {getPreferenceKey} from 'mattermost-redux/utils/preference_utils';
 
-import {renderWithContext} from 'tests/react_testing_utils';
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 import {getPluginPreferenceKey} from 'utils/plugins/preferences';
 
 import type {GlobalState} from 'types/store';
@@ -57,11 +56,11 @@ describe('radio', () => {
         expect(screen.queryByText(props.setting.title!)).toBeInTheDocument();
     });
 
-    it('inform change is called', () => {
+    it('inform change is called', async () => {
         const props = getBaseProps();
         renderWithContext(<RadioInput {...props}/>);
 
-        fireEvent.click(screen.getByText(OPTION_1_TEXT));
+        await userEvent.click(screen.getByText(OPTION_1_TEXT));
 
         expect(props.informChange).toHaveBeenCalledWith(SETTING_NAME, '1');
     });
@@ -85,12 +84,8 @@ describe('radio', () => {
         };
         renderWithContext(<RadioInput {...getBaseProps()}/>, state);
 
-        const option0Radio = screen.getByText(OPTION_0_TEXT).children[0];
-        const option1Radio = screen.getByText(OPTION_1_TEXT).children[0];
-        expect(option0Radio.nodeName).toBe('INPUT');
-        expect(option1Radio.nodeName).toBe('INPUT');
-        expect((option0Radio as HTMLInputElement).checked).toBeFalsy();
-        expect((option1Radio as HTMLInputElement).checked).toBeTruthy();
+        expect(screen.getByRole('radio', {name: OPTION_0_TEXT})).not.toBeChecked();
+        expect(screen.getByRole('radio', {name: OPTION_1_TEXT})).toBeChecked();
     });
 
     it('properly get the default from props', () => {
@@ -114,26 +109,18 @@ describe('radio', () => {
         props.setting.default = '1';
         renderWithContext(<RadioInput {...props}/>, state);
 
-        const option0Radio = screen.getByText(OPTION_0_TEXT).children[0];
-        const option1Radio = screen.getByText(OPTION_1_TEXT).children[0];
-        expect(option0Radio.nodeName).toBe('INPUT');
-        expect(option1Radio.nodeName).toBe('INPUT');
-        expect((option0Radio as HTMLInputElement).checked).toBeFalsy();
-        expect((option1Radio as HTMLInputElement).checked).toBeTruthy();
+        expect(screen.getByRole('radio', {name: OPTION_0_TEXT})).not.toBeChecked();
+        expect(screen.getByRole('radio', {name: OPTION_1_TEXT})).toBeChecked();
     });
 
-    it('properly persist changes', () => {
+    it('properly persist changes', async () => {
         renderWithContext(<RadioInput {...getBaseProps()}/>);
 
-        const option0Radio = screen.getByText(OPTION_0_TEXT).children[0];
-        const option1Radio = screen.getByText(OPTION_1_TEXT).children[0];
-        expect(option0Radio.nodeName).toBe('INPUT');
-        expect(option1Radio.nodeName).toBe('INPUT');
-        expect((option0Radio as HTMLInputElement).checked).toBeTruthy();
-        expect((option1Radio as HTMLInputElement).checked).toBeFalsy();
+        expect(screen.getByRole('radio', {name: OPTION_0_TEXT})).toBeChecked();
+        expect(screen.getByRole('radio', {name: OPTION_1_TEXT})).not.toBeChecked();
 
-        fireEvent.click(option1Radio);
-        expect((option0Radio as HTMLInputElement).checked).toBeFalsy();
-        expect((option1Radio as HTMLInputElement).checked).toBeTruthy();
+        await userEvent.click(screen.getByRole('radio', {name: OPTION_1_TEXT}));
+        expect(screen.getByRole('radio', {name: OPTION_0_TEXT})).not.toBeChecked();
+        expect(screen.getByRole('radio', {name: OPTION_1_TEXT})).toBeChecked();
     });
 });

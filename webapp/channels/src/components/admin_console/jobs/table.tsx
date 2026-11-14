@@ -2,12 +2,18 @@
 // See LICENSE.txt for license information.
 
 import classNames from 'classnames';
-import React from 'react';
+import React, {type JSX} from 'react';
 import {FormattedMessage} from 'react-intl';
 
+import {ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {AdminPanel as CompassAdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import type {Job, JobType} from '@mattermost/types/jobs';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
+
+import PaginationButtons from 'components/common/pagination_buttons';
 
 import {JobTypes} from 'utils/constants';
 
@@ -23,7 +29,7 @@ export type Props = {
     jobs: Job[];
     getExtraInfoText?: (job: Job) => React.ReactNode;
     disabled: boolean;
-    createJobHelpText: React.ReactElement;
+    createJobHelpText: React.ReactElement<any>;
     jobType: JobType;
     downloadExportResults?: boolean;
     className?: string;
@@ -31,25 +37,30 @@ export type Props = {
     createJobButtonText: React.ReactNode;
     hideTable?: boolean;
     jobData?: any;
+    onRowClick?: (job: Job) => void;
+    perPage?: number;
+
     actions: {
         getJobsByType: (jobType: JobType) => void;
         cancelJob: (jobId: string) => Promise<ActionResult>;
         createJob: (job: {type: JobType}) => Promise<ActionResult>;
     };
-}
+};
 
-class JobTable extends React.PureComponent<Props> {
-    interval: ReturnType<typeof setInterval>|null = null;
+type State = {
+    currentPage: number;
+};
+
+class JobTable extends React.PureComponent<Props, State> {
+    constructor(props: Props) {
+        super(props);
+        this.state = {
+            currentPage: 0,
+        };
+    }
 
     componentDidMount() {
         this.props.actions.getJobsByType(this.props.jobType);
-        this.interval = setInterval(this.reload, 15000);
-    }
-
-    componentWillUnmount() {
-        if (this.interval) {
-            clearInterval(this.interval);
-        }
     }
 
     getExtraInfoText = (job: Job) => {
@@ -84,24 +95,45 @@ class JobTable extends React.PureComponent<Props> {
         this.reload();
     };
 
+    handleNextPage = () => {
+        if (this.props.perPage) {
+            const totalPages = Math.ceil(this.props.jobs.length / this.props.perPage);
+            if (this.state.currentPage < totalPages) {
+                this.setState({currentPage: this.state.currentPage + 1});
+            }
+        }
+    };
+
+    handlePrevPage = () => {
+        if (this.state.currentPage > 0) {
+            this.setState({currentPage: this.state.currentPage - 1});
+        }
+    };
+
     render() {
+        const {perPage} = this.props;
+        const {currentPage} = this.state;
+
+        let paginatedJobs = this.props.jobs;
+        let startIndex = 0;
+        let endIndex = this.props.jobs.length;
+
+        if (perPage) {
+            startIndex = currentPage * perPage;
+            endIndex = Math.min(startIndex + perPage, this.props.jobs.length);
+            paginatedJobs = this.props.jobs.slice(startIndex, endIndex);
+        }
+
         const showFilesColumn = this.props.jobType === JobTypes.MESSAGE_EXPORT && this.props.downloadExportResults;
-        const items = this.props.jobs.map((job) => {
+        const hideDetailsColumn = this.props.jobType === JobTypes.ACCESS_CONTROL_SYNC;
+        const items = paginatedJobs.map((job) => {
             return (
                 <tr
                     key={job.id}
+                    onClick={this.props.onRowClick ? () => this.props.onRowClick!(job) : undefined}
+                    className={this.props.onRowClick ? 'clickable' : ''}
                 >
-                    <td className='cancel-button-field whitespace--nowrap text-center'>
-                        <JobCancelButton
-                            job={job}
-                            onClick={this.handleCancelJob}
-                            disabled={this.props.disabled}
-                        />
-                    </td>
                     <td className='whitespace--nowrap'><JobStatus job={job}/></td>
-                    {showFilesColumn &&
-                        <td className='whitespace--nowrap'><JobDownloadLink job={job}/></td>
-                    }
                     <td className='whitespace--nowrap'>
                         <JobFinishAt
                             status={job.status}
@@ -109,82 +141,171 @@ class JobTable extends React.PureComponent<Props> {
                         />
                     </td>
                     <td className='whitespace--nowrap'><JobRunLength job={job}/></td>
-                    <td>{this.getExtraInfoText(job)}</td>
+                    {showFilesColumn &&
+                        <td className='whitespace--nowrap'><JobDownloadLink job={job}/></td>
+                    }
+                    {!hideDetailsColumn && (
+                        <td>{this.getExtraInfoText(job)}</td>
+                    )}
+                    {/* Only wired for ACCESS_CONTROL_SYNC, where the details column is
+                        hidden — keep it so, or this cell and its header misalign. */}
+                    {this.props.onRowClick && (
+                        <td className='view-details-field whitespace--nowrap'>
+                            {/* A button, not the row, so it's keyboard-focusable; stopPropagation avoids a double row click. */}
+                            <Button
+                                type='button'
+                                emphasis='quaternary'
+                                size='small'
+                                className='view-details-link'
+                                trailingIcon={<Icon glyph={<ChevronRightIcon/>}/>}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    this.props.onRowClick!(job);
+                                }}
+                            >
+                                <FormattedMessage
+                                    id='admin.jobTable.viewDetails'
+                                    defaultMessage='View details'
+                                />
+                            </Button>
+                        </td>
+                    )}
+                    <td className='cancel-button-field whitespace--nowrap text-center'>
+                        <JobCancelButton
+                            job={job}
+                            onClick={this.handleCancelJob}
+                            disabled={this.props.disabled}
+                        />
+                    </td>
                 </tr>
             );
         });
 
-        return (
-            <div className={classNames('JobTable', 'job-table__panel', this.props.className)}>
-                <div className='job-table__create-button'>
-                    {
-                        !this.props.hideJobCreateButton &&
-                        <div>
-                            <button
-                                type='button'
-                                className='btn btn-tertiary'
-                                onClick={this.handleCreateJob}
-                                disabled={this.props.disabled}
-                            >
-                                {this.props.createJobButtonText}
-                            </button>
+        const renderFooter = (): JSX.Element | null => {
+            let footer: JSX.Element | null = null;
+
+            if (perPage) {
+                const firstPage = startIndex <= 0;
+                const lastPage = endIndex >= this.props.jobs.length;
+
+                footer = (
+                    <div className='DataGrid_footer'>
+                        <div className='DataGrid_cell'>
+                            <FormattedMessage
+                                id='admin.data_grid.paginatorCount'
+                                defaultMessage='{startCount, number} - {endCount, number} of {total, number}'
+                                values={{
+                                    startCount: startIndex + 1,
+                                    endCount: endIndex,
+                                    total: this.props.jobs.length,
+                                }}
+                            />
+                            <PaginationButtons
+                                onPrevious={this.handlePrevPage}
+                                onNext={this.handleNextPage}
+                                disablePrevious={firstPage}
+                                disableNext={lastPage}
+                                previousButtonClassName='ml-2 prev'
+                                nextButtonClassName='next'
+                            />
                         </div>
-                    }
-                    <div className='help-text'>
-                        {this.props.createJobHelpText}
                     </div>
-                </div>
-                {
-                    !this.props.hideTable &&
-                    <div className='job-table__table'>
-                        <table
-                            className='table'
-                            data-testid='jobTable'
-                        >
-                            <thead>
-                                <tr>
-                                    <th className='cancel-button-field'/>
-                                    <th>
-                                        <FormattedMessage
-                                            id='admin.jobTable.headerStatus'
-                                            defaultMessage='Status'
-                                        />
-                                    </th>
-                                    {showFilesColumn &&
-                                    <th>
-                                        <FormattedMessage
-                                            id='admin.jobTable.headerFiles'
-                                            defaultMessage='Files'
-                                        />
-                                    </th>
-                                    }
-                                    <th>
-                                        <FormattedMessage
-                                            id='admin.jobTable.headerFinishAt'
-                                            defaultMessage='Finish Time'
-                                        />
-                                    </th>
-                                    <th>
-                                        <FormattedMessage
-                                            id='admin.jobTable.headerRunTime'
-                                            defaultMessage='Run Time'
-                                        />
-                                    </th>
-                                    <th colSpan={3}>
-                                        <FormattedMessage
-                                            id='admin.jobTable.headerExtraInfo'
-                                            defaultMessage='Details'
-                                        />
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {items}
-                            </tbody>
-                        </table>
-                    </div>
-                }
+                );
+            }
+
+            return footer;
+        };
+
+        const table = !this.props.hideTable && (
+            <div className='job-table__table'>
+                <table
+                    className='table'
+                    data-testid='jobTable'
+                >
+                    <thead>
+                        <tr>
+                            <th>
+                                <FormattedMessage
+                                    id='admin.jobTable.headerStatus'
+                                    defaultMessage='Status'
+                                />
+                            </th>
+                            <th>
+                                <FormattedMessage
+                                    id='admin.jobTable.headerFinishAt'
+                                    defaultMessage='Finish Time'
+                                />
+                            </th>
+                            <th>
+                                <FormattedMessage
+                                    id='admin.jobTable.headerRunTime'
+                                    defaultMessage='Run Time'
+                                />
+                            </th>
+                            {showFilesColumn &&
+                            <th>
+                                <FormattedMessage
+                                    id='admin.jobTable.headerFiles'
+                                    defaultMessage='Files'
+                                />
+                            </th>
+                            }
+                            {!hideDetailsColumn && (
+                                <th colSpan={3}>
+                                    <FormattedMessage
+                                        id='admin.jobTable.headerExtraInfo'
+                                        defaultMessage='Details'
+                                    />
+                                </th>
+                            )}
+                            {this.props.onRowClick && <th className='view-details-field'/>}
+                            <th className='cancel-button-field'/>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items}
+                    </tbody>
+                </table>
+                {perPage && this.props.jobs.length > 0 && (
+                    renderFooter()
+                )}
             </div>
+        );
+
+        // Embedded in a parent AdminPanel (e.g. Data Retention): keep help + table only.
+        if (this.props.hideJobCreateButton) {
+            return (
+                <div className={classNames('JobTable', 'job-table__panel', this.props.className)}>
+                    <div className='job-table__create-button'>
+                        <div className='help-text'>
+                            {this.props.createJobHelpText}
+                        </div>
+                    </div>
+                    {table}
+                </div>
+            );
+        }
+
+        const panelTitle = this.props.createJobButtonText == null ? ' ' : this.props.createJobButtonText;
+
+        return (
+            <CompassAdminPanel
+                className={classNames('AdminPanel', 'JobTable', 'job-table__panel', this.props.className)}
+                title={panelTitle}
+                subtitle={this.props.createJobHelpText}
+                headerActions={
+                    <Button
+                        type='button'
+                        emphasis='primary'
+                        onClick={this.handleCreateJob}
+                        disabled={this.props.disabled}
+                    >
+                        {this.props.createJobButtonText}
+                    </Button>
+                }
+            >
+                {table}
+            </CompassAdminPanel>
         );
     }
 }

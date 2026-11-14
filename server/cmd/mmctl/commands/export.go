@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/mattermost/mattermost/server/v8/cmd/mmctl/client"
 	"github.com/mattermost/mattermost/server/v8/cmd/mmctl/printer"
@@ -15,6 +16,21 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/spf13/cobra"
 )
+
+// splitTrimComma splits a comma-separated flag value into trimmed, non-empty parts.
+func splitTrimComma(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 var ExportCmd = &cobra.Command{
 	Use:   "export",
@@ -95,20 +111,16 @@ var ExportJobCancelCmd = &cobra.Command{
 }
 
 func init() {
-	ExportCreateCmd.Flags().Bool("attachments", false, "Set to true to include file attachments in the export file.")
-	_ = ExportCreateCmd.Flags().MarkHidden("attachments")
-	_ = ExportCreateCmd.Flags().MarkDeprecated("attachments", "the tool now includes attachments by default. The flag will be removed in a future version.")
-
 	ExportCreateCmd.Flags().Bool("no-attachments", false, "Exclude file attachments from the export file.")
 	ExportCreateCmd.Flags().Bool("include-archived-channels", false, "Include archived channels in the export file.")
 	ExportCreateCmd.Flags().Bool("include-profile-pictures", false, "Include profile pictures in the export file.")
 	ExportCreateCmd.Flags().Bool("no-roles-and-schemes", false, "Exclude roles and custom permission schemes from the export file.")
+	ExportCreateCmd.Flags().Bool("include-custom-emoji", false, "Include the instance's custom emoji in a team- or channel-scoped export. Custom emoji are instance-wide, so scoped exports omit them by default. Full-instance exports always include them.")
+	ExportCreateCmd.Flags().String("team-name", "", "Export only the specified team(s) by name/slug. Accepts a comma-separated list. Mutually exclusive with --team-id.")
+	ExportCreateCmd.Flags().String("team-id", "", "Export only the specified team(s) by ID. Accepts a comma-separated list. Mutually exclusive with --team-name.")
+	ExportCreateCmd.Flags().String("channel-name", "", "Export only the specified channel(s) by name. Accepts a comma-separated list. Requires --team-name or --team-id. Mutually exclusive with --channel-id.")
+	ExportCreateCmd.Flags().String("channel-id", "", "Export only the specified channel(s) by ID. Accepts a comma-separated list. The team is inferred from each channel when --team-name/--team-id is omitted; if teams are provided, each channel must belong to one of them. Mutually exclusive with --channel-name.")
 
-	ExportDownloadCmd.Flags().Bool("resume", false, "Set to true to resume an export download.")
-	_ = ExportDownloadCmd.Flags().MarkHidden("resume")
-	// Intentionally the message does not start with a capital letter because
-	// cobra prepends "Flag --resume has been deprecated,"
-	_ = ExportDownloadCmd.Flags().MarkDeprecated("resume", "the tool now resumes a download automatically. The flag will be removed in a future version.")
 	ExportDownloadCmd.Flags().Int("num-retries", 5, "Number of retries to do to resume a download.")
 
 	ExportJobListCmd.Flags().Int("page", 0, "Page number to fetch for the list of export jobs")
@@ -149,9 +161,129 @@ func exportCreateCmdF(c client.Client, command *cobra.Command, args []string) er
 		data["include_archived_channels"] = "true"
 	}
 
+	includeCustomEmoji, _ := command.Flags().GetBool("include-custom-emoji")
+	if includeCustomEmoji {
+		data["include_custom_emoji"] = "true"
+	}
+
 	includeProfilePictures, _ := command.Flags().GetBool("include-profile-pictures")
 	if includeProfilePictures {
 		data["include_profile_pictures"] = "true"
+	}
+
+	teamNameFlag, _ := command.Flags().GetString("team-name")
+	teamIDFlag, _ := command.Flags().GetString("team-id")
+	channelNameFlag, _ := command.Flags().GetString("channel-name")
+	channelIDFlag, _ := command.Flags().GetString("channel-id")
+
+	if teamNameFlag != "" && teamIDFlag != "" {
+		return fmt.Errorf("--team-name and --team-id are mutually exclusive")
+	}
+	if channelNameFlag != "" && channelIDFlag != "" {
+		return fmt.Errorf("--channel-name and --channel-id are mutually exclusive")
+	}
+
+	// resolvedTeams accumulates (name, id) pairs for all teams in the export scope.
+	type teamEntry struct{ name, id string }
+	var resolvedTeams []teamEntry
+	resolvedTeamIDSet := make(map[string]bool)
+
+	addTeam := func(t teamEntry) {
+		if !resolvedTeamIDSet[t.id] {
+			resolvedTeams = append(resolvedTeams, t)
+			resolvedTeamIDSet[t.id] = true
+		}
+	}
+
+	// Resolve --team-id (comma-separated IDs → names).
+	for _, id := range splitTrimComma(teamIDFlag) {
+		team, _, err := c.GetTeam(context.TODO(), id, "")
+		if err != nil {
+			return fmt.Errorf("failed to lookup team by ID %q: %w", id, err)
+		}
+		if team == nil {
+			return fmt.Errorf("team with ID %q not found", id)
+		}
+		addTeam(teamEntry{name: team.Name, id: team.Id})
+	}
+
+	// Resolve --team-name (comma-separated names → IDs for cross-validation).
+	for _, name := range splitTrimComma(teamNameFlag) {
+		team, _, err := c.GetTeamByName(context.TODO(), name, "")
+		if err != nil {
+			return fmt.Errorf("failed to lookup team %q: %w", name, err)
+		}
+		if team == nil {
+			return fmt.Errorf("team %q not found", name)
+		}
+		addTeam(teamEntry{name: team.Name, id: team.Id})
+	}
+
+	// Resolve --channel-id (comma-separated IDs → names).
+	// When no teams are specified, the team is inferred from each channel's TeamId.
+	// When teams are specified, each channel must belong to one of them.
+	//
+	// explicitTeamsProvided is captured once, before this loop, rather than
+	// re-checking len(resolvedTeams) on each iteration — addTeam mutates
+	// resolvedTeams as a side effect of inference, so re-checking it inline
+	// would make the first --channel-id's inferred team look like an
+	// "explicitly specified" team by the time the second --channel-id (from a
+	// different team) is processed, incorrectly rejecting it.
+	explicitTeamsProvided := len(resolvedTeams) > 0
+	var resolvedChannelNames []string
+	for _, id := range splitTrimComma(channelIDFlag) {
+		channel, _, err := c.GetChannel(context.TODO(), id)
+		if err != nil {
+			return fmt.Errorf("failed to lookup channel by ID %q: %w", id, err)
+		}
+		if channel == nil {
+			return fmt.Errorf("channel with ID %q not found", id)
+		}
+		if !explicitTeamsProvided {
+			// Infer team from the channel.
+			team, _, err := c.GetTeam(context.TODO(), channel.TeamId, "")
+			if err != nil {
+				return fmt.Errorf("failed to lookup team for channel %q: %w", id, err)
+			}
+			if team == nil {
+				return fmt.Errorf("team for channel %q not found", id)
+			}
+			addTeam(teamEntry{name: team.Name, id: team.Id})
+		} else if !resolvedTeamIDSet[channel.TeamId] {
+			return fmt.Errorf("channel %q does not belong to any of the specified teams", id)
+		}
+		resolvedChannelNames = append(resolvedChannelNames, channel.Name)
+	}
+
+	// Pass-through --channel-name. When exactly one team is in scope, validate
+	// each channel exists in that team. For multi-team exports the backend
+	// handles missing channels gracefully.
+	for _, name := range splitTrimComma(channelNameFlag) {
+		if len(resolvedTeams) == 1 {
+			ch, _, err := c.GetChannelByName(context.TODO(), name, resolvedTeams[0].id, "")
+			if err != nil {
+				return fmt.Errorf("failed to lookup channel %q in team %q: %w", name, resolvedTeams[0].name, err)
+			}
+			if ch == nil {
+				return fmt.Errorf("channel %q not found in team %q", name, resolvedTeams[0].name)
+			}
+		}
+		resolvedChannelNames = append(resolvedChannelNames, strings.ToLower(name))
+	}
+
+	if len(resolvedChannelNames) > 0 && len(resolvedTeams) == 0 {
+		return fmt.Errorf("please specify a team (--team-name or --team-id) to export a channel from")
+	}
+
+	if len(resolvedTeams) > 0 {
+		names := make([]string, len(resolvedTeams))
+		for i, t := range resolvedTeams {
+			names[i] = t.name
+		}
+		data["team_name"] = strings.Join(names, ",")
+	}
+	if len(resolvedChannelNames) > 0 {
+		data["channel_name"] = strings.Join(resolvedChannelNames, ",")
 	}
 
 	job, _, err := c.CreateJob(context.TODO(), &model.Job{
@@ -205,7 +337,7 @@ func exportGeneratePresignedURLCmdF(c client.Client, command *cobra.Command, arg
 		return fmt.Errorf("failed to generate export link: %w", err)
 	}
 
-	printer.PrintT("Export link: {{.Link}}\nExpiration: {{.Expiration}}", map[string]interface{}{
+	printer.PrintT("Export link: {{.Link}}\nExpiration: {{.Expiration}}", map[string]any{
 		"Link":       presignedURL.URL,
 		"Expiration": presignedURL.Expiration.String(),
 	})
@@ -225,52 +357,81 @@ func exportDownloadCmdF(c client.Client, command *cobra.Command, args []string) 
 
 	retries, _ := command.Flags().GetInt("num-retries")
 
+	downloadFn := func(outFile *os.File) (string, error) {
+		off, err := outFile.Seek(0, io.SeekEnd)
+		if err != nil {
+			return "", fmt.Errorf("failed to seek file: %w", err)
+		}
+
+		_, _, err = c.DownloadExport(context.TODO(), name, outFile, off)
+		return "", err
+	}
+
+	_, err := downloadFile(path, downloadFn, retries, "export")
+	if err != nil {
+		return err
+	}
+
+	printer.Print(fmt.Sprintf("Export file downloaded to %q", path))
+	return nil
+}
+
+// downloadFile handles the common logic for downloading files in export and compliance-export commands
+func downloadFile(path string, downloadFn func(*os.File) (string, error), retries int, fileType string) (string, error) {
 	var outFile *os.File
+	var createdFile bool
 	info, err := os.Stat(path)
 	switch {
 	case err != nil && !os.IsNotExist(err):
 		// some error occurred and not because file doesn't exist
-		return fmt.Errorf("failed to stat export file: %w", err)
+		return "", fmt.Errorf("failed to stat %s file: %w", fileType, err)
 	case err == nil && info.Size() > 0:
 		// we exit to avoid overwriting an existing non-empty file
-		return fmt.Errorf("export file already exists")
+		return "", fmt.Errorf("%s file already exists", fileType)
 	case err != nil:
 		// file does not exist, we create it
-		outFile, err = os.Create(path)
+		outFile, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
+		createdFile = true
 	default:
-		// no error, file exists, we open it
+		// no error, file exists, we double check the permissions and then open it
+		permErr := os.Chmod(path, 0600)
+		if permErr != nil {
+			return "", fmt.Errorf("failed to change permissions on output file: %w", permErr)
+		}
+
 		outFile, err = os.OpenFile(path, os.O_WRONLY, 0600)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to create/open export file: %w", err)
+		return "", fmt.Errorf("failed to create/open %s file: %w", fileType, err)
 	}
 	defer outFile.Close()
 
-	i := 0
-	for i < retries+1 {
-		off, err := outFile.Seek(0, io.SeekEnd)
+	var suggestedFilename string
+	for i := range retries + 1 { // need to include the first attempt
+		suggestedFilename, err = downloadFn(outFile)
 		if err != nil {
-			return fmt.Errorf("failed to seek export file: %w", err)
-		}
-
-		if _, _, err := c.DownloadExport(context.TODO(), name, outFile, off); err != nil {
-			printer.PrintWarning(fmt.Sprintf("failed to download export file: %v. Retrying...", err))
-			i++
+			if i >= retries {
+				// Cleanup the file we created earlier
+				if createdFile {
+					rmErr := os.Remove(path)
+					if rmErr != nil {
+						printer.PrintError(fmt.Sprintf("Failed to cleanup tempory file: %s", rmErr))
+					}
+				}
+				return "", fmt.Errorf("failed to download %s after %d retries: %w", fileType, retries, err)
+			}
+			printer.PrintWarning(fmt.Sprintf("Download attempt %d/%d failed. Retrying...", i+1, retries+1))
 			continue
 		}
 		break
 	}
 
-	if retries != 0 && i == retries+1 {
-		return fmt.Errorf("failed to download export after %d retries", retries)
-	}
-
-	return nil
+	return suggestedFilename, nil
 }
 
 func exportJobListCmdF(c client.Client, command *cobra.Command, args []string) error {
-	return jobListCmdF(c, command, model.JobTypeExportProcess)
+	return jobListCmdF(c, command, model.JobTypeExportProcess, "")
 }
 
 func exportJobShowCmdF(c client.Client, command *cobra.Command, args []string) error {

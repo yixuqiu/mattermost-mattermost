@@ -20,14 +20,16 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
 
+	_ "golang.org/x/image/webp" // image decoder
+
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/app/imports"
-	_ "golang.org/x/image/webp" // image decoder
+	"github.com/mattermost/mattermost/server/v8/channels/utils"
 
 	"github.com/mattermost/mattermost/server/v8/cmd/mmctl/printer"
 )
@@ -83,6 +85,7 @@ const (
 	LineTypeTeam          = "team"
 	LineTypeChannel       = "channel"
 	LineTypeUser          = "user"
+	LineTypeBot           = "bot"
 	LineTypePost          = "post"
 	LineTypeDirectChannel = "direct_channel"
 	LineTypeDirectPost    = "direct_post"
@@ -247,12 +250,10 @@ func (v *Validator) Validate() error {
 
 	var jsonlZip *zip.File
 	for _, zfile := range z.File {
-		if filepath.Ext(zfile.Name) != ".jsonl" {
-			continue
+		if imports.IsRootJsonlFile(zfile.Name) {
+			jsonlZip = zfile
+			break
 		}
-
-		jsonlZip = zfile
-		break
 	}
 	if jsonlZip == nil {
 		return fmt.Errorf("could not find a .jsonl file in the import archive")
@@ -263,10 +264,11 @@ func (v *Validator) Validate() error {
 			if zfile.FileInfo().IsDir() {
 				continue
 			}
-			if strings.HasPrefix(zfile.Name, "data/") {
-				v.attachments[zfile.Name] = zfile
+			normalizedName := utils.NormalizeFilename(zfile.Name)
+			if strings.HasPrefix(normalizedName, "data/") {
+				v.attachments[normalizedName] = zfile
 			}
-			v.allFileNames = append(v.allFileNames, zfile.Name)
+			v.allFileNames = append(v.allFileNames, normalizedName)
 		}
 	}
 
@@ -410,6 +412,8 @@ func (v *Validator) validateLine(info ImportFileInfo, line imports.LineImportDat
 		err = v.validateChannel(info, line)
 	case LineTypeUser:
 		err = v.validateUser(info, line)
+	case LineTypeBot:
+		err = v.validateBot(info, line)
 	case LineTypePost:
 		err = v.validatePost(info, line)
 	case LineTypeDirectChannel:
@@ -725,6 +729,36 @@ func (v *Validator) validateUser(info ImportFileInfo, line imports.LineImportDat
 	return nil
 }
 
+func (v *Validator) validateBot(info ImportFileInfo, line imports.LineImportData) (err error) {
+	ivErr := validateNotNil(info, "bot", line.Bot, func(data imports.BotImportData) *ImportValidationError {
+		appErr := imports.ValidateBotImportData(&data)
+		if appErr != nil {
+			return &ImportValidationError{
+				ImportFileInfo: info,
+				FieldName:      "bot",
+				Err:            appErr,
+			}
+		}
+
+		if data.Username != nil {
+			// e-mails are for bots are converted to the username@localhost format
+			// see model.BotFromUser
+			botMail := model.NormalizeEmail(fmt.Sprintf("%s@localhost", *data.Username))
+			if ive := v.checkDuplicateUser(info, *data.Username, botMail); ive != nil {
+				return ive
+			}
+			v.users[*data.Username] = info
+		}
+
+		return nil
+	})
+	if ivErr != nil {
+		return v.onError(ivErr)
+	}
+
+	return nil
+}
+
 func (v *Validator) validatePost(info ImportFileInfo, line imports.LineImportData) (err error) {
 	ivErr := validateNotNil(info, "post", line.Post, func(data imports.PostImportData) *ImportValidationError {
 		appErr := imports.ValidatePostImportData(&data, v.maxPostSize)
@@ -782,7 +816,10 @@ func (v *Validator) validatePost(info ImportFileInfo, line imports.LineImportDat
 				continue
 			}
 
-			attachmentPath := path.Join("data", *attachment.Path)
+			attachmentPath := utils.NormalizeFilename(*attachment.Path)
+			if _, ok := v.attachments[attachmentPath]; !ok {
+				attachmentPath = utils.NormalizeFilename(path.Join("data", *attachment.Path))
+			}
 
 			if _, ok := v.attachments[attachmentPath]; !ok {
 				helpful := ""
@@ -832,7 +869,17 @@ func (v *Validator) validateDirectChannel(info ImportFileInfo, line imports.Line
 			}
 		}
 
-		if data.Members != nil {
+		if data.Participants != nil {
+			for i, member := range data.Participants {
+				if _, ok := v.users[*member.Username]; !ok {
+					return &ImportValidationError{
+						ImportFileInfo: info,
+						FieldName:      fmt.Sprintf("direct_channel.members[%d]", i),
+						Err:            fmt.Errorf("reference to unknown user %q", *member.Username),
+					}
+				}
+			}
+		} else if data.Members != nil {
 			for i, member := range *data.Members {
 				if _, ok := v.users[member]; !ok {
 					return &ImportValidationError{
@@ -906,7 +953,10 @@ func (v *Validator) validateDirectPost(info ImportFileInfo, line imports.LineImp
 				continue
 			}
 
-			attachmentPath := path.Join("data", *attachment.Path)
+			attachmentPath := utils.NormalizeFilename(*attachment.Path)
+			if _, ok := v.attachments[attachmentPath]; !ok {
+				attachmentPath = utils.NormalizeFilename(path.Join("data", *attachment.Path))
+			}
 
 			if _, ok := v.attachments[attachmentPath]; !ok {
 				helpful := ""
@@ -956,7 +1006,7 @@ func (v *Validator) validateEmoji(info ImportFileInfo, line imports.LineImportDa
 		}
 
 		if !v.ignoreAttachments && data.Image != nil {
-			attachmentPath := path.Join("data", *data.Image)
+			attachmentPath := utils.NormalizeFilename(path.Join("data", *data.Image))
 
 			zfile, ok := v.attachments[attachmentPath]
 			if !ok {
@@ -990,7 +1040,7 @@ func (v *Validator) Attachments() []string {
 	for attachment := range v.attachmentsUsed {
 		used = append(used, attachment)
 	}
-	sort.Strings(used)
+	slices.Sort(used)
 	return used
 }
 
@@ -1001,7 +1051,7 @@ func (v *Validator) UnusedAttachments() []string {
 			unused = append(unused, attachment)
 		}
 	}
-	sort.Strings(unused)
+	slices.Sort(unused)
 	return unused
 }
 

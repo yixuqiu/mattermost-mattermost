@@ -1,23 +1,26 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {mount} from 'enzyme';
 import React from 'react';
-import * as reactRedux from 'react-redux';
 
 import * as cloudActions from 'mattermost-redux/actions/cloud';
 
-import mockStore from 'tests/test_store';
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 import {CloudProducts} from 'utils/constants';
 
 import PlanUpgradeButton from './index';
 
-describe('components/global/PlanUpgradeButton', () => {
-    const useDispatchMock = jest.spyOn(reactRedux, 'useDispatch');
+jest.mock('components/common/hooks/useOpenPricingModal', () => ({
+    __esModule: true,
+    default: () => ({openPricingModal: jest.fn(), isAirGapped: false}),
+}));
 
+describe('components/global/PlanUpgradeButton', () => {
     beforeEach(() => {
-        useDispatchMock.mockClear();
+        jest.spyOn(cloudActions, 'getCloudSubscription').mockReturnValue({type: 'MOCK_GET_CLOUD_SUBSCRIPTION'} as any);
+        jest.spyOn(cloudActions, 'getCloudProducts').mockReturnValue({type: 'MOCK_GET_CLOUD_PRODUCTS'} as any);
     });
+
     const initialState = {
         entities: {
             general: {
@@ -49,29 +52,6 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         },
     };
-    it('should show Upgrade button in global header for admin users, cloud free subscription', () => {
-        const state = {
-            ...initialState,
-        };
-
-        const cloudSubscriptionSpy = jest.spyOn(cloudActions, 'getCloudSubscription');
-        const cloudProductsSpy = jest.spyOn(cloudActions, 'getCloudProducts');
-
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
-        );
-
-        expect(cloudSubscriptionSpy).toHaveBeenCalledTimes(1);
-        expect(cloudProductsSpy).toHaveBeenCalledTimes(1);
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(true);
-    });
 
     it('should show Upgrade button in global header for admin users, cloud and enterprise trial subscription', () => {
         const state = JSON.parse(JSON.stringify(initialState));
@@ -89,18 +69,12 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(true);
+        expect(screen.getByRole('button', {name: 'View plans'})).toBeInTheDocument();
     });
 
     it('should not show for cloud enterprise non-trial', () => {
@@ -119,18 +93,12 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 
     it('should not show for cloud professional product', () => {
@@ -149,18 +117,12 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 
     it('should not show Upgrade button in global header for non admin cloud users', () => {
@@ -172,18 +134,12 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 
     it('should not show Upgrade button in global header for non admin self hosted users', () => {
@@ -195,22 +151,16 @@ describe('components/global/PlanUpgradeButton', () => {
             },
         };
         state.entities.general.license = {
-            IsLicensed: 'false', // starter
+            IsLicensed: 'false',
             Cloud: 'false',
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 
     it('should not show Upgrade button in global header for non enterprise edition self hosted users', () => {
@@ -231,18 +181,12 @@ describe('components/global/PlanUpgradeButton', () => {
             BuildEnterpriseReady: 'false',
         };
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 
     it('should NOT show Upgrade button in global header for self hosted non trial and licensed', () => {
@@ -256,19 +200,13 @@ describe('components/global/PlanUpgradeButton', () => {
         const cloudSubscriptionSpy = jest.spyOn(cloudActions, 'getCloudSubscription');
         const cloudProductsSpy = jest.spyOn(cloudActions, 'getCloudProducts');
 
-        const store = mockStore(state);
-
-        const dummyDispatch = jest.fn();
-        useDispatchMock.mockReturnValue(dummyDispatch);
-
-        const wrapper = mount(
-            <reactRedux.Provider store={store}>
-                <PlanUpgradeButton/>
-            </reactRedux.Provider>,
+        renderWithContext(
+            <PlanUpgradeButton/>,
+            state,
         );
 
-        expect(cloudSubscriptionSpy).toHaveBeenCalledTimes(0); // no calls to cloud endpoints for non cloud
+        expect(cloudSubscriptionSpy).toHaveBeenCalledTimes(0);
         expect(cloudProductsSpy).toHaveBeenCalledTimes(0);
-        expect(wrapper.find('UpgradeButton').exists()).toEqual(false);
+        expect(screen.queryByRole('button', {name: 'View plans'})).not.toBeInTheDocument();
     });
 });

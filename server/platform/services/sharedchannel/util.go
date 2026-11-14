@@ -12,23 +12,36 @@ import (
 	"github.com/mattermost/mattermost/server/v8/channels/store"
 )
 
-// fixMention replaces any mentions in a post for the user with the user's real username.
+// fixMention transforms @username:remotename mentions to @username format
+// Used when syncing posts to a user's home cluster
 func fixMention(post *model.Post, mentionMap model.UserMentionMap, user *model.User) {
 	if post == nil || len(mentionMap) == 0 {
 		return
 	}
 
-	realUsername, ok := user.GetProp(KeyRemoteUsername)
+	realUsername, ok := user.GetProp(model.UserPropsKeyRemoteUsername)
 	if !ok {
 		return
 	}
 
-	// there may be more than one mention for each user so we have to walk the whole map.
 	for mention, id := range mentionMap {
+		// Only process mentions with colons that match this user's ID
 		if id == user.Id && strings.Contains(mention, ":") {
 			post.Message = strings.ReplaceAll(post.Message, "@"+mention, "@"+realUsername)
 		}
 	}
+}
+
+// prepareRemoteEmailForSync selects the original email before RemoteId
+// is rewritten. Forwarded users may have synthetic Email values.
+func prepareRemoteEmailForSync(user *model.User) (string, bool) {
+	if user.GetRemoteID() == "" {
+		user.SetProp(model.UserPropsKeyRemoteEmail, user.Email)
+		return user.Email, user.Email != ""
+	}
+
+	remoteEmail, ok := user.GetProp(model.UserPropsKeyRemoteEmail)
+	return remoteEmail, ok && remoteEmail != ""
 }
 
 func sanitizeUserForSync(user *model.User) *model.User {
@@ -75,10 +88,7 @@ func mungUsername(username string, remotename string, suffix string, maxLen int)
 
 	// If the remotename is less than half the maxLen, then the left over space can be given to
 	// the username.
-	extra := half - (len(remotename) + 1)
-	if extra < 0 {
-		extra = 0
-	}
+	extra := max(half-(len(remotename)+1), 0)
 
 	truncUser := (len(username) + len(suffix)) - (half + extra)
 	if truncUser > 0 {
@@ -95,27 +105,16 @@ func mungUsername(username string, remotename string, suffix string, maxLen int)
 	return fmt.Sprintf("%s%s%s:%s%s", username, suffix, userEllipses, remotename, remoteEllipses)
 }
 
-// mungEmail creates a unique email address using a UID and remote name.
-func mungEmail(remotename string, maxLen int) string {
-	s := fmt.Sprintf("%s@%s", model.NewId(), remotename)
-	if len(s) > maxLen {
-		s = s[:maxLen]
-	}
-	return s
-}
-
 func isConflictError(err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
 
-	var errConflict *store.ErrConflict
-	if errors.As(err, &errConflict) {
+	if errConflict, ok := errors.AsType[*store.ErrConflict](err); ok {
 		return strings.ToLower(errConflict.Resource), true
 	}
 
-	var errInput *store.ErrInvalidInput
-	if errors.As(err, &errInput) {
+	if errInput, ok := errors.AsType[*store.ErrInvalidInput](err); ok {
 		_, field, _ := errInput.InvalidInputInfo()
 		return strings.ToLower(field), true
 	}

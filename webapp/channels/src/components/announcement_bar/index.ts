@@ -6,7 +6,7 @@ import {bindActionCreators} from 'redux';
 import type {Dispatch} from 'redux';
 
 import {getStandardAnalytics} from 'mattermost-redux/actions/admin';
-import {getCloudSubscription, getCloudCustomer} from 'mattermost-redux/actions/cloud';
+import {getCloudSubscription} from 'mattermost-redux/actions/cloud';
 import {dismissError} from 'mattermost-redux/actions/errors';
 import {Permissions} from 'mattermost-redux/constants';
 import {getConfig, getLicense} from 'mattermost-redux/selectors/entities/general';
@@ -45,7 +45,6 @@ function mapStateToProps(state: GlobalState) {
     };
 }
 
-//
 function mapDispatchToProps(dispatch: Dispatch) {
     const dismissFirstError = dismissError.bind(null, 0);
     return {
@@ -54,7 +53,6 @@ function mapDispatchToProps(dispatch: Dispatch) {
             dismissError: dismissFirstError,
             dismissNotice,
             getCloudSubscription,
-            getCloudCustomer,
         }, dispatch),
     };
 }

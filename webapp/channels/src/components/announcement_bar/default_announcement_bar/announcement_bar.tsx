@@ -3,18 +3,23 @@
 
 import type {ReactNode} from 'react';
 import React from 'react';
+import type {MessageDescriptor} from 'react-intl';
 import {FormattedMessage} from 'react-intl';
 
-import FormattedMarkdownMessage from 'components/formatted_markdown_message';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import {Constants, AnnouncementBarTypes} from 'utils/constants';
+import FormattedMarkdownMessage from 'components/formatted_markdown_message';
+
+import {AnnouncementBarTypes} from 'utils/constants';
 import {isStringContainingUrl} from 'utils/url';
+
+import './default_announcement_bar.scss';
 
 type Props = {
     id?: string;
     showCloseButton: boolean;
+    className?: string;
     color: string;
     textColor: string;
     type: string;
@@ -24,8 +29,7 @@ type Props = {
     showModal?: boolean;
     announcementBarCount?: number;
     onButtonClick?: (e?: any) => void;
-    modalButtonText?: string;
-    modalButtonDefaultText?: string;
+    modalButtonText?: MessageDescriptor;
     showLinkAsButton: boolean;
     icon?: ReactNode;
     actions: {
@@ -35,17 +39,15 @@ type Props = {
     showCTA?: boolean;
     ctaText?: ReactNode;
     ctaDisabled?: boolean;
-}
+};
 
 type State = {
     showTooltip: boolean;
     isStringContainingUrl: boolean;
-}
-
-const OVERLAY_ANNOUNCEMENT_HIDE_DELAY = 600;
+};
 
 export default class AnnouncementBar extends React.PureComponent<Props, State> {
-    messageRef: React.RefObject<HTMLDivElement>;
+    messageRef: React.RefObject<HTMLDivElement | null>;
     constructor(props: Props) {
         super(props);
 
@@ -83,19 +85,39 @@ export default class AnnouncementBar extends React.PureComponent<Props, State> {
     componentDidMount() {
         this.props.actions.incrementAnnouncementBarCount();
         document.body.classList.add('announcement-bar--fixed');
+
+        // Set CSS custom property for dynamic height calculation
+        const newCount = (this.props.announcementBarCount || 0) + 1;
+        document.documentElement.style.setProperty('--announcement-bar-count', newCount.toString());
     }
 
-    componentDidUpdate() {
-        if (this.props.announcementBarCount === 1) {
-            document.body.classList.add('announcement-bar--fixed');
+    componentDidUpdate(prevProps: Props) {
+        // Update CSS custom property if count changed
+        if (prevProps.announcementBarCount !== this.props.announcementBarCount) {
+            const count = this.props.announcementBarCount || 0;
+            document.documentElement.style.setProperty('--announcement-bar-count', count.toString());
+
+            // Add/remove class based on count
+            if (count > 0) {
+                document.body.classList.add('announcement-bar--fixed');
+            } else {
+                document.body.classList.remove('announcement-bar--fixed');
+            }
         }
     }
 
     componentWillUnmount() {
-        if (this.props.announcementBarCount === 1) {
-            document.body.classList.remove('announcement-bar--fixed');
-        }
         this.props.actions.decrementAnnouncementBarCount();
+        const newCount = Math.max((this.props.announcementBarCount || 1) - 1, 0);
+
+        // Remove class only when no announcement bars left
+        if (newCount === 0) {
+            document.body.classList.remove('announcement-bar--fixed');
+            document.documentElement.style.removeProperty('--announcement-bar-count');
+        } else {
+            // Update count
+            document.documentElement.style.setProperty('--announcement-bar-count', newCount.toString());
+        }
     }
 
     handleClose = (e: any) => {
@@ -129,6 +151,12 @@ export default class AnnouncementBar extends React.PureComponent<Props, State> {
             barClass = 'announcement-bar announcement-bar-advisor-ack';
         } else if (this.props.type === AnnouncementBarTypes.GENERAL) {
             barClass = 'announcement-bar announcement-bar-general';
+        } else if (this.props.type === AnnouncementBarTypes.WARNING) {
+            barClass = 'announcement-bar announcement-bar-warning';
+        }
+
+        if (this.props.className) {
+            barClass += ` ${this.props.className}`;
         }
 
         let closeButton;
@@ -151,16 +179,61 @@ export default class AnnouncementBar extends React.PureComponent<Props, State> {
                 <FormattedMarkdownMessage id={this.props.message as string}/>
             );
         }
-        const announcementTooltip = this.state.showTooltip ? (
-            <Tooltip id='announcement-bar__tooltip'>
-                {this.props.tooltipMsg ? this.props.tooltipMsg : message}
-            </Tooltip>
-        ) : <></>;
 
         const announcementIcon = () => {
             return this.props.showLinkAsButton &&
-            (this.props.showCloseButton ? <div className='content__icon'>{'\uF5D6'}</div> : <div className='content__icon'>{'\uF02A'}</div>);
+            (this.props.showCloseButton ? <i className='icon icon-alert-circle-outline'/> : <i className='icon icon-alert-outline'/>);
         };
+
+        let barContent = (<div className='announcement-bar__text'>
+            {this.props.icon ? this.props.icon : announcementIcon()}
+            <span
+                ref={this.messageRef}
+                onMouseEnter={this.enableToolTipIfNeeded}
+            >
+                {message}
+            </span>
+            {
+                this.props.showLinkAsButton && this.props.showCTA && this.props.modalButtonText &&
+                <Button
+                    className='announcement-bar__cta'
+                    onClick={this.props.onButtonClick}
+                    disabled={this.props.ctaDisabled}
+                    emphasis='tertiary'
+                    size='x-small'
+                    appearance='inverted'
+                >
+                    <FormattedMessage
+                        {...this.props.modalButtonText}
+                    />
+                </Button>
+            }
+            {
+                this.props.showLinkAsButton && this.props.showCTA && this.props.ctaText &&
+                <Button
+                    className='announcement-bar__cta'
+                    onClick={this.props.onButtonClick}
+                    disabled={this.props.ctaDisabled}
+                    emphasis='tertiary'
+                    size='x-small'
+                    appearance='inverted'
+                >
+                    {this.props.ctaText}
+                </Button>
+            }
+        </div>);
+
+        if (this.state.showTooltip) {
+            barContent = (
+                <WithTooltip
+                    title={this.props.tooltipMsg ? this.props.tooltipMsg : message}
+                    className='announcementBarTooltip'
+                    delayClose={true}
+                >
+                    {barContent}
+
+                </WithTooltip>);
+        }
 
         return (
             <div
@@ -170,43 +243,7 @@ export default class AnnouncementBar extends React.PureComponent<Props, State> {
                 css={{gridArea: 'announcement'}}
                 data-testid={this.props.id}
             >
-                <OverlayTrigger
-                    delayShow={Constants.OVERLAY_TIME_DELAY}
-                    placement='bottom'
-                    overlay={announcementTooltip}
-                    delayHide={this.state.isStringContainingUrl ? OVERLAY_ANNOUNCEMENT_HIDE_DELAY : 0}
-                >
-                    <div className='announcement-bar__text'>
-                        {this.props.icon ? this.props.icon : announcementIcon()}
-                        <span
-                            ref={this.messageRef}
-                            onMouseEnter={this.enableToolTipIfNeeded}
-                        >
-                            {message}
-                        </span>
-                        {
-                            this.props.showLinkAsButton && this.props.showCTA && this.props.modalButtonText && this.props.modalButtonDefaultText &&
-                            <button
-                                onClick={this.props.onButtonClick}
-                                disabled={this.props.ctaDisabled}
-                            >
-                                <FormattedMessage
-                                    id={this.props.modalButtonText}
-                                    defaultMessage={this.props.modalButtonDefaultText}
-                                />
-                            </button>
-                        }
-                        {
-                            this.props.showLinkAsButton && this.props.showCTA && this.props.ctaText &&
-                            <button
-                                onClick={this.props.onButtonClick}
-                                disabled={this.props.ctaDisabled}
-                            >
-                                {this.props.ctaText}
-                            </button>
-                        }
-                    </div>
-                </OverlayTrigger>
+                {barContent}
                 {closeButton}
             </div>
         );

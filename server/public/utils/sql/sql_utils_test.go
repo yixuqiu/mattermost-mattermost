@@ -6,104 +6,93 @@ package sql
 import (
 	"testing"
 
-	"github.com/mattermost/mattermost/server/public/model"
-
+	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
-func TestAppendMultipleStatementsFlag(t *testing.T) {
+// TestSetupConnectionDataSourceLogField covers the "dataSource" field that
+// SetupConnection attaches to its logger. Only URL-form connection strings are
+// partially redacted and logged as such; any other form is logged as the fully
+// redacted setting, so nothing of it reaches the log records.
+func TestSetupConnectionDataSourceLogField(t *testing.T) {
+	fullyRedacted := `"dataSource":"` + model.FakeSetting + `"`
+
 	testCases := []struct {
-		Scenario    string
-		DSN         string
-		ExpectedDSN string
+		name string
+		// dataSource points at a port nothing listens on, so every ping fails
+		// immediately and SetupConnection emits its retry record.
+		dataSource string
+		credential string
+		// wantLogField is the exact log field expected for the connection
+		// string.
+		wantLogField string
 	}{
 		{
-			"Should append multiStatements param to the DSN path with existing params",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost?writeTimeout=30s",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost?writeTimeout=30s&multiStatements=true",
+			name:         "URL",
+			dataSource:   "postgres://mmuser:sentinel_pw_alpha@127.0.0.1:1/mattermost?sslmode=disable",
+			credential:   "sentinel_pw_alpha",
+			wantLogField: `"dataSource":"postgres://` + model.SanitizedPassword + `:` + model.SanitizedPassword + `@127.0.0.1:1/mattermost?sslmode=disable"`,
 		},
 		{
-			"Should append multiStatements param to the DSN path with no existing params",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost?multiStatements=true",
+			name:         "URL with credentials in the query string",
+			dataSource:   "postgres://127.0.0.1:1/mattermost?user=mmuser&password=sentinel_pw_bravo&sslmode=disable",
+			credential:   "sentinel_pw_bravo",
+			wantLogField: `"dataSource":"postgres://` + model.SanitizedPassword + `:` + model.SanitizedPassword + `@127.0.0.1:1/mattermost?sslmode=disable"`,
+		},
+		{
+			name:         "URL with an unescaped special character in the password",
+			dataSource:   "postgres://mmuser:#sentinel_pw_foxtrot@127.0.0.1:1/mattermost?sslmode=disable",
+			credential:   "sentinel_pw_foxtrot",
+			wantLogField: fullyRedacted,
+		},
+		{
+			name:         "keyword/value",
+			dataSource:   "user=mmuser password=sentinel_pw_charlie host=127.0.0.1 port=1 dbname=mattermost sslmode=disable",
+			credential:   "sentinel_pw_charlie",
+			wantLogField: fullyRedacted,
+		},
+		{
+			name:         "keyword/value with a quoted value",
+			dataSource:   "host=127.0.0.1 port=1 user=mmuser password='sentinel_pw_delta with space' dbname=mattermost sslmode=disable",
+			credential:   "sentinel_pw_delta",
+			wantLogField: fullyRedacted,
+		},
+		{
+			name:         "keyword/value naming a scheme away from the start",
+			dataSource:   "options=postgres:// user=mmuser password=sentinel_pw_echo host=127.0.0.1 port=1 sslmode=disable",
+			credential:   "sentinel_pw_echo",
+			wantLogField: fullyRedacted,
 		},
 	}
 
+	driverName := model.DatabaseDriverPostgres
 	for _, tc := range testCases {
-		t.Run(tc.Scenario, func(t *testing.T) {
-			res, err := AppendMultipleStatementsFlag(tc.DSN)
+		t.Run(tc.name, func(t *testing.T) {
+			settings := &model.SqlSettings{DriverName: &driverName}
+			settings.SetDefaults(false)
+
+			logger, err := mlog.NewLogger()
 			require.NoError(t, err)
-			assert.Equal(t, tc.ExpectedDSN, res)
+			t.Cleanup(func() {
+				require.NoError(t, logger.Shutdown())
+			})
+
+			var buf mlog.Buffer
+			require.NoError(t, mlog.AddWriterTarget(logger, &buf, true, mlog.StdAll...))
+
+			// Two attempts, so that the record carrying the connection fields is
+			// emitted before the last attempt gives up.
+			_, err = SetupConnection(logger, "master", tc.dataSource, settings, 2)
+			require.Error(t, err)
+			require.NoError(t, logger.Flush())
+
+			require.NotEmpty(t, buf.String())
+			assert.NotContains(t, buf.String(), tc.credential)
+			assert.Contains(t, buf.String(), tc.wantLogField)
 		})
 	}
-}
-
-func TestResetReadTimeout(t *testing.T) {
-	testCases := []struct {
-		Scenario    string
-		DSN         string
-		ExpectedDSN string
-	}{
-		{
-			"Should re move read timeout param from the DSN",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost?readTimeout=30s",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost",
-		},
-		{
-			"Should change nothing as there is no read timeout param specified",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost",
-			"user:rand?&ompasswith@character@unix(/var/run/mysqld/mysqld.sock)/mattermost",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.Scenario, func(t *testing.T) {
-			res, err := ResetReadTimeout(tc.DSN)
-			require.NoError(t, err)
-			assert.Equal(t, tc.ExpectedDSN, res)
-		})
-	}
-}
-
-func TestSanitizeDataSource(t *testing.T) {
-	t.Run(model.DatabaseDriverPostgres, func(t *testing.T) {
-		testCases := []struct {
-			Original  string
-			Sanitized string
-		}{
-			{
-				"postgres://mmuser:mostest@localhost/dummy?sslmode=disable",
-				"postgres://%2A%2A%2A%2A:%2A%2A%2A%2A@localhost/dummy?sslmode=disable",
-			},
-			{
-				"postgres://localhost/dummy?sslmode=disable&user=mmuser&password=mostest",
-				"postgres://%2A%2A%2A%2A:%2A%2A%2A%2A@localhost/dummy?sslmode=disable",
-			},
-		}
-		driver := model.DatabaseDriverPostgres
-		for _, tc := range testCases {
-			out, err := SanitizeDataSource(driver, tc.Original)
-			require.NoError(t, err)
-			assert.Equal(t, tc.Sanitized, out)
-		}
-	})
-
-	t.Run(model.DatabaseDriverMysql, func(t *testing.T) {
-		testCases := []struct {
-			Original  string
-			Sanitized string
-		}{
-			{
-				"mmuser:mostest@tcp(localhost:3306)/mattermost_test?charset=utf8mb4,utf8&readTimeout=30s&writeTimeout=30s",
-				"****:****@tcp(localhost:3306)/mattermost_test?readTimeout=30s&writeTimeout=30s&charset=utf8mb4%2Cutf8",
-			},
-		}
-		driver := model.DatabaseDriverMysql
-		for _, tc := range testCases {
-			out, err := SanitizeDataSource(driver, tc.Original)
-			require.NoError(t, err)
-			assert.Equal(t, tc.Sanitized, out)
-		}
-	})
 }

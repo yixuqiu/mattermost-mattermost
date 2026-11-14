@@ -10,7 +10,7 @@
 // Stage: @prod
 // Group: @channels @messaging
 
-import * as TIMEOUTS from '../../../fixtures/timeouts';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 describe('Profile popover', () => {
     before(() => {
@@ -37,7 +37,7 @@ describe('Profile popover', () => {
             cy.get(`#post_${postId}`).find('.profile-icon > img').click({force: true});
 
             // * Popover should have rendered to screen
-            cy.get('#user-profile-popover').should('be.visible');
+            cy.get('div.user-profile-popover').should('be.visible');
             cy.get('body').type('{esc}');
         });
     });
@@ -50,7 +50,7 @@ describe('Profile popover', () => {
             cy.get(`#post_${postId}`).find('.user-popover').click({force: true});
 
             // * Popover should have rendered to screen
-            cy.get('#user-profile-popover').should('be.visible');
+            cy.get('div.user-profile-popover').should('be.visible');
         });
     });
 });

@@ -1,149 +1,223 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import classNames from 'classnames';
+import React, {useEffect, useRef, useState} from 'react';
 
 import type {FileInfo} from '@mattermost/types/files';
 
 import FileInfoPreview from 'components/file_info_preview';
+import Markdown from 'components/markdown';
+import {useMarkdownView} from 'components/markdown_view_toggle/use_markdown_view';
 import LoadingSpinner from 'components/widgets/loading/loading_spinner';
+import WrappedCodeLines from 'components/wrapped_code_lines';
 
-import Constants from 'utils/constants';
+import Constants, {MarkdownViews} from 'utils/constants';
 import * as SyntaxHighlighting from 'utils/syntax_highlighting';
 
 import type {LinkInfo} from './file_preview_modal/types';
 
+import './code_preview.scss';
+
 type Props = {
     fileInfo: FileInfo;
     fileUrl: string;
-    className: string;
     getContent?: (code: string) => void;
+    isMobileView?: boolean;
 };
 
-type State = {
-    code: string;
-    lang: string;
-    highlighted: string;
-    loading: boolean;
-    success: boolean;
-    prevFileUrl?: string;
+export function hasSupportedLanguage(fileInfo: FileInfo | LinkInfo) {
+    return Boolean(SyntaxHighlighting.getLanguageFromFileExtension(fileInfo.extension));
 }
 
-export default class CodePreview extends React.PureComponent<Props, State> {
-    constructor(props: Props) {
-        super(props);
+// Whether the file is Markdown that can be switched between its source and its rendered output. The modal uses it to
+// show the toggle and CodePreview uses it to honor the choice, so the two can't disagree.
+export function canToggleMarkdownPreview(extension: string, isMobileView: boolean) {
+    return !isMobileView && SyntaxHighlighting.isMarkdownLanguage(SyntaxHighlighting.getLanguageFromFileExtension(extension) ?? '');
+}
 
-        this.state = {
-            code: '',
-            lang: '',
-            highlighted: '',
-            loading: true,
-            success: true,
-        };
-    }
+const CodePreview = ({
+    fileInfo,
+    fileUrl,
+    getContent,
+    isMobileView = false,
+}: Props) => {
+    const [markdownView] = useMarkdownView('file_preview');
+    const [codeInfo, setCodeInfo] = useState({
+        code: '',
+        lang: '',
+        highlighted: '',
+    });
 
-    componentDidMount() {
-        this.getCode();
-    }
+    const [status, setStatus] = useState<'success' | 'loading' | 'fail'>('loading');
+    const [prevFileUrl, setPrevFileUrl] = useState<string | undefined>();
 
-    static getDerivedStateFromProps(props: Props, state: State) {
-        if (props.fileUrl !== state.prevFileUrl) {
-            const usedLanguage = SyntaxHighlighting.getLanguageFromFileExtension(props.fileInfo.extension);
+    useEffect(() => {
+        if (fileUrl !== prevFileUrl) {
+            const usedLanguage = SyntaxHighlighting.getLanguageFromFileExtension(fileInfo.extension);
 
-            if (!usedLanguage || props.fileInfo.size > Constants.CODE_PREVIEW_MAX_FILE_SIZE) {
-                return {
-                    code: '',
-                    lang: '',
-                    loading: false,
-                    success: false,
-                    prevFileUrl: props.fileUrl,
-                };
+            if (!usedLanguage || fileInfo.size > Constants.CODE_PREVIEW_MAX_FILE_SIZE) {
+                setCodeInfo((prevCodeInfo) => {
+                    return {...prevCodeInfo, code: '', lang: ''};
+                });
+
+                setStatus('fail');
+            } else {
+                setCodeInfo((prevCodeInfo) => {
+                    return {...prevCodeInfo, code: '', lang: usedLanguage};
+                });
+
+                setStatus('loading');
             }
 
-            return {
-                code: '',
-                lang: usedLanguage,
-                loading: true,
-                prevFileUrl: props.fileUrl,
-            };
+            setPrevFileUrl(fileUrl);
         }
-        return null;
-    }
+    }, [fileInfo.extension, fileInfo.size, fileUrl, prevFileUrl]);
 
-    componentDidUpdate(prevProps: Props) {
-        if (this.props.fileUrl !== prevProps.fileUrl) {
-            this.getCode();
-        }
-    }
+    // A fetch that resolves after the user moved to another file must not report its source as the new file's.
+    const currentFileUrl = useRef(fileUrl);
+    currentFileUrl.current = fileUrl;
 
-    getCode = async () => {
-        if (!this.state.lang || this.props.fileInfo.size > Constants.CODE_PREVIEW_MAX_FILE_SIZE) {
-            return;
-        }
-        try {
-            const data = await fetch(this.props.fileUrl);
-            const text = await data.text();
-            this.handleReceivedCode(text);
-        } catch (e) {
-            this.handleReceivedError();
-        }
-    };
+    const shouldNotGetCode = !codeInfo.lang || fileInfo.size > Constants.CODE_PREVIEW_MAX_FILE_SIZE;
 
-    handleReceivedCode = async (data: string | Node) => {
-        let code = data as string;
-        const Data = data as Node;
-        if (Data.nodeName === '#document') {
-            code = new XMLSerializer().serializeToString(Data);
-        }
-        this.props.getContent?.(code);
-        this.setState({
-            code,
-            highlighted: await SyntaxHighlighting.highlight(this.state.lang, code),
-            loading: false,
-            success: true,
-        });
-    };
+    useEffect(() => {
+        let shouldSetContent = true;
 
-    handleReceivedError = () => {
-        this.setState({loading: false, success: false});
-    };
+        const usedLanguage = SyntaxHighlighting.getLanguageFromFileExtension(fileInfo.extension);
 
-    static supports(fileInfo: FileInfo | LinkInfo) {
-        return Boolean(SyntaxHighlighting.getLanguageFromFileExtension(fileInfo.extension));
-    }
-
-    render() {
-        if (this.state.loading) {
-            return (
-                <div className='view-image__loading'>
-                    <LoadingSpinner/>
-                </div>
-            );
+        if (!usedLanguage || fileInfo.size > Constants.CODE_PREVIEW_MAX_FILE_SIZE) {
+            setCodeInfo({code: '', lang: '', highlighted: ''});
+            setStatus('fail');
         }
 
-        if (!this.state.success) {
-            return (
-                <FileInfoPreview
-                    fileInfo={this.props.fileInfo}
-                    fileUrl={this.props.fileUrl}
-                />
-            );
+        const handleReceivedCode = async (data: string | Node) => {
+            let code = data as string;
+            const dataAsNode = data as Node;
+
+            if (dataAsNode.nodeName === '#document') {
+                code = new XMLSerializer().serializeToString(dataAsNode);
+            }
+
+            if (!shouldSetContent) {
+                return;
+            }
+
+            getContent?.(code);
+
+            const highlighted = await SyntaxHighlighting.highlight(codeInfo.lang, code);
+
+            // A different file may have been opened while this one was waiting to be highlighted
+            if (!shouldSetContent) {
+                return;
+            }
+
+            setCodeInfo({
+                ...codeInfo,
+                code,
+                highlighted,
+            });
+
+            setStatus('success');
+        };
+
+        const handleReceivedError = () => {
+            if (shouldSetContent) {
+                setStatus('fail');
+            }
+        };
+
+        const getCode = async () => {
+            if (shouldNotGetCode) {
+                return;
+            }
+            try {
+                const data = await fetch(fileUrl);
+                if (!data.ok) {
+                    // Handle HTTP error responses (including 403 Forbidden from plugin rejection)
+                    handleReceivedError();
+                    return;
+                }
+                const text = await data.text();
+                if (currentFileUrl.current !== fileUrl) {
+                    return;
+                }
+                handleReceivedCode(text);
+            } catch {
+                handleReceivedError();
+            }
+        };
+
+        // Only fetch if status is loading and we have a language
+        if (status === 'loading' && codeInfo.lang && !shouldNotGetCode) {
+            getCode();
         }
 
-        const language = SyntaxHighlighting.getLanguageName(this.state.lang);
+        return () => {
+            shouldSetContent = false;
+        };
+    }, [codeInfo, fileUrl, prevFileUrl, getContent, shouldNotGetCode, status]);
 
+    if (status === 'loading') {
         return (
-            <div className='post-code code-preview'>
-                <span className='post-code__language'>
-                    {`${this.props.fileInfo.name} - ${language}`}
-                </span>
-                <div className='hljs'>
-                    <div className='post-code__line-numbers'>
-                        {SyntaxHighlighting.renderLineNumbers(this.state.code)}
-                    </div>
-                    <code dangerouslySetInnerHTML={{__html: this.state.highlighted}}/>
+            <div className='view-image__loading'>
+                <LoadingSpinner size='24'/>
+            </div>
+        );
+    }
+
+    if (status === 'fail') {
+        return (
+            <FileInfoPreview
+                fileInfo={fileInfo}
+                fileUrl={fileUrl}
+            />
+        );
+    }
+
+    // Markdown files keep one fixed-size box in both views so switching doesn't resize the modal. The label is
+    // skipped in both views (not just this one) since adding it to only one would unbalance how much of the fixed
+    // box each view's content gets — and the modal header already shows the file name.
+    const isMarkdownFile = SyntaxHighlighting.isMarkdownLanguage(codeInfo.lang);
+
+    if (markdownView === MarkdownViews.RENDERED && canToggleMarkdownPreview(fileInfo.extension, isMobileView)) {
+        return (
+            <div className='code-preview code-preview--markdown code-preview--fixed-size'>
+                <div className='code-preview__markdown'>
+                    <Markdown
+                        message={codeInfo.code}
+                        postId={fileInfo.post_id}
+                    />
                 </div>
             </div>
         );
     }
-}
+
+    let title = fileInfo.name;
+    if (SyntaxHighlighting.canHighlightCode(codeInfo.lang, codeInfo.code)) {
+        title += ` - ${SyntaxHighlighting.getLanguageName(codeInfo.lang)}`;
+    }
+
+    return (
+        <div className={classNames('post-code code-preview', {'code-preview--fixed-size code-preview--wrap': isMarkdownFile})}>
+            {!isMarkdownFile && (
+                <span className='post-code__language'>
+                    {title}
+                </span>
+            )}
+            <div className='hljs'>
+                {isMarkdownFile ? (
+                    <WrappedCodeLines html={codeInfo.highlighted}/>
+                ) : (
+                    <>
+                        <div className='post-code__line-numbers'>
+                            {SyntaxHighlighting.renderLineNumbers(codeInfo.code)}
+                        </div>
+                        <code dangerouslySetInnerHTML={{__html: codeInfo.highlighted}}/>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default React.memo(CodePreview);

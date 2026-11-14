@@ -5,10 +5,9 @@ import classNames from 'classnames';
 import React, {useEffect, useState} from 'react';
 import {useIntl} from 'react-intl';
 
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import Constants from 'utils/constants';
 import {getShortenedURL} from 'utils/url';
 
 import Input from '../input/input';
@@ -24,6 +23,8 @@ type URLInputProps = {
     shortenLength?: number;
     error?: string;
     className?: string;
+    readOnly?: boolean;
+    helpText?: string;
     onChange?: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
     onBlur?: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
 };
@@ -37,6 +38,8 @@ function UrlInput({
     shortenLength,
     error,
     className,
+    readOnly,
+    helpText,
     onChange,
     onBlur,
 }: URLInputProps) {
@@ -50,10 +53,12 @@ function UrlInput({
         }
     }, [error]);
 
-    const fullPath = `${base}/${path ? `${path}/` : ''}`;
-    const fullURL = `${fullPath}${editing ? '' : pathInfo}`;
-    const isShortenedURL = shortenLength && fullURL.length > shortenLength;
     const hasError = Boolean(error);
+    const isEditing = !readOnly && (editing || hasError);
+
+    const fullPath = `${base}/${path ? `${path}/` : ''}`;
+    const fullURL = `${fullPath}${isEditing ? '' : pathInfo}`;
+    const isShortenedURL = shortenLength && fullURL.length > shortenLength;
 
     const handleOnInputChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         event.preventDefault();
@@ -72,13 +77,17 @@ function UrlInput({
             onBlur(event);
         }
     };
-
     const handleOnButtonClick = () => {
         if (!hasError) {
             setEditing(!editing);
         }
     };
 
+    const handlePropagateKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        if (event.key === 'Enter') {
+            event.stopPropagation();
+        }
+    };
     const urlInputLabel = (
         <span
             className='url-input-label'
@@ -93,21 +102,16 @@ function UrlInput({
         <div className={classNames('url-input-main', className)}>
             <div className='url-input-container'>
                 {isShortenedURL ? (
-                    <OverlayTrigger
-                        delayShow={Constants.OVERLAY_TIME_DELAY}
-                        placement='top'
-                        overlay={(
-                            <Tooltip id='urlTooltip'>
-                                {fullURL}
-                            </Tooltip>
-                        )}
+                    <WithTooltip
+                        title={fullURL}
                     >
                         {urlInputLabel}
-                    </OverlayTrigger>
+                    </WithTooltip>
+
                 ) : (
                     urlInputLabel
                 )}
-                {(editing || hasError) && (
+                {isEditing && (
                     <Input
                         data-testid='channelURLInput'
                         name='url-input'
@@ -123,22 +127,39 @@ function UrlInput({
                         hasError={hasError}
                         onChange={handleOnInputChange}
                         onBlur={handleOnInputBlur}
+                        aria-describedby='url-input-error'
                     />
                 )}
-                <button
-                    className={classNames('url-input-button', {disabled: hasError})}
-                    disabled={hasError}
-                    onClick={handleOnButtonClick}
-                >
-                    <span className='url-input-button-label'>
-                        {editing ? formatMessage({id: 'url_input.buttonLabel.done', defaultMessage: 'Done'}) : formatMessage({id: 'url_input.buttonLabel.edit', defaultMessage: 'Edit'})}
-                    </span>
-                </button>
+                {!readOnly && (
+                    <Button
+                        className={classNames('url-input-button', {disabled: hasError})}
+                        disabled={hasError}
+                        emphasis='quaternary'
+                        size='x-small'
+                        type='button'
+                        onClick={handleOnButtonClick}
+                        onKeyDown={handlePropagateKeyDown}
+                    >
+                        <span className='url-input-button-label'>
+                            {editing ? formatMessage({id: 'url_input.buttonLabel.done', defaultMessage: 'Done'}) : formatMessage({id: 'url_input.buttonLabel.edit', defaultMessage: 'Edit'})}
+                        </span>
+                    </Button>
+                )}
             </div>
+            {helpText && (
+                <div className='url-input-help-text'>
+                    {helpText}
+                </div>
+            )}
             {error && (
                 <div className='url-input-error'>
                     <i className='icon icon-alert-outline'/>
-                    <span>{error}</span>
+                    <span
+                        id='url-input-error'
+                        role='alert'
+                    >
+                        {error}
+                    </span>
                 </div>
             )}
         </div>

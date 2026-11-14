@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
 )
 
 func TestIsValid(t *testing.T) {
@@ -65,6 +65,49 @@ func TestIsValid(t *testing.T) {
 						Default: "thedefault",
 					},
 				},
+				Sections: []*PluginSettingsSection{
+					{
+						Key:      "section1",
+						Title:    "section title",
+						Subtitle: "section subtitle",
+						Settings: []*PluginSetting{
+							{
+								Key:         "section1setting1",
+								DisplayName: "thedisplayname",
+								Type:        "custom",
+							},
+							{
+								Key:         "section1setting2",
+								DisplayName: "thedisplayname",
+								Type:        "custom",
+							},
+						},
+						Header: "section header",
+						Footer: "section footer",
+					},
+					{
+						Key: "section2",
+						Settings: []*PluginSetting{
+							{
+								Key:         "section2setting1",
+								DisplayName: "thedisplayname",
+								Type:        "custom",
+							},
+						},
+					},
+					{
+						Key:      "section3",
+						Custom:   true,
+						Fallback: true,
+						Settings: []*PluginSetting{
+							{
+								Key:         "section3setting1",
+								DisplayName: "thedisplayname",
+								Type:        "custom",
+							},
+						},
+					},
+				},
 			},
 		}, false},
 	}
@@ -96,6 +139,62 @@ func TestIsValidSettingsSchema(t *testing.T) {
 			err := tc.settingsSchema.isValid()
 			if tc.ExpectError {
 				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestPluginSettingsSectionIsValid(t *testing.T) {
+	for name, test := range map[string]struct {
+		Section       PluginSettingsSection
+		ExpectedError string
+	}{
+		"missing key": {
+			Section: PluginSettingsSection{
+				Settings: []*PluginSetting{
+					{
+						Type:        "custom",
+						Placeholder: "some Text",
+					},
+				},
+			},
+			ExpectedError: "invalid empty Key",
+		},
+		"invalid setting": {
+			Section: PluginSettingsSection{
+				Key: "sectionKey",
+				Settings: []*PluginSetting{
+					{
+						Type: "invalid",
+					},
+				},
+			},
+			ExpectedError: "invalid setting type: invalid",
+		},
+		"valid empty": {
+			Section: PluginSettingsSection{
+				Key:      "sectionKey",
+				Settings: []*PluginSetting{},
+			},
+		},
+		"valid": {
+			Section: PluginSettingsSection{
+				Key: "sectionKey",
+				Settings: []*PluginSetting{
+					{
+						Type:        "custom",
+						Placeholder: "some Text",
+					},
+				},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := test.Section.IsValid()
+			if test.ExpectedError != "" {
+				assert.EqualError(t, err, test.ExpectedError)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -284,6 +383,7 @@ func TestManifestUnmarshal(t *testing.T) {
 		SupportURL:       "https://example.com/support",
 		IconPath:         "assets/icon.svg",
 		MinServerVersion: "5.6.0",
+		RequiredAddOn:    "theaddon",
 		Server: &ManifestServer{
 			Executable: "theexecutable",
 			Executables: map[string]string{
@@ -327,6 +427,7 @@ homepage_url: https://example.com
 support_url: https://example.com/support
 icon_path: assets/icon.svg
 min_server_version: 5.6.0
+required_add_on: theaddon
 server:
     executable: theexecutable
     executables:
@@ -362,6 +463,7 @@ settings_schema:
 	"support_url": "https://example.com/support",
 	"icon_path": "assets/icon.svg",
 	"min_server_version": "5.6.0",
+	"required_add_on": "theaddon",
 	"server": {
 		"executable": "theexecutable",
 		"executables": {
@@ -459,6 +561,46 @@ func TestManifestHasClient(t *testing.T) {
 	assert.False(t, manifest.HasClient())
 }
 
+func TestManifestPreAuthClientManifest(t *testing.T) {
+	manifest := &Manifest{
+		Id:               "theid",
+		Name:             "thename",
+		Description:      "thedescription",
+		HomepageURL:      "https://example.com",
+		Version:          "0.0.1",
+		MinServerVersion: "5.6.0",
+		Server:           &ManifestServer{Executable: "theexecutable"},
+		Webapp: &ManifestWebapp{
+			BundlePath: "thebundlepath",
+			BundleHash: []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+			PreAuth:    true,
+		},
+		SettingsSchema: &PluginSettingsSchema{Header: "theheadertext"},
+		Props:          map[string]any{"key": "value"},
+	}
+
+	preAuth := manifest.PreAuthClientManifest()
+
+	assert.Equal(t, &Manifest{
+		Id:      "theid",
+		Name:    "thename",
+		Version: "0.0.1",
+		Webapp: &ManifestWebapp{
+			BundlePath: "/static/theid/theid_000102030405060708090a0b0c0d0e0f_bundle.js",
+			PreAuth:    true,
+		},
+	}, preAuth)
+	assert.Equal(t, "thebundlepath", manifest.Webapp.BundlePath, "original manifest must not be modified")
+
+	data, err := json.Marshal(preAuth)
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(data, &fields))
+	for key := range fields {
+		assert.Contains(t, []string{"id", "name", "version", "webapp"}, key, "unexpected field %q in pre-auth manifest", key)
+	}
+}
+
 func TestManifestClientManifest(t *testing.T) {
 	manifest := &Manifest{
 		Id:               "theid",
@@ -504,7 +646,6 @@ func TestManifestClientManifest(t *testing.T) {
 	assert.Equal(t, "/static/theid/theid_000102030405060708090a0b0c0d0e0f_bundle.js", sanitized.Webapp.BundlePath)
 	assert.Equal(t, manifest.Webapp.BundleHash, sanitized.Webapp.BundleHash)
 	assert.Equal(t, manifest.SettingsSchema, sanitized.SettingsSchema)
-	assert.Empty(t, sanitized.Name)
 	assert.Empty(t, sanitized.Description)
 	assert.Empty(t, sanitized.Server)
 

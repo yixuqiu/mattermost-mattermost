@@ -7,12 +7,12 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @enterprise @profile_popover
 
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
 import {createPrivateChannel} from '../elasticsearch_autocomplete/helpers';
-import {getAdminAccount} from '../../../../support/env';
+
+import * as TIMEOUTS from '@/fixtures/timeouts';
+import {getAdminAccount} from '@/support/env';
 
 describe('Profile popover', () => {
     let testTeam: Cypress.Team;
@@ -96,7 +96,7 @@ describe('Profile popover', () => {
         cy.apiLogin(otherUser);
 
         // # Create a private channel
-        createPrivateChannel(testTeam.id, otherUser).then((channel) => {
+        createPrivateChannel(testTeam.id, otherUser as any).then((channel) => {
             privateChannel = channel;
         });
 
@@ -347,8 +347,8 @@ describe('Profile popover', () => {
         // # Visit that channel
         cy.visit(`/${testTeam.name}/channels/${testChannel.name}`);
 
-        // * Verify that there are 2 post views now.
-        cy.findAllByTestId('postView', {timeout: TIMEOUTS.ONE_MIN}).should('have.length', 2);
+        // * Verify that there are 1 post views now.
+        cy.findAllByTestId('postView', {timeout: TIMEOUTS.ONE_MIN}).should('have.length', 1);
 
         // * Verify that user added message is there.
         cy.findAllByTestId('postView').last().find('.post-message__text').should('contain.text', `@${testUser.username} added to the channel by you.`);

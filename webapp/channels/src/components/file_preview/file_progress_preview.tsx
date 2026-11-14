@@ -2,8 +2,9 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {ProgressBar} from 'react-bootstrap';
 import {FormattedMessage} from 'react-intl';
+
+import {ProgressBar} from '@mattermost/compass-ui/components/progress-bar';
 
 import FilenameOverlay from 'components/file_attachment/filename_overlay';
 
@@ -16,7 +17,7 @@ type Props = {
     handleRemove: (id: string) => void;
     clientId: string;
     fileInfo: FilePreviewInfo;
-}
+};
 
 export default class FileProgressPreview extends React.PureComponent<Props> {
     handleRemove = () => {
@@ -37,7 +38,7 @@ export default class FileProgressPreview extends React.PureComponent<Props> {
             previewImage = <div className={'file-icon ' + Utils.getIconClassName(fileType)}/>;
 
             fileNameComponent = (
-                <React.Fragment>
+                <>
                     <FilenameOverlay
                         fileInfo={fileInfo}
                         compactDisplay={false}
@@ -50,24 +51,24 @@ export default class FileProgressPreview extends React.PureComponent<Props> {
                                 defaultMessage='Processing...'
                             />
                         ) : (
-                            <React.Fragment>
+                            <>
                                 <FormattedMessage
                                     id='admin.plugin.uploading'
                                     defaultMessage='Uploading...'
                                 />
                                 <span>{percentTxt}</span>
-                            </React.Fragment>
+                            </>
                         )}
                     </span>
-                </React.Fragment>
+                </>
             );
 
             if (percent) {
                 progressBar = (
                     <ProgressBar
                         className='post-image__progressBar'
-                        now={percent}
-                        active={percent === 100}
+                        value={percent}
+                        size='small'
                     />
                 );
             }
@@ -75,7 +76,6 @@ export default class FileProgressPreview extends React.PureComponent<Props> {
 
         return (
             <div
-                ref={clientId}
                 key={clientId}
                 className='file-preview post-image__column'
                 data-client-id={clientId}

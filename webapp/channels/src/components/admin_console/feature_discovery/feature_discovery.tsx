@@ -1,40 +1,41 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {type JSX} from 'react';
+import type {MessageDescriptor} from 'react-intl';
 import {FormattedMessage} from 'react-intl';
 
+import type {ButtonAsChildProps, ButtonProps} from '@mattermost/compass-ui/components/button';
+import {FeatureDiscoveryPanel} from '@mattermost/compass-ui/components/feature-discovery-panel';
 import type {AnalyticsState} from '@mattermost/types/admin';
 import type {CloudCustomer} from '@mattermost/types/cloud';
 import type {ClientLicense} from '@mattermost/types/config';
 
-import {trackEvent} from 'actions/telemetry_actions';
-
 import {EmbargoedEntityTrialError} from 'components/admin_console/license_settings/trial_banner/trial_banner';
 import AlertBanner from 'components/alert_banner';
-import PurchaseLink from 'components/announcement_bar/purchase_link/purchase_link';
 import ExternalLink from 'components/external_link';
-import FormattedMarkdownMessage from 'components/formatted_markdown_message';
-import StartTrialBtn from 'components/learn_more_trial_modal/start_trial_btn';
 import LoadingSpinner from 'components/widgets/loading/loading_spinner';
+import {licenseSkuToLabel} from 'components/widgets/tag/sku_tag';
 
-import {TELEMETRY_CATEGORIES, AboutLinks, LicenseLinks, LicenseSkus} from 'utils/constants';
+import type {LicenseSkus} from 'utils/constants';
+import {AboutLinks, LicenseLinks} from 'utils/constants';
 import {goToMattermostContactSalesForm} from 'utils/contact_support_sales';
-import * as Utils from 'utils/utils';
 
 import type {ModalData} from 'types/actions';
 
 import './feature_discovery.scss';
 
+// Compass ButtonProps omits data-* keys that Cypress selectors still rely on.
+type PanelButtonProps = ButtonProps & {
+    'data-testid'?: string;
+};
+
 type Props = {
     featureName: string;
     minimumSKURequiredForFeature: LicenseSkus;
 
-    titleID: string;
-    titleDefault: string;
-
-    copyID: string;
-    copyDefault: string;
+    title: MessageDescriptor;
+    copy: MessageDescriptor;
 
     learnMoreURL: string;
 
@@ -48,20 +49,22 @@ type Props = {
         getCloudSubscription: () => void;
         openModal: <P>(modalData: ModalData<P>) => void;
     };
+    isEnterpriseReady: boolean;
     isCloud: boolean;
     isCloudTrial: boolean;
     hadPrevCloudTrial: boolean;
     isSubscriptionLoaded: boolean;
     isPaidSubscription: boolean;
     customer?: CloudCustomer;
-    cloudFreeDeprecated: boolean;
-}
+    showSkuTag?: boolean;
+    openTrialForm?: (onClose?: () => void) => void;
+};
 
 type State = {
     gettingTrial: boolean;
     gettingTrialError: string | null;
     gettingTrialResponseCode: number | null;
-}
+};
 
 export default class FeatureDiscovery extends React.PureComponent<Props, State> {
     constructor(props: Props) {
@@ -88,162 +91,126 @@ export default class FeatureDiscovery extends React.PureComponent<Props, State> 
         goToMattermostContactSalesForm(firstName, lastName, companyName, customerEmail, 'mattermost', utmMedium);
     };
 
-    renderPostTrialCta = () => {
-        const {
-            minimumSKURequiredForFeature,
-            learnMoreURL,
-        } = this.props;
-        if (minimumSKURequiredForFeature === LicenseSkus.Enterprise) {
-            return (
-                <div className='purchase-card'>
-                    <button
-                        className='btn btn-primary'
-                        data-testid='featureDiscovery_primaryCallToAction'
-                        onClick={() => {
-                            trackEvent(TELEMETRY_CATEGORIES.SELF_HOSTED_ADMIN, 'click_enterprise_contact_sales_feature_discovery');
-                            this.contactSalesFunc();
-                        }}
-                    >
-                        <FormattedMessage
-                            id='admin.ldap_feature_discovery_cloud.call_to_action.primary_sales'
-                            defaultMessage='Contact sales'
-                        />
-                    </button>
-                    <ExternalLink
-                        location='feature_discovery'
-                        className='btn btn-secondary'
-                        href={learnMoreURL}
-                        data-testid='featureDiscovery_secondaryCallToAction'
-                    >
-                        <FormattedMessage
-                            id='admin.ldap_feature_discovery.call_to_action.secondary'
-                            defaultMessage='Learn more'
-                        />
-                    </ExternalLink>
-                </div>
-            );
-        }
+    renderLearnMoreSecondaryAction = (
+        emphasis: ButtonProps['emphasis'] = 'secondary',
+        size: ButtonProps['size'] = 'medium',
+    ): ButtonAsChildProps => ({
+        asChild: true,
+        emphasis,
+        size,
+        children: (
+            <ExternalLink
+                location='feature_discovery'
+                href={this.props.learnMoreURL}
+                data-testid='featureDiscovery_secondaryCallToAction'
+            >
+                <FormattedMessage
+                    id='admin.ldap_feature_discovery.call_to_action.secondary'
+                    defaultMessage='Learn more'
+                />
+            </ExternalLink>
+        ),
+    });
 
-        return (
-            <div className='purchase-card'>
-                <>
-                    <PurchaseLink
-                        eventID='post_trial_purchase_license'
-                        buttonTextElement={
-                            <FormattedMessage
-                                id='admin.license.trialCard.purchase_license'
-                                defaultMessage='Purchase a license'
-                            />
-                        }
-                    />
-                </>
+    renderContactSalesPrimaryAction = (size: ButtonProps['size'] = 'medium'): PanelButtonProps => ({
+        emphasis: 'primary',
+        size,
+        'data-testid': 'featureDiscovery_primaryCallToAction',
+        onClick: () => {
+            this.contactSalesFunc();
+        },
+        children: (
+            <FormattedMessage
+                id='admin.ldap_feature_discovery_cloud.call_to_action.primary_sales'
+                defaultMessage='Contact sales'
+            />
+        ),
+    });
 
-            </div>
-        );
+    renderStartTrialPrimaryAction = (size: ButtonProps['size'] = 'medium'): PanelButtonProps => ({
+        emphasis: 'primary',
+        size,
+        id: 'start_trial_btn',
+        'data-testid': 'featureDiscovery_primaryCallToAction',
+        onClick: () => {
+            this.props.openTrialForm?.();
+        },
+        children: (
+            <FormattedMessage
+                id='admin.ldap_feature_discovery.call_to_action.primary'
+                defaultMessage='Start trial'
+            />
+        ),
+    });
+
+    renderPostTrialActions = () => {
+        return {
+            primaryAction: this.renderContactSalesPrimaryAction(),
+            secondaryAction: this.renderLearnMoreSecondaryAction('tertiary'),
+        };
     };
 
-    renderStartTrial = (learnMoreURL: string, gettingTrialError: React.ReactNode) => {
-        const {
-            isCloud,
-        } = this.props;
+    renderCloudStartTrialActions = () => ({
+        primaryAction: this.renderContactSalesPrimaryAction(),
+        secondaryAction: this.renderLearnMoreSecondaryAction(),
+    });
 
-        // by default we assume is not cloud, so the cta button is Start Trial (which will request a trial license)
-        let ctaPrimaryButton = (
-            <StartTrialBtn
-                message={Utils.localizeMessage(
-                    'admin.ldap_feature_discovery.call_to_action.primary',
-                    'Start trial',
-                )}
-                telemetryId={`start_self_hosted_trial_from_${this.props.featureName}`}
-                btnClass='btn btn-primary'
-                renderAsButton={true}
-                trackingPage={this.props.featureName}
-            />
-        );
+    renderHostStartTrialActions = () => ({
+        primaryAction: this.renderStartTrialPrimaryAction(),
+        secondaryAction: this.renderLearnMoreSecondaryAction('tertiary'),
+    });
 
-        if (isCloud) {
-            // In cloud, only option is to contact sales.
-            ctaPrimaryButton = (
-                <button
-                    className='btn btn-primary'
-                    data-testid='featureDiscovery_primaryCallToAction'
-                    onClick={() => {
-                        trackEvent(TELEMETRY_CATEGORIES.CLOUD_ADMIN, 'click_enterprise_contact_sales_feature_discovery');
-                        this.contactSalesFunc();
-                    }}
-                >
-                    <FormattedMessage
-                        id='admin.ldap_feature_discovery_cloud.call_to_action.primary_sales'
-                        defaultMessage='Contact sales'
-                    />
-                </button>
-            );
-        }
-
+    renderTrialExtras = (gettingTrialError: React.ReactNode) => {
         return (
             <>
-                {ctaPrimaryButton}
-                <ExternalLink
-                    location='feature_discovery'
-                    className='btn btn-secondary'
-                    href={learnMoreURL}
-                    data-testid='featureDiscovery_secondaryCallToAction'
-                >
-                    <FormattedMessage
-                        id='admin.ldap_feature_discovery.call_to_action.secondary'
-                        defaultMessage='Learn more'
-                    />
-                </ExternalLink>
                 {gettingTrialError}
-                {(!this.props.isCloud) && (<p className='trial-legal-terms'>
-
-                    <FormattedMessage
-                        id='admin.feature_discovery.trial-request.accept-terms'
-                        defaultMessage='By clicking <highlight>Start trial</highlight>, I agree to the <linkEvaluation>Mattermost Software and Services License Agreement</linkEvaluation>, <linkPrivacy>Privacy Policy</linkPrivacy> and receiving product emails.'
-                        values={{
-                            highlight: (msg: React.ReactNode) => (
-                                <strong>{msg}</strong>
-                            ),
-                            linkEvaluation: (msg: React.ReactNode) => (
-                                <ExternalLink
-                                    location='feature_discovery'
-                                    href={LicenseLinks.SOFTWARE_SERVICES_LICENSE_AGREEMENT}
-                                >
-                                    {msg}
-                                </ExternalLink>
-                            ),
-                            linkPrivacy: (msg: React.ReactNode) => (
-                                <ExternalLink
-                                    location='feature_discovery'
-                                    href={AboutLinks.PRIVACY_POLICY}
-                                >
-                                    {msg}
-                                </ExternalLink>
-                            ),
-                        }}
-                    />
-
-                </p>)}
+                {(!this.props.isCloud) && (
+                    <p className='trial-legal-terms'>
+                        <FormattedMessage
+                            id='admin.feature_discovery.trial-request.accept-terms'
+                            defaultMessage='By clicking <highlight>Start trial</highlight>, I agree to the <linkEvaluation>Mattermost Software Evaluation Agreement</linkEvaluation>, <linkPrivacy>Privacy Policy</linkPrivacy> and receiving product emails.'
+                            values={{
+                                highlight: (msg: React.ReactNode) => (
+                                    <strong key='trial-terms-highlight'>{msg}</strong>
+                                ),
+                                linkEvaluation: (msg: React.ReactNode) => (
+                                    <ExternalLink
+                                        key='trial-terms-evaluation'
+                                        location='feature_discovery'
+                                        href={LicenseLinks.SOFTWARE_SERVICES_LICENSE_AGREEMENT}
+                                    >
+                                        {msg}
+                                    </ExternalLink>
+                                ),
+                                linkPrivacy: (msg: React.ReactNode) => (
+                                    <ExternalLink
+                                        key='trial-terms-privacy'
+                                        location='feature_discovery'
+                                        href={AboutLinks.PRIVACY_POLICY}
+                                    >
+                                        {msg}
+                                    </ExternalLink>
+                                ),
+                            }}
+                        />
+                    </p>
+                )}
             </>
         );
     };
 
     render() {
         const {
-            titleID,
-            titleDefault,
-            copyID,
-            copyDefault,
-            learnMoreURL,
+            title,
+            copy,
             featureDiscoveryImage,
             isCloud,
             isCloudTrial,
             isSubscriptionLoaded,
+            showSkuTag,
+            minimumSKURequiredForFeature,
         } = this.props;
 
-        // on first load the license information is available and we can know if it is cloud license, but the subscription is not loaded yet
-        // so on initial load we check if it is cloud license and in the case the subscription is still undefined we show the loading spinner to avoid
-        // component change flashing
         if (isCloud && !isSubscriptionLoaded) {
             return (<LoadingSpinner/>);
         }
@@ -277,8 +244,6 @@ export default class FeatureDiscovery extends React.PureComponent<Props, State> 
             );
         }
 
-        // if it is cloud and is in trial, in the case this component get's shown that means that the license hasn't been updated yet
-        // so let's notify to the user that the license is being updated
         if (isCloud && isCloudTrial && isSubscriptionLoaded) {
             return (
                 <div className='FeatureDiscovery'>
@@ -292,7 +257,7 @@ export default class FeatureDiscovery extends React.PureComponent<Props, State> 
                         }
                         message={
                             <>
-                                <FormattedMarkdownMessage
+                                <FormattedMessage
                                     id='admin.featureDiscovery.WarningDescription'
                                     defaultMessage='Your License is being updated to give you full access to all the Enterprise Features. This page will automatically refresh once the license update is complete. Please wait '
                                 />
@@ -304,29 +269,54 @@ export default class FeatureDiscovery extends React.PureComponent<Props, State> 
             );
         }
 
+        const showPostTrialCta = this.props.prevTrialLicense?.IsLicensed === 'true' || this.props.isEnterpriseReady === false;
+        const showHostStartTrialActions = !showPostTrialCta && !isCloud;
+
+        let panelActions: {
+            primaryAction?: PanelButtonProps;
+            secondaryAction?: ButtonAsChildProps;
+        };
+        if (showPostTrialCta) {
+            panelActions = this.renderPostTrialActions();
+        } else if (isCloud) {
+            panelActions = this.renderCloudStartTrialActions();
+        } else {
+            panelActions = this.renderHostStartTrialActions();
+        }
+
+        // Pass null when hidden so the panel does not fall back to its PROFESSIONAL default.
+        const skuLabel = showSkuTag ? licenseSkuToLabel(minimumSKURequiredForFeature) : null;
+
         return (
-            <div className='FeatureDiscovery'>
-                <div className='FeatureDiscovery_copyWrapper'>
-                    <div
-                        className='FeatureDiscovery_title'
-                        data-testid='featureDiscovery_title'
-                    >
+            <div
+                className='FeatureDiscovery'
+                data-testid='featureDiscovery'
+            >
+                <FeatureDiscoveryPanel
+                    className='FeatureDiscovery_panel'
+                    skuLabel={skuLabel}
+                    title={
+                        <span data-testid='featureDiscovery_title'>
+                            <FormattedMessage
+                                {...title}
+                            />
+                        </span>
+                    }
+                    description={
                         <FormattedMessage
-                            id={titleID}
-                            defaultMessage={titleDefault}
+                            {...copy}
                         />
-                    </div>
-                    <div className='FeatureDiscovery_copy'>
-                        <FormattedMessage
-                            id={copyID}
-                            defaultMessage={copyDefault}
-                        />
-                    </div>
-                    {this.props.prevTrialLicense?.IsLicensed === 'true' ? this.renderPostTrialCta() : this.renderStartTrial(learnMoreURL, gettingTrialError)}
-                </div>
-                <div className='FeatureDiscovery_imageWrapper'>
-                    {featureDiscoveryImage}
-                </div>
+                    }
+                    primaryAction={panelActions.primaryAction}
+
+                    // FeatureDiscoveryPanel types secondaryAction as ButtonProps; asChild is supported at runtime in compass-ui ≥0.1.0-alpha.15
+                    secondaryAction={panelActions.secondaryAction as ButtonProps | undefined}
+                    illustration={{
+                        'aria-label': '',
+                        children: featureDiscoveryImage,
+                    }}
+                />
+                {showHostStartTrialActions && this.renderTrialExtras(gettingTrialError)}
             </div>
         );
     }

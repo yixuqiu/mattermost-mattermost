@@ -1,7 +1,6 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {ChannelType} from '@mattermost/types/channels';
@@ -9,16 +8,41 @@ import type {CloudUsage} from '@mattermost/types/cloud';
 
 import * as PostListUtils from 'mattermost-redux/utils/post_list';
 
-import Post from 'components/post';
-import ChannelIntroMessage from 'components/post_view/channel_intro_message/';
-import CombinedUserActivityPost from 'components/post_view/combined_user_activity_post';
-import DateSeparator from 'components/post_view/date_separator';
-import NewMessageSeparator from 'components/post_view/new_message_separator/new_message_separator';
-
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 import {PostListRowListIds} from 'utils/constants';
 import {TestHelper} from 'utils/test_helper';
 
 import PostListRow from './post_list_row';
+
+jest.mock('components/post', () => ({
+    __esModule: true,
+    default: (props: any) => <div data-testid='post'>{`Post: ${props.post?.id}`}</div>,
+}));
+
+jest.mock('components/post_view/channel_intro_message/', () => ({
+    __esModule: true,
+    default: () => <div data-testid='channel-intro-message'>{'ChannelIntroMessage'}</div>,
+}));
+
+jest.mock('components/post_view/combined_user_activity_post', () => ({
+    __esModule: true,
+    default: (props: any) => <div data-testid='combined-user-activity'>{`CombinedUserActivityPost: ${props.combinedId}`}</div>,
+}));
+
+jest.mock('components/post_view/date_separator', () => ({
+    __esModule: true,
+    default: (props: any) => <div data-testid='date-separator'>{`DateSeparator: ${props.date}`}</div>,
+}));
+
+jest.mock('components/post_view/new_message_separator/new_message_separator', () => ({
+    __esModule: true,
+    default: (props: any) => <div data-testid='new-message-separator'>{`NewMessageSeparator: ${props.separatorId}`}</div>,
+}));
+
+jest.mock('components/center_message_lock', () => ({
+    __esModule: true,
+    default: () => <div data-testid='center-message-lock'>{'CenterMessageLock'}</div>,
+}));
 
 describe('components/post_view/post_list_row', () => {
     const defaultProps = {
@@ -42,22 +66,10 @@ describe('components/post_view/post_list_row', () => {
         currentUserId: 'user_id_1',
         newMessagesSeparatorActions: [],
         channelId: 'channel_id_1',
+        isChannelAutotranslated: false,
     };
 
-    test('should render more messages loading indicator', () => {
-        const listId = PostListRowListIds.OLDER_MESSAGES_LOADER;
-        const props = {
-            ...defaultProps,
-            listId,
-            loadingOlderPosts: true,
-        };
-        const wrapper = shallow(
-            <PostListRow {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should render manual load messages trigger', () => {
+    test('should render manual load messages trigger', async () => {
         const listId = PostListRowListIds.LOAD_OLDER_MESSAGES_TRIGGER;
         const loadOlderPosts = jest.fn();
         const props = {
@@ -65,11 +77,10 @@ describe('components/post_view/post_list_row', () => {
             listId,
             loadOlderPosts,
         };
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        wrapper.prop('onClick')();
+        await userEvent.click(screen.getByRole('button'));
         expect(loadOlderPosts).toHaveBeenCalledTimes(1);
     });
 
@@ -98,11 +109,10 @@ describe('components/post_view/post_list_row', () => {
             listId,
         };
 
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(ChannelIntroMessage).exists()).toBe(true);
+        expect(screen.getByTestId('channel-intro-message')).toBeInTheDocument();
     });
 
     test('should render new messages line', () => {
@@ -111,11 +121,10 @@ describe('components/post_view/post_list_row', () => {
             ...defaultProps,
             listId,
         };
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(NewMessageSeparator).exists()).toBe(true);
+        expect(screen.getByTestId('new-message-separator')).toBeInTheDocument();
     });
 
     test('should render date line', () => {
@@ -124,11 +133,10 @@ describe('components/post_view/post_list_row', () => {
             ...defaultProps,
             listId,
         };
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(DateSeparator).exists()).toBe(true);
+        expect(screen.getByTestId('date-separator')).toBeInTheDocument();
     });
 
     test('should render combined post', () => {
@@ -138,11 +146,10 @@ describe('components/post_view/post_list_row', () => {
             listId: `${PostListUtils.COMBINED_USER_ACTIVITY}1234-5678`,
             previousListId: 'abcd',
         };
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(CombinedUserActivityPost).exists()).toBe(true);
+        expect(screen.getByTestId('combined-user-activity')).toBeInTheDocument();
     });
 
     test('should render post', () => {
@@ -152,36 +159,9 @@ describe('components/post_view/post_list_row', () => {
             listId: '1234',
             previousListId: 'abcd',
         };
-        const wrapper = shallow(
+        renderWithContext(
             <PostListRow {...props}/>,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(Post).exists()).toBe(true);
-    });
-
-    test('should have class hideAnimation for OLDER_MESSAGES_LOADER if loadingOlderPosts is false', () => {
-        const listId = PostListRowListIds.OLDER_MESSAGES_LOADER;
-        const props = {
-            ...defaultProps,
-            listId,
-            loadingOlderPosts: false,
-        };
-        const wrapper = shallow(
-            <PostListRow {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should have class hideAnimation for NEWER_MESSAGES_LOADER if loadingNewerPosts is false', () => {
-        const listId = PostListRowListIds.NEWER_MESSAGES_LOADER;
-        const props = {
-            ...defaultProps,
-            listId,
-            loadingNewerPosts: false,
-        };
-        const wrapper = shallow(
-            <PostListRow {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByTestId('post')).toBeInTheDocument();
     });
 });

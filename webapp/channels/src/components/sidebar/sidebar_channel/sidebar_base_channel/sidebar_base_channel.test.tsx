@@ -1,12 +1,50 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
-import React from 'react';
+import React, {type JSX} from 'react';
 
 import type {ChannelType} from '@mattermost/types/channels';
 
 import SidebarBaseChannel from 'components/sidebar/sidebar_channel/sidebar_base_channel/sidebar_base_channel';
+
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
+
+jest.mock('components/tours/onboarding_tour', () => ({
+    ChannelsAndDirectMessagesTour: () => null,
+}));
+
+jest.mock('components/sidebar/sidebar_channel/sidebar_channel_link', () => {
+    const React = require('react');
+
+    return ({label, channelLeaveHandler}: {label: string; icon?: JSX.Element | null; channelLeaveHandler?: (callback: () => void) => void}) => {
+        const [isOpen, setIsOpen] = React.useState(false);
+
+        return (
+            <div>
+                <button
+                    aria-label='Channel options'
+                    onClick={() => setIsOpen(true)}
+                >
+                    {'Options'}
+                </button>
+                {isOpen && (
+                    <div
+                        role='menu'
+                        aria-label='Edit channel menu'
+                    >
+                        <button
+                            role='menuitem'
+                            onClick={() => channelLeaveHandler?.(() => {})}
+                        >
+                            {'Leave Channel'}
+                        </button>
+                    </div>
+                )}
+                <div>{label}</div>
+            </div>
+        );
+    };
+});
 
 describe('components/sidebar/sidebar_channel/sidebar_base_channel', () => {
     const baseProps = {
@@ -34,82 +72,91 @@ describe('components/sidebar/sidebar_channel/sidebar_base_channel', () => {
         },
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(
-            <SidebarBaseChannel {...baseProps}/>,
-        );
+    test('expect leaveChannel to be called when leave public channel ', async () => {
+        const mockfn = jest.fn();
 
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot when shared channel', () => {
         const props = {
             ...baseProps,
             channel: {
                 ...baseProps.channel,
+                type: 'O' as ChannelType,
                 shared: true,
+                name: 'l',
+            },
+            actions: {
+                leaveChannel: mockfn,
+                openModal: jest.fn(),
             },
         };
 
-        const wrapper = shallow(
-            <SidebarBaseChannel {...props}/>,
-        );
+        renderWithContext(<SidebarBaseChannel {...props}/>);
+        const user = userEvent.setup();
 
-        expect(wrapper).toMatchSnapshot();
+        const optionsBtn = screen.getByRole('button', {name: /channel options/i});
+
+        await user.click(optionsBtn); // open options
+        await user.click(screen.getByRole('menuitem', {name: 'Leave Channel'}));
+        await waitFor(() => {
+            expect(mockfn).toHaveBeenCalledTimes(1);
+        });
     });
 
-    test('should match snapshot when private channel', () => {
+    test('expect openModal to be called when leave private channel ', async () => {
+        const mockfn = jest.fn();
+
         const props = {
             ...baseProps,
             channel: {
                 ...baseProps.channel,
                 type: 'P' as ChannelType,
+                name: 'l',
+            },
+            actions: {
+                leaveChannel: jest.fn(),
+                openModal: mockfn,
             },
         };
 
-        const wrapper = shallow(
-            <SidebarBaseChannel {...props}/>,
-        );
+        renderWithContext(<SidebarBaseChannel {...props}/>);
+        const user = userEvent.setup();
 
-        expect(wrapper).toMatchSnapshot();
+        const optionsBtn = screen.getByRole('button', {name: /channel options/i});
+
+        await user.click(optionsBtn); // open options
+        await user.click(screen.getByRole('menuitem', {name: 'Leave Channel'}));
+        await waitFor(() => {
+            expect(mockfn).toHaveBeenCalledTimes(1);
+        });
     });
 
-    test('should match snapshot when shared private channel', () => {
+    test('expect openModal to be called when leaving a policy enforced public channel', async () => {
+        const openModalMock = jest.fn();
+        const leaveChannelMock = jest.fn();
+
         const props = {
             ...baseProps,
             channel: {
                 ...baseProps.channel,
-                type: 'P' as ChannelType,
-                shared: true,
+                type: 'O' as ChannelType,
+                name: 'l',
+                policy_enforced: true,
+            },
+            actions: {
+                leaveChannel: leaveChannelMock,
+                openModal: openModalMock,
             },
         };
 
-        const wrapper = shallow(
-            <SidebarBaseChannel {...props}/>,
-        );
+        renderWithContext(<SidebarBaseChannel {...props}/>);
+        const user = userEvent.setup();
 
-        expect(wrapper).toMatchSnapshot();
-    });
+        const optionsBtn = screen.getByRole('button', {name: /channel options/i});
 
-    test('expect callback to be called when leave public channel ', () => {
-        const callback = jest.fn();
-        const wrapper = shallow<SidebarBaseChannel>(<SidebarBaseChannel {...baseProps}/>);
-        wrapper.instance().handleLeavePublicChannel(callback);
-        expect(callback).toBeCalled();
-    });
-
-    test('expect callback to be called when leave private channel ', () => {
-        const callback = jest.fn();
-        const props = {
-            ...baseProps,
-            channel: {
-                ...baseProps.channel,
-                type: 'P' as ChannelType,
-            },
-        };
-
-        const wrapper = shallow<SidebarBaseChannel>(<SidebarBaseChannel {...props}/>);
-        wrapper.instance().handleLeavePrivateChannel(callback);
-        expect(callback).toBeCalled();
+        await user.click(optionsBtn);
+        await user.click(screen.getByRole('menuitem', {name: 'Leave Channel'}));
+        await waitFor(() => {
+            expect(openModalMock).toHaveBeenCalledTimes(1);
+        });
+        expect(leaveChannelMock).not.toHaveBeenCalled();
     });
 });

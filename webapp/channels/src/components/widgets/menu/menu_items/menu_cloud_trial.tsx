@@ -2,44 +2,36 @@
 // See LICENSE.txt for license information.
 
 import moment from 'moment';
-import React from 'react';
+import React, {type JSX} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {getCloudSubscription, getSubscriptionProduct} from 'mattermost-redux/selectors/entities/cloud';
+import {getCloudSubscription} from 'mattermost-redux/selectors/entities/cloud';
 import {getLicense} from 'mattermost-redux/selectors/entities/general';
-import {deprecateCloudFree} from 'mattermost-redux/selectors/entities/preferences';
 import {isCurrentUserSystemAdmin} from 'mattermost-redux/selectors/entities/users';
 
 import {openModal} from 'actions/views/modals';
 
-import useGetHighestThresholdCloudLimit from 'components/common/hooks/useGetHighestThresholdCloudLimit';
-import useGetLimits from 'components/common/hooks/useGetLimits';
-import useGetUsage from 'components/common/hooks/useGetUsage';
 import useOpenPricingModal from 'components/common/hooks/useOpenPricingModal';
-import LearnMoreTrialModal from 'components/learn_more_trial_modal/learn_more_trial_modal';
 import TrialBenefitsModal from 'components/trial_benefits_modal/trial_benefits_modal';
 
-import {ModalIdentifiers, CloudProducts} from 'utils/constants';
+import {ModalIdentifiers} from 'utils/constants';
 
 import './menu_item.scss';
 
 type Props = {
     id: string;
-}
+};
 const MenuCloudTrial = ({id}: Props): JSX.Element | null => {
     const subscription = useSelector(getCloudSubscription);
-    const subscriptionProduct = useSelector(getSubscriptionProduct);
     const license = useSelector(getLicense);
-    const cloudFreeDeprecated = useSelector(deprecateCloudFree);
     const dispatch = useDispatch();
 
     const isCloud = license?.Cloud === 'true';
     const isFreeTrial = subscription?.is_free_trial === 'true';
-    const noPriorTrial = !(subscription?.is_free_trial === 'false' && subscription?.trial_end_at > 0);
     const freeTrialEndDay = moment(subscription?.trial_end_at).format('MMMM DD');
     const isAdmin = useSelector(isCurrentUserSystemAdmin);
-    const openPricingModal = useOpenPricingModal();
+    const {openPricingModal, isAirGapped} = useOpenPricingModal();
 
     const openTrialBenefitsModal = async () => {
         await dispatch(openModal({
@@ -48,30 +40,12 @@ const MenuCloudTrial = ({id}: Props): JSX.Element | null => {
         }));
     };
 
-    const openLearnMoreTrialModal = async () => {
-        await dispatch(openModal({
-            modalId: ModalIdentifiers.LEARN_MORE_TRIAL_MODAL,
-            dialogType: LearnMoreTrialModal,
-            dialogProps: {
-                launchedBy: 'main_menu_cloud_trial',
-            },
-        }));
-    };
-
-    const someLimitNeedsAttention = Boolean(useGetHighestThresholdCloudLimit(useGetUsage(), useGetLimits()[0]));
-
-    if (!isCloud) {
+    if (!isCloud || !isFreeTrial) {
         return null;
     }
 
-    const isStarter = subscriptionProduct?.sku === CloudProducts.STARTER;
-
-    if (someLimitNeedsAttention || (!isStarter && !isFreeTrial)) {
-        return null;
-    }
-
-    // for end users only display the trial information
-    if (!isAdmin && !isFreeTrial) {
+    // Don't show if air-gapped
+    if (isAirGapped) {
         return null;
     }
 
@@ -80,7 +54,7 @@ const MenuCloudTrial = ({id}: Props): JSX.Element | null => {
             <h5 className='MenuCloudTrial__free-trial__content-title'>
                 <FormattedMessage
                     id='menu.cloudFree.enterpriseTrialTitle'
-                    defaultMessage='Enterprise Trial'
+                    defaultMessage='Enterprise Advanced Trial'
                 />
             </h5>
             <div className='MenuCloudTrial__free-trial__content-section'>
@@ -93,10 +67,10 @@ const MenuCloudTrial = ({id}: Props): JSX.Element | null => {
                     values={
                         {
                             trialEndDay: freeTrialEndDay,
-                            openModalLink: (msg: string) => (
+                            openModalLink: (msg) => (
                                 <a
                                     className='open-trial-benefits-modal style-link'
-                                    onClick={isAdmin ? openTrialBenefitsModal : () => openPricingModal({trackingLocation: 'menu_cloud_trial'})}
+                                    onClick={isAdmin ? openTrialBenefitsModal : () => openPricingModal()}
                                 >
                                     {msg}
                                 </a>
@@ -108,50 +82,13 @@ const MenuCloudTrial = ({id}: Props): JSX.Element | null => {
         </div>
     );
 
-    // menu option displayed when the workspace is not running any trial
-    const noFreeTrialContent = (noPriorTrial && !cloudFreeDeprecated) ? (
-        <FormattedMessage
-            id='menu.cloudFree.priorTrial.tryEnterprise'
-            defaultMessage='Interested in a limitless plan with high-security features? <openModalLink>Try Enterprise free for 30 days</openModalLink>'
-            values={
-                {
-                    openModalLink: (msg: string) => (
-                        <a
-                            className='open-learn-more-trial-modal style-link'
-                            onClick={openLearnMoreTrialModal}
-                        >
-                            {msg}
-                        </a>
-                    ),
-                }
-            }
-        />
-    ) : (
-        <FormattedMessage
-            id='menu.cloudFree.postTrial.tryEnterprise'
-            defaultMessage='Interested in a limitless plan with high-security features? <openModalLink>See plans</openModalLink>'
-            values={
-                {
-                    openModalLink: (msg: string) => (
-                        <a
-                            className='open-see-plans-modal style-link'
-                            onClick={() => openPricingModal({trackingLocation: 'menu_cloud_trial'})}
-                        >
-                            {msg}
-                        </a>
-                    ),
-                }
-            }
-        />
-    );
-
     return (
         <li
             className='MenuCloudTrial'
             role='menuitem'
             id={id}
         >
-            {isFreeTrial ? freeTrialContent : noFreeTrialContent}
+            {freeTrialContent}
         </li>
     );
 };

@@ -7,20 +7,17 @@ import {FormattedMessage, injectIntl} from 'react-intl';
 import type {IntlShape} from 'react-intl';
 import {Link} from 'react-router-dom';
 
-import type {ClientConfig, WarnMetricStatus} from '@mattermost/types/config';
+import type {ClientConfig} from '@mattermost/types/config';
 import type {PreferenceType} from '@mattermost/types/preferences';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
-
-import {trackEvent} from 'actions/telemetry_actions';
 
 import PurchaseLink from 'components/announcement_bar/purchase_link/purchase_link';
 import ExternalLink from 'components/external_link';
 
 import alertIcon from 'images/icons/round-white-info-icon.svg';
 import warningIcon from 'images/icons/warning-icon.svg';
-import {AnnouncementBarTypes, AnnouncementBarMessages, Preferences, ConfigurationBanners, Constants, TELEMETRY_CATEGORIES} from 'utils/constants';
-import {t} from 'utils/i18n';
+import {AnnouncementBarTypes, AnnouncementBarMessages, Preferences, ConfigurationBanners, Constants} from 'utils/constants';
 import {daysToLicenseExpire, isLicenseExpired, isLicenseExpiring, isLicensePastGracePeriod, isTrialLicense} from 'utils/license_utils';
 import {getSkuDisplayName} from 'utils/subscription';
 import {getViewportSize} from 'utils/utils';
@@ -37,13 +34,8 @@ type Props = {
     dismissedExpiringTrialLicense?: boolean;
     dismissedExpiringLicense?: boolean;
     dismissedExpiredLicense?: boolean;
-    dismissedNumberOfActiveUsersWarnMetricStatus?: boolean;
-    dismissedNumberOfActiveUsersWarnMetricStatusAck?: boolean;
-    dismissedNumberOfPostsWarnMetricStatus?: boolean;
-    dismissedNumberOfPostsWarnMetricStatusAck?: boolean;
     siteURL: string;
     currentUserId: string;
-    warnMetricsStatus?: Record<string, WarnMetricStatus>;
     actions: {
         dismissNotice: (notice: string) => void;
         savePreferences: (userId: string, preferences: PreferenceType[]) => Promise<ActionResult>;
@@ -58,11 +50,6 @@ const ConfigurationAnnouncementBar = (props: Props) => {
     };
 
     const dismissExpiredLicense = () => {
-        trackEvent(
-            TELEMETRY_CATEGORIES.SELF_HOSTED_LICENSE_EXPIRED,
-            'dismissed_license_expired_banner',
-        );
-
         props.actions.savePreferences(props.currentUserId, [{
             category: Preferences.CONFIGURATION_BANNERS,
             user_id: props.currentUserId,
@@ -74,8 +61,6 @@ const ConfigurationAnnouncementBar = (props: Props) => {
     const dismissExpiringTrialLicense = () => {
         props.actions.dismissNotice(AnnouncementBarMessages.TRIAL_LICENSE_EXPIRING);
     };
-
-    const renewLinkTelemetry = {success: 'renew_license_banner_success', error: 'renew_license_banner_fail'};
 
     // System administrators
     if (props.canViewSystemErrors) {
@@ -99,7 +84,7 @@ const ConfigurationAnnouncementBar = (props: Props) => {
                     message={
                         <div className='announcement-bar__configuration'>
                             {message}
-                            <RenewalLink telemetryInfo={renewLinkTelemetry}/>
+                            <RenewalLink/>
                         </div>
                     }
                     tooltipMsg={message}
@@ -201,7 +186,7 @@ const ConfigurationAnnouncementBar = (props: Props) => {
                     message={
                         <div className='announcement-bar__configuration'>
                             {message}
-                            <RenewalLink telemetryInfo={renewLinkTelemetry}/>
+                            <RenewalLink/>
                         </div>
                     }
                     tooltipMsg={message}
@@ -221,7 +206,7 @@ const ConfigurationAnnouncementBar = (props: Props) => {
                                 src={warningIcon}
                             />
                             <FormattedMessage
-                                id={AnnouncementBarMessages.LICENSE_PAST_GRACE}
+                                id='announcement_bar.error.past_grace'
                                 defaultMessage='{licenseSku} license is expired and some features may be disabled. Please contact your System Administrator for details.'
                                 values={{
                                     licenseSku: getSkuDisplayName(props.license.SkuShortName, props.license.IsGovSku === 'true'),
@@ -238,8 +223,8 @@ const ConfigurationAnnouncementBar = (props: Props) => {
             props.config?.EnablePreviewModeBanner === 'true'
     ) {
         const emailMessage = formatMessage({
-            id: AnnouncementBarMessages.PREVIEW_MODE,
-            defaultMessage: 'Preview Mode: Email notifications have not been configured',
+            id: 'announcement_bar.error.preview_mode',
+            defaultMessage: 'Preview Mode: Email notifications have not been configured.',
         });
 
         return (
@@ -252,18 +237,8 @@ const ConfigurationAnnouncementBar = (props: Props) => {
     }
 
     if (props.canViewSystemErrors && props.config?.SiteURL === '') {
-        let id;
-        let defaultMessage;
-        if (props.config?.EnableSignUpWithGitLab === 'true') {
-            id = t('announcement_bar.error.site_url_gitlab.full');
-            defaultMessage = 'Please configure your <linkSite>site URL</linkSite> either on the <linkConsole>System Console<linkConsole> or, if you\'re using GitLab Mattermost, in gitlab.rb.';
-        } else {
-            id = t('announcement_bar.error.site_url.full');
-            defaultMessage = 'Please configure your <linkSite>site URL</linkSite> on the <linkConsole>System Console</linkConsole>.';
-        }
-
-        const values: Record<string, ReactNode> = {
-            linkSite: (msg: string) => (
+        const values = {
+            linkSite: (msg: ReactNode[]) => (
                 <ExternalLink
                     href={props.siteURL}
                     location='configuration_announcement_bar'
@@ -271,13 +246,25 @@ const ConfigurationAnnouncementBar = (props: Props) => {
                     {msg}
                 </ExternalLink>
             ),
-            linkConsole: (msg: string) => (
+            linkConsole: (msg: ReactNode[]) => (
                 <Link to='/admin_console/environment/web_server'>
                     {msg}
                 </Link>
             ),
         };
-        const siteURLMessage = formatMessage({id, defaultMessage}, values);
+
+        let siteURLMessage;
+        if (props.config?.EnableSignUpWithGitLab === 'true') {
+            siteURLMessage = formatMessage({
+                id: 'announcement_bar.error.site_url_gitlab.full',
+                defaultMessage: 'Please configure your <linkSite>site URL</linkSite> either on the <linkConsole>System Console</linkConsole> or, if you\'re using GitLab Mattermost, in gitlab.rb.',
+            }, values);
+        } else {
+            siteURLMessage = formatMessage({
+                id: 'announcement_bar.error.site_url.full',
+                defaultMessage: 'Please configure your <linkSite>site URL</linkSite> on the <linkConsole>System Console</linkConsole>.',
+            }, values);
+        }
 
         return (
             <TextDismissableBar

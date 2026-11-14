@@ -1,10 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import RadioButtonGroup from 'components/common/radio_group';
+
+import {render, screen, userEvent} from 'tests/react_testing_utils';
 
 describe('/components/common/RadioButtonGroup', () => {
     const onChange = jest.fn();
@@ -15,23 +16,18 @@ describe('/components/common/RadioButtonGroup', () => {
         onChange,
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<RadioButtonGroup {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
     test('test radio button group input lenght is as expected', () => {
-        const wrapper = shallow(<RadioButtonGroup {...baseProps}/>);
-        const buttons = wrapper.find('input');
+        render(<RadioButtonGroup {...baseProps}/>);
+        const buttons = screen.getAllByRole('radio');
 
         expect(buttons.length).toBe(3);
     });
 
-    test('test radio button group onChange function', () => {
-        const wrapper = shallow(<RadioButtonGroup {...baseProps}/>);
+    test('test radio button group onChange function', async () => {
+        render(<RadioButtonGroup {...baseProps}/>);
 
-        const buttons = wrapper.find('input');
-        buttons.at(0).simulate('change');
+        const buttons = screen.getAllByRole('radio');
+        await userEvent.click(buttons[0]);
 
         expect(onChange).toHaveBeenCalledTimes(1);
     });

@@ -5,13 +5,15 @@ import {connect} from 'react-redux';
 import type {ConnectedProps} from 'react-redux';
 import type {RouteComponentProps} from 'react-router-dom';
 
-import {fetchAllMyTeamsChannelsAndChannelMembersREST, fetchChannelsAndMembers, unsetActiveChannelOnServer} from 'mattermost-redux/actions/channels';
+import {fetchAllMyTeamsChannels, fetchAllMyChannelMembers, fetchChannelsAndMembers, unsetActiveChannelOnServer} from 'mattermost-redux/actions/channels';
 import {getCurrentChannelId} from 'mattermost-redux/selectors/entities/channels';
 import {getLicense, getConfig} from 'mattermost-redux/selectors/entities/general';
 import {getCurrentTeamId, getMyTeams} from 'mattermost-redux/selectors/entities/teams';
 import {getCurrentUser} from 'mattermost-redux/selectors/entities/users';
 
-import {markChannelAsReadOnFocus} from 'actions/views/channel';
+import {markAsReadOnFocus} from 'actions/views/channel';
+import {selectTeamScopedProducts} from 'selectors/products';
+import {getSelectedPostId} from 'selectors/rhs';
 import {getSelectedThreadIdInCurrentTeam} from 'selectors/views/threads';
 
 import {initializeTeam, joinTeam} from 'components/team_controller/actions';
@@ -25,7 +27,7 @@ import TeamController from './team_controller';
 type Params = {
     url: string;
     team?: string;
-}
+};
 
 export type OwnProps = RouteComponentProps<Params>;
 
@@ -34,6 +36,7 @@ function mapStateToProps(state: GlobalState, ownProps: OwnProps) {
     const config = getConfig(state);
     const currentUser = getCurrentUser(state);
     const plugins = state.plugins.components.NeedsTeamComponent;
+    const products = selectTeamScopedProducts(state);
     const disableRefetchingOnBrowserFocus = config.DisableRefetchingOnBrowserFocus === 'true';
     const disableWakeUpReconnectHandler = config.DisableWakeUpReconnectHandler === 'true';
 
@@ -42,7 +45,9 @@ function mapStateToProps(state: GlobalState, ownProps: OwnProps) {
         currentChannelId: getCurrentChannelId(state),
         teamsList: getMyTeams(state),
         plugins,
+        products,
         selectedThreadId: getSelectedThreadIdInCurrentTeam(state),
+        selectedPostId: getSelectedPostId(state),
         mfaRequired: checkIfMFARequired(currentUser, license, config, ownProps.match.url),
         disableRefetchingOnBrowserFocus,
         disableWakeUpReconnectHandler,
@@ -51,8 +56,9 @@ function mapStateToProps(state: GlobalState, ownProps: OwnProps) {
 
 const mapDispatchToProps = {
     fetchChannelsAndMembers,
-    fetchAllMyTeamsChannelsAndChannelMembersREST,
-    markChannelAsReadOnFocus,
+    fetchAllMyTeamsChannels,
+    fetchAllMyChannelMembers,
+    markAsReadOnFocus,
     initializeTeam,
     joinTeam,
     unsetActiveChannelOnServer,

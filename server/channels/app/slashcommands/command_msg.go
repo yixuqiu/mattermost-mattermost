@@ -39,21 +39,13 @@ func (*msgProvider) GetCommand(a *app.App, T i18n.TranslateFunc) *model.Command 
 	}
 }
 
-func (*msgProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
-	splitMessage := strings.SplitN(message, " ", 2)
-
-	parsedMessage := ""
-	targetUsername := ""
-
-	if len(splitMessage) > 1 {
-		parsedMessage = strings.SplitN(message, " ", 2)[1]
-	}
-	targetUsername = strings.SplitN(message, " ", 2)[0]
+func (*msgProvider) DoCommand(a *app.App, rctx request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
+	targetUsername, parsedMessage, _ := strings.Cut(message, " ")
 	targetUsername = strings.TrimPrefix(targetUsername, "@")
 
 	userProfile, nErr := a.Srv().Store().User().GetByUsername(targetUsername)
 	if nErr != nil {
-		c.Logger().Error(nErr.Error())
+		rctx.Logger().Error(nErr.Error())
 		return &model.CommandResponse{Text: args.T("api.command_msg.missing.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 	}
 
@@ -61,9 +53,9 @@ func (*msgProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs
 		return &model.CommandResponse{Text: args.T("api.command_msg.missing.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 	}
 
-	canSee, err := a.UserCanSeeOtherUser(c, args.UserId, userProfile.Id)
+	canSee, err := a.UserCanSeeOtherUser(rctx, args.UserId, userProfile.Id)
 	if err != nil {
-		c.Logger().Error(err.Error())
+		rctx.Logger().Error(err.Error())
 		return &model.CommandResponse{Text: args.T("api.command_msg.fail.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 	}
 	if !canSee {
@@ -75,20 +67,19 @@ func (*msgProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs
 
 	targetChannelID := ""
 	if channel, channelErr := a.Srv().Store().Channel().GetByName(args.TeamId, channelName, true); channelErr != nil {
-		var nfErr *store.ErrNotFound
-		if errors.As(channelErr, &nfErr) {
-			if !a.HasPermissionTo(args.UserId, model.PermissionCreateDirectChannel) {
+		if _, ok := errors.AsType[*store.ErrNotFound](channelErr); ok {
+			if !a.HasPermissionTo(rctx, args.UserId, model.PermissionCreateDirectChannel) {
 				return &model.CommandResponse{Text: args.T("api.command_msg.permission.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 			}
 
 			var directChannel *model.Channel
-			if directChannel, err = a.GetOrCreateDirectChannel(c, args.UserId, userProfile.Id); err != nil {
-				c.Logger().Error(err.Error())
+			if directChannel, err = a.GetOrCreateDirectChannel(rctx, args.UserId, userProfile.Id); err != nil {
+				rctx.Logger().Error(err.Error())
 				return &model.CommandResponse{Text: args.T(err.Id), ResponseType: model.CommandResponseTypeEphemeral}
 			}
 			targetChannelID = directChannel.Id
 		} else {
-			c.Logger().Error(channelErr.Error())
+			rctx.Logger().Error(channelErr.Error())
 			return &model.CommandResponse{Text: args.T("api.command_msg.dm_fail.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 		}
 	} else {
@@ -100,7 +91,7 @@ func (*msgProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs
 		post.Message = parsedMessage
 		post.ChannelId = targetChannelID
 		post.UserId = args.UserId
-		if _, err = a.CreatePostMissingChannel(c, post, true, true); err != nil {
+		if _, _, err = a.CreatePostMissingChannel(rctx, post, true, true); err != nil {
 			return &model.CommandResponse{Text: args.T("api.command_msg.fail.app_error"), ResponseType: model.CommandResponseTypeEphemeral}
 		}
 	}

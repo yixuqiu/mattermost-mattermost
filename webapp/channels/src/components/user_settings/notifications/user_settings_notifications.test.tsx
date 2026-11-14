@@ -10,6 +10,9 @@ import {TestHelper} from 'utils/test_helper';
 
 import UserSettingsNotifications, {areDesktopAndMobileSettingsDifferent} from './user_settings_notifications';
 
+jest.mock('components/user_settings/notifications/desktop_and_mobile_notification_setting/notification_permission_section_notice', () => () => <div/>);
+jest.mock('components/user_settings/notifications/desktop_and_mobile_notification_setting/notification_permission_title_tag', () => () => <div/>);
+
 describe('components/user_settings/display/UserSettingsDisplay', () => {
     const defaultProps = {
         user: TestHelper.getUserMock({id: 'user_id'}),
@@ -18,42 +21,15 @@ describe('components/user_settings/display/UserSettingsDisplay', () => {
         closeModal: jest.fn(),
         collapseModal: jest.fn(),
         updateMe: jest.fn(() => Promise.resolve({})),
+        patchUser: jest.fn(() => Promise.resolve({})),
         isCollapsedThreadsEnabled: true,
         sendPushNotifications: false,
         enableAutoResponder: false,
         isCallsRingingEnabled: false,
         intl: {} as IntlShape,
-        isEnterpriseOrCloudOrSKUStarterFree: false,
+        isEnterpriseOrSKUStarterFree: false,
         isEnterpriseReady: true,
     };
-
-    test('should match snapshot', () => {
-        const wrapper = renderWithContext(
-            <UserSettingsNotifications {...defaultProps}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot when its a starter free', () => {
-        const props = {...defaultProps, isEnterpriseOrCloudOrSKUStarterFree: true};
-
-        const wrapper = renderWithContext(
-            <UserSettingsNotifications {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot when its team edition', () => {
-        const props = {...defaultProps, isEnterpriseReady: false};
-
-        const wrapper = renderWithContext(
-            <UserSettingsNotifications {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
 
     test('should show reply notifications section when CRT off', () => {
         const props = {...defaultProps, isCollapsedThreadsEnabled: false};

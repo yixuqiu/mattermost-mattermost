@@ -1,15 +1,16 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {memo, useState} from 'react';
 import {FormattedMessage} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
 import type {AdminConfig} from '@mattermost/types/config';
 import type {DeepPartial} from '@mattermost/types/utilities';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
-import type {BaseProps} from 'components/admin_console/admin_settings';
+import type {BaseProps} from 'components/admin_console/old_admin_settings';
 import ExternalLink from 'components/external_link';
 import FormError from 'components/form_error';
 
@@ -25,23 +26,18 @@ type Props = BaseProps & {
         patchConfig: (config: DeepPartial<AdminConfig>) => Promise<ActionResult>;
     };
 };
-type State = {
-    serverError?: string;
-}
 
-export default class OpenIdConvert extends React.PureComponent<Props, State> {
-    constructor(props: Props) {
-        super(props);
+const OpenIdConvert = ({
+    disabled,
+    actions,
+    config,
+}: Props) => {
+    const [serverError, setServerError] = useState<string | undefined>(undefined);
 
-        this.state = {
-            serverError: undefined,
-        };
-    }
-
-    upgradeConfig = async (e: React.MouseEvent) => {
+    const upgradeConfig = async (e: React.MouseEvent) => {
         e.preventDefault();
 
-        const newConfig = JSON.parse(JSON.stringify(this.props.config));
+        const newConfig = JSON.parse(JSON.stringify(config));
 
         if (newConfig.Office365Settings.DirectoryId) {
             newConfig.Office365Settings.DiscoveryEndpoint = 'https://login.microsoftonline.com/' + newConfig.Office365Settings.DirectoryId + '/v2.0/.well-known/openid-configuration';
@@ -60,46 +56,48 @@ export default class OpenIdConvert extends React.PureComponent<Props, State> {
             newConfig[setting].TokenEndpoint = '';
         });
 
-        const {error: err} = await this.props.actions.patchConfig(newConfig);
+        const {error: err} = await actions.patchConfig(newConfig);
         if (err) {
-            this.setState({serverError: err.message});
+            setServerError(err.message);
         } else {
             getHistory().push('/admin_console/authentication/openid');
         }
     };
 
-    render() {
-        return (
-            <div className='OpenIdConvert'>
-                <div className='OpenIdConvert_imageWrapper'>
-                    <img
-                        className='OpenIdConvert_image'
-                        src={imagePath}
-                        alt='OpenId Convert Image'
-                    />
-                </div>
+    return (
+        <div className='OpenIdConvert'>
+            <div className='OpenIdConvert_imageWrapper'>
+                <img
+                    className='OpenIdConvert_image'
+                    src={imagePath}
+                    alt='OpenId Convert Image'
+                />
+            </div>
 
-                <div className='OpenIdConvert_copyWrapper'>
-                    <p>
+            <div className='OpenIdConvert_copyWrapper'>
+                <p>
+                    <FormattedMessage
+                        id='admin.openIdConvert.message'
+                        defaultMessage='You can now convert your OAuth2.0 configuration to OpenID Connect.'
+                    />
+                </p>
+                <div className='OpenIdConvert_actionWrapper'>
+                    <Button
+                        emphasis='primary'
+                        data-testid='openIdConvert'
+                        disabled={disabled}
+                        onClick={upgradeConfig}
+                    >
                         <FormattedMessage
-                            id='admin.openIdConvert.message'
-                            defaultMessage='You can now convert your OAuth2.0 configuration to OpenID Connect.'
+                            id='admin.openIdConvert.text'
+                            defaultMessage='Convert to OpenID Connect'
                         />
-                    </p>
-                    <div className='OpenIdConvert_actionWrapper'>
-                        <button
-                            className='btn'
-                            data-testid='openIdConvert'
-                            disabled={this.props.disabled}
-                            onClick={this.upgradeConfig}
-                        >
-                            <FormattedMessage
-                                id='admin.openIdConvert.text'
-                                defaultMessage='Convert to OpenID Connect'
-                            />
-                        </button>
+                    </Button>
+                    <Button
+                        asChild={true}
+                        emphasis='secondary'
+                    >
                         <ExternalLink
-                            className='btn-secondary'
                             location='openid_convert'
                             href='https://www.mattermost.com/default-openid-docs'
                             data-testid='openIdLearnMore'
@@ -109,15 +107,17 @@ export default class OpenIdConvert extends React.PureComponent<Props, State> {
                                 defaultMessage='Learn more'
                             />
                         </ExternalLink>
-                        <div
-                            className='error-message'
-                            data-testid='errorMessage'
-                        >
-                            <FormError error={this.state.serverError}/>
-                        </div>
+                    </Button>
+                    <div
+                        className='error-message'
+                        data-testid='errorMessage'
+                    >
+                        <FormError error={serverError}/>
                     </div>
                 </div>
             </div>
-        );
-    }
-}
+        </div>
+    );
+};
+
+export default memo(OpenIdConvert);

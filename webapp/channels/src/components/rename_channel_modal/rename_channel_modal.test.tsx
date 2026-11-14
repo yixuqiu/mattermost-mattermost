@@ -3,208 +3,126 @@
 
 import React from 'react';
 
-import type {Channel} from '@mattermost/types/channels';
-import type {Team} from '@mattermost/types/teams';
-
-import {RequestStatus} from 'mattermost-redux/constants';
-
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
+import {getHistory} from 'utils/browser_history';
+import {boardChannelsState} from 'utils/channel_kind_test_utils';
 import {TestHelper} from 'utils/test_helper';
 
 import RenameChannelModal from './rename_channel_modal';
-import type {RenameChannelModal as RenameChannelModalClass} from './rename_channel_modal';
 
-describe('components/RenameChannelModal', () => {
-    const channel: Channel = TestHelper.getChannelMock({
-        id: 'fake-id',
-        name: 'fake-channel',
-        display_name: 'Fake Channel',
-    });
+import ConnectedRenameChannelModal from './index';
 
-    const team: Team = TestHelper.getTeamMock({
-        name: 'Fake Team',
-        display_name: 'fake-team',
-    });
+jest.mock('utils/browser_history', () => ({
+    getHistory: jest.fn().mockReturnValue({push: jest.fn()}),
+}));
 
-    const baseProps = {
-        show: true,
-        onExited: jest.fn(),
-        channel: {...channel},
-        requestStatus: RequestStatus.NOT_STARTED,
-        team: {...team},
-        currentTeamUrl: 'fake-channel',
-        actions: {patchChannel: jest.fn().mockResolvedValue({data: true})},
-    };
+const state = {
+    entities: {
+        general: {
+            config: {},
+            license: {},
+        },
+        teams: {
+            currentTeamId: 'team-id',
+            teams: {
+                'team-id': TestHelper.getTeamMock({id: 'team-id', name: 'test-team'}),
+            },
+        },
+    },
+};
 
-    test('should match snapshot', () => {
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
+const ordinaryChannel = TestHelper.getChannelMock({
+    id: 'channel-id',
+    team_id: 'team-id',
+    display_name: 'Test Channel',
+    name: 'test-channel',
+    type: 'O',
+});
+
+const defaultChannel = TestHelper.getChannelMock({
+    id: 'town-square-id',
+    team_id: 'team-id',
+    display_name: 'Town Square',
+    name: 'town-square',
+    type: 'O',
+});
+
+const makeProps = (channel = ordinaryChannel, patched = channel) => ({
+    channel,
+    teamName: 'test-team',
+    onExited: jest.fn(),
+    actions: {
+        patchChannel: jest.fn().mockResolvedValue({data: patched}),
+    },
+});
+
+describe('RenameChannelModal', () => {
+    test('should say Rename Board for a board', () => {
+        const {channel, teamName, onExited} = makeProps();
+        renderWithContext(
+            <ConnectedRenameChannelModal
+                channel={channel}
+                teamName={teamName}
+                onExited={onExited}
+            />,
+            {...state, ...boardChannelsState('channel-id')},
         );
 
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByText('Rename Board')).toBeInTheDocument();
+        expect(screen.queryByText('Rename Channel')).not.toBeInTheDocument();
     });
 
-    test('should submit form', () => {
-        const {actions: {patchChannel}} = baseProps;
-        const props = {...baseProps, requestStatus: RequestStatus.STARTED};
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...props}/>,
-        );
+    test('should not offer the URL Edit button for the default channel', () => {
+        renderWithContext(<RenameChannelModal {...makeProps(defaultChannel)}/>, state);
 
-        wrapper.find('#display_name').simulate(
-            'change', {preventDefault: jest.fn(), target: {value: 'valid name'}},
-        );
-
-        wrapper.find('#save-button').simulate('click');
-
-        expect(patchChannel).toHaveBeenCalled();
+        expect(screen.getByTestId('urlInputLabel')).toHaveTextContent('town-square');
+        expect(screen.queryByRole('button', {name: 'Edit'})).not.toBeInTheDocument();
+        expect(screen.getByText('The URL of the default channel cannot be changed.')).toBeVisible();
     });
 
-    describe('should validate channel url (name)', () => {
-        const testCases: Array<[{name: string; value: string}, boolean]> = [
-            [{name: 'must be one or more characters', value: ''}, false],
-            [{name: 'must start with a letter or number', value: '_channel'}, false],
-            [{name: 'must end with a letter or number', value: 'channel_'}, false],
-            [{name: 'can contain two underscores in a row', value: 'channel__two'}, true],
-            [{name: 'can not resemble direct message channel url', value: 'uzsfmtmniifsjgesce4u7yznyh__uzsfmtmniifsjgesce4u7yznyh'}, false],
-            [{name: 'valid channel url', value: 'a_valid_channel'}, true],
-        ];
+    test('should save the default channel display name without changing its URL', async () => {
+        const props = makeProps(defaultChannel);
 
-        testCases.forEach(([testCaseProps, patchShouldHaveBeenCalled]) => {
-            it(testCaseProps.name, () => {
-                const {actions: {patchChannel}} = baseProps;
-                const wrapper = shallowWithIntl(
-                    <RenameChannelModal {...baseProps}/>,
-                );
+        renderWithContext(<RenameChannelModal {...props}/>, state);
 
-                wrapper.setState({channelName: testCaseProps.value});
+        const nameInput = screen.getByRole('textbox', {name: 'Channel name'});
+        await userEvent.clear(nameInput);
+        await userEvent.type(nameInput, 'Company Wide');
 
-                wrapper.find('#save-button').simulate('click');
-                if (patchShouldHaveBeenCalled) {
-                    expect(patchChannel).toHaveBeenCalled();
-                } else {
-                    expect(patchChannel).not.toHaveBeenCalled();
-                }
+        await userEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        // The server rejects the patch only when `name` differs from the
+        // default channel's current name, so it must be sent unchanged.
+        await waitFor(() => {
+            expect(props.actions.patchChannel).toHaveBeenCalledWith('town-square-id', {
+                display_name: 'Company Wide',
+                name: 'town-square',
             });
         });
+        expect(getHistory().push).toHaveBeenCalledWith('/test-team/channels/town-square');
     });
 
-    test('should not call patchChannel as channel.name.length > Constants.MAX_CHANNELNAME_LENGTH (64)', () => {
-        const {actions: {patchChannel}} = baseProps;
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
+    test('should let the user rename the URL of an ordinary channel', async () => {
+        const props = makeProps(ordinaryChannel, {...ordinaryChannel, name: 'renamed-channel'});
 
-        wrapper.find('#display_name').simulate(
-            'change', {preventDefault: jest.fn(), target: {value: 'string-above-sixtyfour-characters-to-test-the-channel-maxlength-limit-properly-in-the-component'}},
-        );
+        renderWithContext(<RenameChannelModal {...props}/>, state);
 
-        wrapper.find('#save-button').simulate('click');
+        expect(screen.queryByText('The URL of the default channel cannot be changed.')).not.toBeInTheDocument();
 
-        expect(patchChannel).not.toHaveBeenCalled();
-    });
+        await userEvent.click(screen.getByRole('button', {name: 'Edit'}));
 
-    test('should change state when display_name is edited', () => {
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
+        const urlInput = screen.getByTestId('channelURLInput');
+        await userEvent.clear(urlInput);
+        await userEvent.type(urlInput, 'renamed-channel');
 
-        wrapper.find('#display_name').simulate(
-            'change', {preventDefault: jest.fn(), target: {value: 'New Fake Channel'}},
-        );
+        await userEvent.click(screen.getByRole('button', {name: 'Save'}));
 
-        expect(wrapper.state('displayName')).toBe('New Fake Channel');
-    });
-
-    test('should call setError function', () => {
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
-
-        const instance = wrapper.instance() as RenameChannelModalClass;
-
-        instance.setError({message: 'This is an error message'});
-        expect(wrapper.state('serverError')).toBe('This is an error message');
-    });
-
-    test('should call unsetError function', () => {
-        const props = {...baseProps, serverError: {message: 'This is an error message'}};
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...props}/>,
-        );
-
-        wrapper.setState({serverError: props.serverError.message});
-        expect(wrapper.state('serverError')).toBe('This is an error message');
-
-        wrapper.find('#save-button').simulate('click');
-        expect(wrapper.state('serverError')).toBe('');
-    });
-
-    test('should call handleSubmit function', async () => {
-        const patchChannel = jest.fn().
-            mockResolvedValueOnce({error: true}).
-            mockResolvedValue({data: true});
-
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal
-                {...baseProps}
-                actions={{patchChannel}}
-            />,
-        );
-
-        wrapper.setState({displayName: 'Changed Name', channelName: 'changed-name'});
-
-        const instance = wrapper.instance() as RenameChannelModalClass;
-        instance.onSaveSuccess = jest.fn();
-        instance.setError = jest.fn();
-
-        await instance.handleSubmit();
-        expect(patchChannel).toHaveBeenCalledTimes(1);
-        expect(wrapper.state('displayName')).toBe('Changed Name');
-        expect(wrapper.state('channelName')).toBe('changed-name');
-        expect(instance.onSaveSuccess).not.toBeCalled();
-        expect(instance.setError).toBeCalledTimes(1);
-        expect(instance.setError).toBeCalledWith(true);
-
-        await instance.handleSubmit();
-        expect(patchChannel).toHaveBeenCalledTimes(2);
-        expect(wrapper.state('displayName')).toBe('Changed Name');
-        expect(wrapper.state('channelName')).toBe('changed-name');
-        expect(instance.onSaveSuccess).toBeCalledTimes(1);
-        expect(instance.setError).toBeCalledTimes(1);
-    });
-
-    test('should call handleCancel', () => {
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
-
-        const instance = wrapper.instance() as RenameChannelModalClass;
-        instance.handleCancel();
-
-        expect(wrapper.state('show')).toBeFalsy();
-    });
-
-    test('should call handleHide function', () => {
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
-
-        const instance = wrapper.instance() as RenameChannelModalClass;
-        instance.handleHide();
-
-        expect(wrapper.state('show')).toBeFalsy();
-    });
-
-    test('should call onNameChange function', () => {
-        const changedName = {target: {value: 'changed-name'}};
-        const wrapper = shallowWithIntl(
-            <RenameChannelModal {...baseProps}/>,
-        );
-
-        const instance = wrapper.instance() as RenameChannelModalClass;
-        instance.onNameChange(changedName);
-
-        expect(wrapper.state('channelName')).toBe('changed-name');
+        await waitFor(() => {
+            expect(props.actions.patchChannel).toHaveBeenCalledWith('channel-id', {
+                display_name: 'Test Channel',
+                name: 'renamed-channel',
+            });
+        });
+        expect(getHistory().push).toHaveBeenCalledWith('/test-team/channels/renamed-channel');
     });
 });

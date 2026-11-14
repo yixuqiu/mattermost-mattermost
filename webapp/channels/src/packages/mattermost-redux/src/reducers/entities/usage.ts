@@ -1,10 +1,9 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type {AnyAction} from 'redux';
-
 import type {CloudUsage} from '@mattermost/types/cloud';
 
+import type {MMReduxAction} from 'mattermost-redux/action_types';
 import {CloudTypes} from 'mattermost-redux/action_types';
 
 const emptyUsage = {
@@ -28,7 +27,7 @@ const emptyUsage = {
 };
 
 // represents the usage associated with this workspace
-export default function usage(state: CloudUsage = emptyUsage, action: AnyAction) {
+export default function usage(state: CloudUsage = emptyUsage, action: MMReduxAction) {
     switch (action.type) {
     case CloudTypes.RECEIVED_MESSAGES_USAGE: {
         return {
@@ -45,15 +44,6 @@ export default function usage(state: CloudUsage = emptyUsage, action: AnyAction)
             files: {
                 totalStorage: action.data,
                 totalStorageLoaded: true,
-            },
-        };
-    }
-    case CloudTypes.RECEIVED_BOARDS_USAGE: {
-        return {
-            ...state,
-            boards: {
-                cards: action.data,
-                cardsLoaded: true,
             },
         };
     }

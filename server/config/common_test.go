@@ -19,23 +19,20 @@ func init() {
 	emptyConfig = &model.Config{}
 	readOnlyConfig = &model.Config{
 		ClusterSettings: model.ClusterSettings{
-			Enable:         model.NewBool(true),
-			ReadOnlyConfig: model.NewBool(true),
+			Enable:         new(true),
+			ReadOnlyConfig: new(true),
 		},
 	}
 	minimalConfig = &model.Config{
 		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewString("http://minimal"),
-		},
-		SqlSettings: model.SqlSettings{
-			AtRestEncryptKey: model.NewString("abcdefghijklmnopqrstuvwxyz0123456789"),
+			SiteURL: new("http://minimal"),
 		},
 		FileSettings: model.FileSettings{
-			PublicLinkSalt: model.NewString("abcdefghijklmnopqrstuvwxyz0123456789"),
+			PublicLinkSalt: new("abcdefghijklmnopqrstuvwxyz0123456789"),
 		},
 		LocalizationSettings: model.LocalizationSettings{
-			DefaultServerLocale: model.NewString("en"),
-			DefaultClientLocale: model.NewString("en"),
+			DefaultServerLocale: new("en"),
+			DefaultClientLocale: new("en"),
 		},
 	}
 
@@ -46,39 +43,36 @@ func init() {
 
 	invalidConfig = &model.Config{
 		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewString("invalid"),
+			SiteURL: new("invalid"),
 		},
 	}
 	fixesRequiredConfig = &model.Config{
 		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewString("http://trailingslash/"),
-		},
-		SqlSettings: model.SqlSettings{
-			AtRestEncryptKey: model.NewString("abcdefghijklmnopqrstuvwxyz0123456789"),
+			SiteURL: new("http://trailingslash/"),
 		},
 		FileSettings: model.FileSettings{
-			DriverName:     model.NewString(model.ImageDriverLocal),
-			Directory:      model.NewString("/path/to/directory"),
-			PublicLinkSalt: model.NewString("abcdefghijklmnopqrstuvwxyz0123456789"),
+			DriverName:     model.NewPointer(model.ImageDriverLocal),
+			Directory:      new("/path/to/directory"),
+			PublicLinkSalt: new("abcdefghijklmnopqrstuvwxyz0123456789"),
 		},
 		LocalizationSettings: model.LocalizationSettings{
-			DefaultServerLocale: model.NewString("garbage"),
-			DefaultClientLocale: model.NewString("garbage"),
+			DefaultServerLocale: new("garbage"),
+			DefaultClientLocale: new("garbage"),
 		},
 	}
 	ldapConfig = &model.Config{
 		LdapSettings: model.LdapSettings{
-			BindPassword: model.NewString("password"),
+			BindPassword: new("password"),
 		},
 	}
 	testConfig = &model.Config{
 		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewString("http://TestStoreNew"),
+			SiteURL: new("http://TestStoreNew"),
 		},
 	}
 	customConfigDefaults = &model.Config{
 		ServiceSettings: model.ServiceSettings{
-			SiteURL: model.NewString("http://custom.com"),
+			SiteURL: new("http://custom.com"),
 		},
 	}
 }
@@ -110,7 +104,7 @@ func TestMergeConfigs(t *testing.T) {
 		base := &model.Config{}
 		base.SetDefaults()
 		patch := base.Clone()
-		patch.ServiceSettings.SiteURL = model.NewString("http://newhost.ca")
+		patch.ServiceSettings.SiteURL = new("http://newhost.ca")
 
 		merged, err := Merge(base, patch, nil)
 		require.NoError(t, err)
@@ -122,12 +116,12 @@ func TestMergeConfigs(t *testing.T) {
 		base := &model.Config{}
 		base.SetDefaults()
 		patch := &model.Config{}
-		patch.ServiceSettings.SiteURL = model.NewString("http://newhost.ca")
-		patch.GoogleSettings.Enable = model.NewBool(true)
+		patch.ServiceSettings.SiteURL = new("http://newhost.ca")
+		patch.GoogleSettings.Enable = new(true)
 
 		expected := base.Clone()
-		expected.ServiceSettings.SiteURL = model.NewString("http://newhost.ca")
-		expected.GoogleSettings.Enable = model.NewBool(true)
+		expected.ServiceSettings.SiteURL = new("http://newhost.ca")
+		expected.GoogleSettings.Enable = new(true)
 
 		merged, err := Merge(base, patch, nil)
 		require.NoError(t, err)
@@ -144,7 +138,7 @@ func TestConfigEnvironmentOverrides(t *testing.T) {
 	base, err := NewStoreFromBacking(memstore, nil, false)
 	require.NoError(t, err)
 	originalConfig := &model.Config{}
-	originalConfig.ServiceSettings.SiteURL = model.NewString("http://notoverridden.ca")
+	originalConfig.ServiceSettings.SiteURL = new("http://notoverridden.ca")
 
 	os.Setenv("MM_SERVICESETTINGS_SITEURL", "http://overridden.ca")
 	defer os.Unsetenv("MM_SERVICESETTINGS_SITEURL")

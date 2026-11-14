@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
+	"net/http"
 	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/mattermost/mattermost/server/public/shared/i18n"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 const (
@@ -41,8 +44,11 @@ const (
 
 var ErrMaxPropSizeExceeded = fmt.Errorf("max prop size of %d exceeded", maxPropSizeBytes)
 
+//msgp:ignore StringInterface StringSet
 type StringInterface map[string]any
 type StringSet map[string]struct{}
+
+//msgp:tuple StringArray
 type StringArray []string
 
 func (ss StringSet) Has(val string) bool {
@@ -74,13 +80,7 @@ func (sa StringArray) Remove(input string) StringArray {
 }
 
 func (sa StringArray) Contains(input string) bool {
-	for index := range sa {
-		if sa[index] == input {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(sa, input)
 }
 func (sa StringArray) Equals(input StringArray) bool {
 	if len(sa) != len(input) {
@@ -228,6 +228,7 @@ func AppErrorInit(t i18n.TranslateFunc) {
 	})
 }
 
+//msgp:ignore AppError
 type AppError struct {
 	Id              string `json:"id"`
 	Message         string `json:"message"`               // Message to be display to the end user without debugging information
@@ -236,8 +237,14 @@ type AppError struct {
 	StatusCode      int    `json:"status_code,omitempty"` // The http status code
 	Where           string `json:"-"`                     // The function where it happened in the form of Struct.Func
 	SkipTranslation bool   `json:"-"`                     // Whether translation for the error should be skipped.
-	params          map[string]any
-	wrapped         error
+
+	// Props carries caller-authored context to API clients, like the Props fields on Users and
+	// Posts. Unlike DetailedError it is always returned to clients regardless of developer mode, so
+	// it must only hold flat strings that are safe for any client to see - never internal details.
+	Props StringMap `json:"props,omitempty"`
+
+	params  map[string]any
+	wrapped error
 }
 
 const maxErrorLength = 1024
@@ -374,6 +381,22 @@ func NewAppError(where string, id string, params map[string]any, details string,
 	return ap
 }
 
+// AsAppError returns the *AppError in err's chain, or wraps err in a generic internal error
+// when there is none. Use it where an error must cross a boundary that still requires an
+// *AppError, such as an API handler or a caller not yet migrated to return error.
+func AsAppError(err error) *AppError {
+	if err == nil {
+		return nil
+	}
+
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return appErr
+	}
+
+	return NewAppError("", "model.app_error.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
+}
+
 var encoding = base32.NewEncoding("ybndrfg8ejkmcpqxot1uwisza345h769").WithPadding(base32.NoPadding)
 
 // NewId is a globally unique identifier.  It is a [A-Z0-9] string 26
@@ -381,6 +404,11 @@ var encoding = base32.NewEncoding("ybndrfg8ejkmcpqxot1uwisza345h769").WithPaddin
 // without the padding.
 func NewId() string {
 	return encoding.EncodeToString(uuid.NewRandom())
+}
+
+// NewUsername is a NewId prefixed with a letter to make valid username
+func NewUsername() string {
+	return "a" + NewId()
 }
 
 // NewRandomTeamName is a NewId that will be a valid team name.
@@ -398,6 +426,44 @@ func NewRandomString(length int) string {
 	data := make([]byte, 1+(length*5/8))
 	rand.Read(data)
 	return encoding.EncodeToString(data)[:length]
+}
+
+// NewTestPassword generates a password that meets complexity requirements
+// (uppercase, lowercase, number, special character) with a minimum length of 14.
+// The passwords are not cryptographically random. Use only in tests.
+func NewTestPassword() string {
+	const (
+		lowers   = LowercaseLetters
+		uppers   = UppercaseLetters
+		digits   = NUMBERS
+		specials = "!%^&*(),."
+		all      = lowers + uppers + digits + specials
+		minLen   = PasswordFIPSMinimumLength
+	)
+
+	// Read all randomness in one call for performance.
+	// We need minLen bytes for character selection + minLen bytes for shuffle indices.
+	entropy := make([]byte, 2*minLen)
+	if _, err := rand.Read(entropy); err != nil {
+		panic(err)
+	}
+
+	pw := make([]byte, minLen)
+	pw[0] = uppers[int(entropy[0])%len(uppers)]
+	pw[1] = lowers[int(entropy[1])%len(lowers)]
+	pw[2] = digits[int(entropy[2])%len(digits)]
+	pw[3] = specials[int(entropy[3])%len(specials)]
+	for i := 4; i < minLen; i++ {
+		pw[i] = all[int(entropy[i])%len(all)]
+	}
+
+	// Shuffle to avoid predictable prefix using remaining entropy.
+	for i := len(pw) - 1; i > 0; i-- {
+		j := int(entropy[minLen+i]) % (i + 1)
+		pw[i], pw[j] = pw[j], pw[i]
+	}
+
+	return string(pw)
 }
 
 // GetMillis is a convenience method to get milliseconds since epoch.
@@ -443,9 +509,7 @@ func GetEndOfDayMillis(thisTime time.Time, timeZoneOffset int) int64 {
 
 func CopyStringMap(originalMap map[string]string) map[string]string {
 	copyMap := make(map[string]string, len(originalMap))
-	for k, v := range originalMap {
-		copyMap[k] = v
-	}
+	maps.Copy(copyMap, originalMap)
 	return copyMap
 }
 
@@ -610,18 +674,33 @@ func isLower(s string) bool {
 	return strings.ToLower(s) == s
 }
 
-func IsValidEmail(email string) bool {
-	if !isLower(email) {
+func IsValidEmail(input string) bool {
+	if !isLower(input) {
 		return false
 	}
 
-	if addr, err := mail.ParseAddress(email); err != nil {
+	if addr, err := mail.ParseAddress(input); err != nil {
 		return false
-	} else if addr.Name != "" {
-		// mail.ParseAddress accepts input of the form "Billy Bob <billy@example.com>" which we don't allow
+	} else if addr.Address != input {
+		// mail.ParseAddress accepts input of the form "Billy Bob <billy@example.com>" or "<billy@example.com>",
+		// which we don't allow. We compare the user input with the parsed addr.Address to ensure we only
+		// accept plain addresses like "billy@example.com"
+
+		// Log a warning for admins in case pre-existing users with emails like <billy@example.com>, which used
+		// to be valid before https://github.com/mattermost/mattermost/pull/29661, know how to deal with this
+		// error. We don't need to check for the case addr.Name != "", since that has always been rejected
+		if addr.Name == "" {
+			mlog.Warn("email seems to be enclosed in angle brackets, which is not valid; if this relates to an existing user, use the following mmctl command to modify their email: `mmctl user email \"<affecteduser@domain.com>\" affecteduser@domain.com`", mlog.String("email", input))
+		}
 		return false
 	}
 
+	// mail.ParseAddress accepts quoted strings for the address
+	// which can lead to sending to the wrong email address
+	// check for multiple '@' symbols and invalidate
+	if strings.Count(input, "@") > 1 {
+		return false
+	}
 	return true
 }
 
@@ -673,13 +752,14 @@ func IsValidAlphaNumHyphenUnderscorePlus(s string) bool {
 }
 
 func Etag(parts ...any) string {
-	etag := CurrentVersion
+	var etag strings.Builder
+	etag.WriteString(CurrentVersion)
 
 	for _, part := range parts {
-		etag += fmt.Sprintf(".%v", part)
+		etag.WriteString(fmt.Sprintf(".%v", part))
 	}
 
-	return etag
+	return etag.String()
 }
 
 var (
@@ -692,8 +772,8 @@ var (
 func ParseHashtags(text string) (string, string) {
 	words := strings.Fields(text)
 
-	hashtagString := ""
-	plainString := ""
+	var hashtagStringSb strings.Builder
+	var plainString strings.Builder
 	for _, word := range words {
 		// trim off surrounding punctuation
 		word = puncStart.ReplaceAllString(word, "")
@@ -703,11 +783,12 @@ func ParseHashtags(text string) (string, string) {
 		word = hashtagStart.ReplaceAllString(word, "#")
 
 		if validHashtag.MatchString(word) {
-			hashtagString += " " + word
+			hashtagStringSb.WriteString(" " + word)
 		} else {
-			plainString += " " + word
+			plainString.WriteString(" " + word)
 		}
 	}
+	hashtagString := hashtagStringSb.String()
 
 	if len(hashtagString) > 1000 {
 		hashtagString = hashtagString[:999]
@@ -719,7 +800,7 @@ func ParseHashtags(text string) (string, string) {
 		}
 	}
 
-	return strings.TrimSpace(hashtagString), strings.TrimSpace(plainString)
+	return strings.TrimSpace(hashtagString), strings.TrimSpace(plainString.String())
 }
 
 func ClearMentionTags(post string) string {
@@ -738,6 +819,24 @@ func IsValidHTTPURL(rawURL string) bool {
 	}
 
 	return true
+}
+
+// DecodeId returns the 16 bytes that an ID made by NewId encodes; ok is false for any string NewId could not have produced.
+func DecodeId(id string) (b [16]byte, ok bool) {
+	if len(id) != 26 {
+		return [16]byte{}, false
+	}
+	// Decode may have written part of b before failing, so return a fresh zero value.
+	if n, err := encoding.Decode(b[:], []byte(id)); err != nil || n != len(b) {
+		return [16]byte{}, false
+	}
+	// The decoder ignores the last character's two unused bits, so check that b encodes back to id.
+	var check [26]byte
+	encoding.Encode(check[:], b[:])
+	if string(check[:]) != id {
+		return [16]byte{}, false
+	}
+	return b, true
 }
 
 func IsValidId(value string) bool {
@@ -762,7 +861,7 @@ func RemoveDuplicateStrings(in []string) []string {
 	if len(in) == 0 {
 		return in
 	}
-	sort.Strings(in)
+	slices.Sort(in)
 	j := 0
 	for i := 1; i < len(in); i++ {
 		if in[j] == in[i] {
@@ -843,4 +942,37 @@ func filterBlocklist(r rune) rune {
 
 func IsCloud() bool {
 	return os.Getenv("MM_CLOUD_INSTALLATION_ID") != ""
+}
+
+func SliceToMapKey(s ...string) map[string]any {
+	m := make(map[string]any)
+	for i := range s {
+		m[s[i]] = struct{}{}
+	}
+
+	if len(s) != len(m) {
+		panic("duplicate keys")
+	}
+
+	return m
+}
+
+// LimitRunes limits the number of runes in a string to the given maximum.
+// It returns the potentially truncated string and a boolean indicating whether truncation occurred.
+func LimitRunes(s string, maxRunes int) (string, bool) {
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]), true
+	}
+
+	return s, false
+}
+
+// LimitBytes limits the number of bytes in a string to the given maximum.
+// It returns the potentially truncated string and a boolean indicating whether truncation occurred.
+func LimitBytes(s string, maxBytes int) (string, bool) {
+	if len(s) > maxBytes {
+		return s[:maxBytes], true
+	}
+	return s, false
 }

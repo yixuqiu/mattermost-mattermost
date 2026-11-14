@@ -5,7 +5,7 @@ package web
 
 import (
 	"net/http"
-	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,82 +25,115 @@ const (
 )
 
 type Params struct {
-	UserId                    string
-	TeamId                    string
-	InviteId                  string
-	TokenId                   string
-	ThreadId                  string
-	Timestamp                 int64
-	TimeRange                 string
-	ChannelId                 string
-	PostId                    string
-	PolicyId                  string
-	FileId                    string
-	Filename                  string
-	UploadId                  string
-	PluginId                  string
-	CommandId                 string
-	HookId                    string
-	ReportId                  string
-	EmojiId                   string
-	AppId                     string
-	Email                     string
-	Username                  string
-	TeamName                  string
-	ChannelName               string
-	PreferenceName            string
-	EmojiName                 string
-	Category                  string
-	Service                   string
-	JobId                     string
-	JobType                   string
-	ActionId                  string
-	RoleId                    string
-	RoleName                  string
-	SchemeId                  string
-	Scope                     string
-	GroupId                   string
-	Page                      int
-	PerPage                   int
-	LogsPerPage               int
-	Permanent                 bool
-	RemoteId                  string
-	SyncableId                string
-	SyncableType              model.GroupSyncableType
-	BotUserId                 string
-	Q                         string
-	IsLinked                  *bool
-	IsConfigured              *bool
-	NotAssociatedToTeam       string
-	NotAssociatedToChannel    string
-	Paginate                  *bool
-	IncludeMemberCount        bool
-	IncludeMemberIDs          bool
-	NotAssociatedToGroup      string
-	ExcludeDefaultChannels    bool
-	LimitAfter                int
-	LimitBefore               int
-	GroupIDs                  string
-	IncludeTotalCount         bool
-	IncludeDeleted            bool
-	FilterAllowReference      bool
-	FilterArchived            bool
-	FilterParentTeamPermitted bool
-	CategoryId                string
-	ExportName                string
-	ExcludePolicyConstrained  bool
-	GroupSource               model.GroupSource
-	FilterHasMember           string
-	IncludeChannelMemberCount string
-	OutgoingOAuthConnectionID string
+	UserId                             string
+	OtherUserId                        string
+	TeamId                             string
+	InviteId                           string
+	TokenId                            string
+	ThreadId                           string
+	Timestamp                          int64
+	TimeRange                          string
+	ChannelId                          string
+	PostId                             string
+	PolicyId                           string
+	FileId                             string
+	Filename                           string
+	UploadId                           string
+	PluginId                           string
+	CommandId                          string
+	HookId                             string
+	ReportId                           string
+	EmojiId                            string
+	AppId                              string
+	Email                              string
+	Username                           string
+	TeamName                           string
+	ChannelName                        string
+	PreferenceName                     string
+	EmojiName                          string
+	Category                           string
+	Service                            string
+	JobId                              string
+	JobType                            string
+	RecapId                            string
+	ScheduledRecapId                   string
+	ActionId                           string
+	RoleId                             string
+	RoleName                           string
+	SchemeId                           string
+	Scope                              string
+	GroupId                            string
+	Page                               int
+	PerPage                            int
+	LogsPerPage                        int
+	Permanent                          bool
+	RemoteId                           string
+	SyncableId                         string
+	SyncableType                       model.GroupSyncableType
+	BotUserId                          string
+	Q                                  string
+	IsLinked                           *bool
+	IsConfigured                       *bool
+	NotAssociatedToTeam                string
+	NotAssociatedToChannel             string
+	Paginate                           *bool
+	IncludeMemberCount                 bool
+	IncludeMemberIDs                   bool
+	NotAssociatedToGroup               string
+	ExcludeDefaultChannels             bool
+	LimitAfter                         int
+	LimitBefore                        int
+	GroupIDs                           string
+	IncludeTotalCount                  bool
+	IncludeDeleted                     bool
+	FilterAllowReference               bool
+	FilterArchived                     bool
+	FilterParentTeamPermitted          bool
+	CategoryId                         string
+	ExportName                         string
+	ImportName                         string
+	ExcludePolicyConstrained           bool
+	ForDirectory                       bool
+	GroupSource                        model.GroupSource
+	FilterHasMember                    string
+	IncludeChannelMemberCount          string
+	OutgoingOAuthConnectionID          string
+	ExcludeOffline                     bool
+	InChannel                          string
+	NotInChannel                       string
+	Topic                              string
+	CreatorId                          string
+	OnlyConfirmed                      bool
+	OnlyPlugins                        bool
+	IncludeUnconfirmed                 bool
+	ExcludeConfirmed                   bool
+	ExcludePlugins                     bool
+	ExcludeHome                        bool
+	ExcludeRemote                      bool
+	AccessControlPolicyEnforced        bool
+	ExcludeAccessControlPolicyEnforced bool
+	ContentReviewerId                  string
 
 	//Bookmarks
 	ChannelBookmarkId string
 	BookmarksSince    int64
 
-	// Cloud
-	InvoiceId string
+	// Views
+	ViewId string
+
+	// Custom Profile Attributes
+	FieldId string
+
+	// Properties
+	GroupName  string
+	ObjectType string
+	TargetId   string
+
+	// Channel join requests
+	RequestId string
 }
+
+var getChannelMembersForUserRegex = regexp.MustCompile("/api/v4/users/[A-Za-z0-9]{26}/channel_members")
 
 func ParamsFromRequest(r *http.Request) *Params {
 	params := &Params{}
@@ -109,6 +142,7 @@ func ParamsFromRequest(r *http.Request) *Params {
 	query := r.URL.Query()
 
 	params.UserId = props["user_id"]
+	params.OtherUserId = props["other_user_id"]
 	params.TeamId = props["team_id"]
 	params.CategoryId = props["category_id"]
 	params.InviteId = props["invite_id"]
@@ -126,7 +160,11 @@ func ParamsFromRequest(r *http.Request) *Params {
 	params.FileId = props["file_id"]
 	params.Filename = query.Get("filename")
 	params.UploadId = props["upload_id"]
-	params.PluginId = props["plugin_id"]
+	if val, ok := props["plugin_id"]; ok {
+		params.PluginId = val
+	} else {
+		params.PluginId = query.Get("plugin_id")
+	}
 	params.CommandId = props["command_id"]
 	params.HookId = props["hook_id"]
 	params.ReportId = props["report_id"]
@@ -142,18 +180,39 @@ func ParamsFromRequest(r *http.Request) *Params {
 	params.EmojiName = props["emoji_name"]
 	params.JobId = props["job_id"]
 	params.JobType = props["job_type"]
+	params.RecapId = props["recap_id"]
+	params.ScheduledRecapId = props["scheduled_recap_id"]
 	params.ActionId = props["action_id"]
 	params.RoleId = props["role_id"]
 	params.RoleName = props["role_name"]
 	params.SchemeId = props["scheme_id"]
 	params.GroupId = props["group_id"]
 	params.RemoteId = props["remote_id"]
-	params.InvoiceId = props["invoice_id"]
 	params.OutgoingOAuthConnectionID = props["outgoing_oauth_connection_id"]
+	params.ExcludeOffline, _ = strconv.ParseBool(query.Get("exclude_offline"))
+	params.InChannel = query.Get("in_channel")
+	params.NotInChannel = query.Get("not_in_channel")
+	params.Topic = query.Get("topic")
+	params.CreatorId = query.Get("creator_id")
+	params.OnlyConfirmed, _ = strconv.ParseBool(query.Get("only_confirmed"))
+	params.OnlyPlugins, _ = strconv.ParseBool(query.Get("only_plugins"))
+	params.IncludeUnconfirmed, _ = strconv.ParseBool(query.Get("include_unconfirmed"))
+	params.ExcludeConfirmed, _ = strconv.ParseBool(query.Get("exclude_confirmed"))
+	params.ExcludePlugins, _ = strconv.ParseBool(query.Get("exclude_plugins"))
+	params.ExcludeHome, _ = strconv.ParseBool(query.Get("exclude_home"))
+	params.ExcludeRemote, _ = strconv.ParseBool(query.Get("exclude_remote"))
 	params.ChannelBookmarkId = props["bookmark_id"]
+	params.ViewId = props["view_id"]
+	params.FieldId = props["field_id"]
+	params.GroupName = props["group_name"]
+	params.ObjectType = props["object_type"]
+	params.TargetId = props["target_id"]
+	params.RequestId = props["request_id"]
 	params.Scope = query.Get("scope")
 
-	if val, err := strconv.Atoi(query.Get("page")); err != nil || val < 0 {
+	if val, err := strconv.Atoi(query.Get("page")); err != nil || (val < 0 && params.UserId == "" && !getChannelMembersForUserRegex.MatchString(r.URL.Path)) {
+		// We don't want to apply this logic for the getChannelMembersForUser API handler
+		// because that API allows page=-1 to switch to streaming mode.
 		params.Page = PageDefault
 	} else {
 		params.Page = val
@@ -167,7 +226,15 @@ func ParamsFromRequest(r *http.Request) *Params {
 
 	params.TimeRange = query.Get("time_range")
 	params.Permanent, _ = strconv.ParseBool(query.Get("permanent"))
-	params.PerPage = getPerPageFromQuery(query)
+
+	val, err := strconv.Atoi(query.Get("per_page"))
+	if err != nil || val < 0 {
+		params.PerPage = PerPageDefault
+	} else if val > PerPageMaximum {
+		params.PerPage = PerPageMaximum
+	} else {
+		params.PerPage = val
+	}
 
 	if val, err := strconv.Atoi(query.Get("logs_per_page")); err != nil || val < 0 {
 		params.LogsPerPage = LogsPerPageDefault
@@ -232,7 +299,12 @@ func ParamsFromRequest(r *http.Request) *Params {
 	params.IncludeTotalCount, _ = strconv.ParseBool(query.Get("include_total_count"))
 	params.IncludeDeleted, _ = strconv.ParseBool(query.Get("include_deleted"))
 	params.ExportName = props["export_name"]
+	params.ImportName = props["import_name"]
 	params.ExcludePolicyConstrained, _ = strconv.ParseBool(query.Get("exclude_policy_constrained"))
+	params.ForDirectory, _ = strconv.ParseBool(query.Get("for_directory"))
+	params.AccessControlPolicyEnforced, _ = strconv.ParseBool(query.Get("access_control_policy_enforced"))
+	params.ExcludeAccessControlPolicyEnforced, _ = strconv.ParseBool(query.Get("exclude_access_control_policy_enforced"))
+	params.ContentReviewerId = props["content_reviewer_id"]
 
 	if val := query.Get("group_source"); val != "" {
 		switch val {
@@ -252,21 +324,4 @@ func ParamsFromRequest(r *http.Request) *Params {
 	}
 
 	return params
-}
-
-// getPerPageFromQuery returns the PerPage value from the given query.
-// This function should be removed and the support for `pageSize`
-// should be dropped after v1.46 of the mobile app is no longer supported
-// https://mattermost.atlassian.net/browse/MM-38131
-func getPerPageFromQuery(query url.Values) int {
-	val, err := strconv.Atoi(query.Get("per_page"))
-	if err != nil {
-		val, err = strconv.Atoi(query.Get("pageSize"))
-	}
-	if err != nil || val < 0 {
-		return PerPageDefault
-	} else if val > PerPageMaximum {
-		return PerPageMaximum
-	}
-	return val
 }

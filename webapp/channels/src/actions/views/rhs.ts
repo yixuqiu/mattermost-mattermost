@@ -19,41 +19,46 @@ import {
 } from 'mattermost-redux/actions/search';
 import {getCurrentChannelId, getCurrentChannelNameForSearchShortcut, getChannel as getChannelSelector} from 'mattermost-redux/selectors/entities/channels';
 import {getConfig} from 'mattermost-redux/selectors/entities/general';
-import {getPost} from 'mattermost-redux/selectors/entities/posts';
+import {getMyGroupMentionKeys} from 'mattermost-redux/selectors/entities/groups';
+import {getLatestInteractablePostId, getPost} from 'mattermost-redux/selectors/entities/posts';
 import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {getCurrentTimezone} from 'mattermost-redux/selectors/entities/timezone';
 import {getCurrentUser, getCurrentUserMentionKeys} from 'mattermost-redux/selectors/entities/users';
-import type {ActionFunc, ActionFuncAsync, ThunkActionFunc} from 'mattermost-redux/types/actions';
 
-import {trackEvent} from 'actions/telemetry_actions.jsx';
-import {getSearchTerms, getRhsState, getPluggableId, getFilesSearchExtFilter, getPreviousRhsState} from 'selectors/rhs';
+import {
+    getSearchType,
+    getSearchTerms,
+    getRhsState,
+    getPluggableId,
+    getExplicitSearchTeam,
+    getMentionFilters,
+    getFilesSearchExtFilter,
+    getPreviousRhsState,
+    getSearchTeam,
+} from 'selectors/rhs';
 
 import {SidebarSize} from 'components/resizable_sidebar/constants';
 
 import {ActionTypes, RHSStates, Constants} from 'utils/constants';
+import {canSearchFiles} from 'utils/file_utils';
+import {buildMentionSearchQuery, defaultMentionFilters, mentionKeysForTypes} from 'utils/mention_search';
+import {Mark, Measure, measureAndReport} from 'utils/performance_telemetry';
 import {getBrowserUtcOffset, getUtcOffsetForTimeZone} from 'utils/timezone';
 
-import type {GlobalState} from 'types/store';
-import type {RhsState} from 'types/store/rhs';
+import type {ActionFunc, ActionFuncAsync, GlobalState, ThunkActionFunc} from 'types/store';
+import type {MentionFilters, MentionType, RhsState} from 'types/store/rhs';
 
-function selectPostFromRightHandSideSearchWithPreviousState(post: Post, previousRhsState?: RhsState): ActionFuncAsync<boolean, GlobalState> {
-    return async (dispatch, getState) => {
-        const postRootId = post.root_id || post.id;
+function selectPostWithPreviousState(post: Post, previousRhsState?: RhsState): ActionFunc<boolean> {
+    return (dispatch, getState) => {
         const state = getState();
 
-        dispatch({
-            type: ActionTypes.SELECT_POST,
-            postId: postRootId,
-            channelId: post.channel_id,
-            previousRhsState: previousRhsState || getRhsState(state),
-            timestamp: Date.now(),
-        });
+        dispatch(selectPost(post, previousRhsState || getRhsState(state)));
 
         return {data: true};
     };
 }
 
-function selectPostCardFromRightHandSideSearchWithPreviousState(post: Post, previousRhsState?: RhsState): ActionFuncAsync<boolean, GlobalState> {
+function selectPostCardFromRightHandSideSearchWithPreviousState(post: Post, previousRhsState?: RhsState): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const state = getState();
 
@@ -103,7 +108,7 @@ export function openShowEditHistory(post: Post) {
     };
 }
 
-export function goBack(): ActionFuncAsync<boolean, GlobalState> {
+export function goBack(): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const prevState = getPreviousRhsState(getState());
         const defaultTab = 'channel-info';
@@ -118,13 +123,21 @@ export function goBack(): ActionFuncAsync<boolean, GlobalState> {
 }
 
 export function selectPostFromRightHandSideSearch(post: Post) {
-    return selectPostFromRightHandSideSearchWithPreviousState(post);
+    return selectPostWithPreviousState(post);
 }
 
-export function selectPostFromRightHandSideSearchByPostId(postId: string): ActionFuncAsync<boolean, GlobalState> {
+export function selectPostFromRightHandSideSearchByPostId(postId: string): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const post = getPost(getState(), postId);
         return dispatch(selectPostFromRightHandSideSearch(post));
+    };
+}
+
+export function replyToLatestPostInChannel(channelId: string): ActionFuncAsync<boolean> {
+    return async (dispatch, getState) => {
+        const state = getState();
+        const postId = getLatestInteractablePostId(state, channelId);
+        return dispatch(selectPostFromRightHandSideSearchByPostId(postId));
     };
 }
 
@@ -132,6 +145,13 @@ export function updateSearchTerms(terms: string) {
     return {
         type: ActionTypes.UPDATE_RHS_SEARCH_TERMS,
         terms,
+    };
+}
+
+export function updateSearchTeam(teamId: string | null) {
+    return {
+        type: ActionTypes.UPDATE_RHS_SEARCH_TEAM,
+        teamId,
     };
 }
 
@@ -185,41 +205,28 @@ function updateSearchResultsTerms(terms: string) {
     };
 }
 
-export function performSearch(terms: string, isMentionSearch?: boolean): ThunkActionFunc<unknown, GlobalState> {
+function updateSearchResultsType(searchType: string) {
+    return {
+        type: ActionTypes.UPDATE_RHS_SEARCH_RESULTS_TYPE,
+        searchType,
+    };
+}
+
+export function performSearch(terms: string, teamId: string, isMentionSearch?: boolean): ThunkActionFunc<unknown> {
     return (dispatch, getState) => {
-        let searchTerms = terms;
-        const teamId = getCurrentTeamId(getState());
-        const config = getConfig(getState());
-        const viewArchivedChannels = config.ExperimentalViewArchivedChannels === 'true';
         const extensionsFilters = getFilesSearchExtFilter(getState());
 
         const extensions = extensionsFilters?.map((ext) => `ext:${ext}`).join(' ');
-        let termsWithExtensionsFilters = searchTerms;
+        let termsWithExtensionsFilters = terms;
         if (extensions?.trim().length > 0) {
             termsWithExtensionsFilters += ` ${extensions}`;
-        }
-
-        if (isMentionSearch) {
-            // Username should be quoted to allow specific search
-            // in case username is made with multiple words splitted by dashes or other symbols.
-            const user = getCurrentUser(getState());
-            const termsArr = searchTerms.split(' ').filter((t) => Boolean(t && t.trim()));
-            const username = '@' + user.username;
-            const quotedUsername = `"${username}"`;
-            for (let i = 0; i < termsArr.length; i++) {
-                if (termsArr[i] === username) {
-                    termsArr[i] = quotedUsername;
-                    break;
-                }
-            }
-            searchTerms = termsArr.join(' ');
         }
 
         // timezone offset in seconds
         const userCurrentTimezone = getCurrentTimezone(getState());
         const timezoneOffset = ((userCurrentTimezone && (userCurrentTimezone.length > 0)) ? getUtcOffsetForTimeZone(userCurrentTimezone) : getBrowserUtcOffset()) * 60;
-        const messagesPromise = dispatch(searchPostsWithParams(isMentionSearch ? '' : teamId, {terms: searchTerms, is_or_search: Boolean(isMentionSearch), include_deleted_channels: viewArchivedChannels, time_zone_offset: timezoneOffset, page: 0, per_page: 20}));
-        const filesPromise = dispatch(searchFilesWithParams(teamId, {terms: termsWithExtensionsFilters, is_or_search: Boolean(isMentionSearch), include_deleted_channels: viewArchivedChannels, time_zone_offset: timezoneOffset, page: 0, per_page: 20}));
+        const messagesPromise = dispatch(searchPostsWithParams(teamId, {terms, is_or_search: Boolean(isMentionSearch), include_deleted_channels: true, time_zone_offset: timezoneOffset, page: 0, per_page: 20}));
+        const filesPromise = canSearchFiles(getConfig(getState())) ? dispatch(searchFilesWithParams(teamId, {terms: termsWithExtensionsFilters, is_or_search: Boolean(isMentionSearch), include_deleted_channels: true, time_zone_offset: timezoneOffset, page: 0, per_page: 20})) : Promise.resolve({data: undefined});
         return Promise.all([filesPromise, messagesPromise]);
     };
 }
@@ -231,20 +238,25 @@ export function filterFilesSearchByExt(extensions: string[]) {
     };
 }
 
-export function showSearchResults(isMentionSearch = false): ThunkActionFunc<unknown, GlobalState> {
+export function showSearchResults(isMentionSearch = false): ThunkActionFunc<unknown> {
     return (dispatch, getState) => {
         const state = getState();
 
         const searchTerms = getSearchTerms(state);
+        const teamId = getSearchTeam(state);
+        const searchType = getSearchType(state);
 
+        // A mention search is rebuilt from its filters rather than from the terms, so that re-running
+        // it keeps the channel and date filters it was showing.
         if (isMentionSearch) {
-            dispatch(updateRhsState(RHSStates.MENTION));
-        } else {
-            dispatch(updateRhsState(RHSStates.SEARCH));
+            return dispatch(runMentionSearch(getMentionFilters(state), getExplicitSearchTeam(state)));
         }
-        dispatch(updateSearchResultsTerms(searchTerms));
 
-        return dispatch(performSearch(searchTerms));
+        dispatch(updateRhsState(RHSStates.SEARCH));
+        dispatch(updateSearchResultsTerms(searchTerms));
+        dispatch(updateSearchResultsType(searchType));
+
+        return dispatch(performSearch(searchTerms, teamId));
     };
 }
 
@@ -256,7 +268,7 @@ export function showRHSPlugin(pluggableId: string) {
     };
 }
 
-export function showChannelMembers(channelId: string, inEditingMode = false): ActionFuncAsync<boolean, GlobalState> {
+export function showChannelMembers(channelId: string, inEditingMode = false): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const state = getState();
 
@@ -279,9 +291,9 @@ export function showChannelMembers(channelId: string, inEditingMode = false): Ac
     };
 }
 
-export function hideRHSPlugin(pluggableId: string): ActionFunc<boolean, GlobalState> {
+export function hideRHSPlugin(pluggableId: string): ActionFunc<boolean> {
     return (dispatch, getState) => {
-        const state = getState() as GlobalState;
+        const state = getState();
 
         if (getPluggableId(state) === pluggableId) {
             dispatch(closeRightHandSide());
@@ -291,7 +303,7 @@ export function hideRHSPlugin(pluggableId: string): ActionFunc<boolean, GlobalSt
     };
 }
 
-export function toggleRHSPlugin(pluggableId: string): ActionFunc<boolean, GlobalState> {
+export function toggleRHSPlugin(pluggableId: string): ActionFunc<boolean> {
     return (dispatch, getState) => {
         const state = getState();
 
@@ -340,7 +352,7 @@ export function showFlaggedPosts(): ActionFuncAsync {
     };
 }
 
-export function showPinnedPosts(channelId?: string): ActionFuncAsync<boolean, GlobalState> {
+export function showPinnedPosts(channelId?: string): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const state = getState();
         const currentChannelId = getCurrentChannelId(state);
@@ -383,10 +395,10 @@ export function showPinnedPosts(channelId?: string): ActionFuncAsync<boolean, Gl
     };
 }
 
-export function showChannelFiles(channelId: string): ActionFuncAsync<boolean, GlobalState> {
+export function showChannelFiles(channelId: string): ActionFuncAsync<boolean> {
     return async (dispatch, getState) => {
         const state = getState();
-        const teamId = getCurrentTeamId(state);
+        const teamId = getSearchTeam(state);
 
         let previousRhsState = getRhsState(state);
         if (previousRhsState === RHSStates.CHANNEL_FILES) {
@@ -400,7 +412,7 @@ export function showChannelFiles(channelId: string): ActionFuncAsync<boolean, Gl
         });
         dispatch(updateSearchType('files'));
 
-        const results = await dispatch(performSearch('channel:' + channelId));
+        const results = await dispatch(performSearch('channel:' + channelId, teamId));
         const fileData = results instanceof Array ? results[0].data : null;
         const missingPostIds: string[] = [];
 
@@ -441,17 +453,38 @@ export function showChannelFiles(channelId: string): ActionFuncAsync<boolean, Gl
     };
 }
 
-export function showMentions(): ActionFunc<boolean, GlobalState> {
+function getMentionSearchKeys(state: GlobalState, types: MentionType[]): string[] {
+    const user = getCurrentUser(state);
+
+    return mentionKeysForTypes(
+        types,
+        user?.username ?? '',
+        getCurrentUserMentionKeys(state),
+        getMyGroupMentionKeys(state, false),
+    );
+}
+
+// runMentionSearch is the single place a recent mentions search is assembled. The filters are held in
+// the RHS state rather than written into the search terms, so that the search box keeps showing the
+// mention keys and the chips have real ids to render names from.
+function runMentionSearch(filters: MentionFilters, teamId: string | null): ActionFunc<boolean> {
     return (dispatch, getState) => {
-        const termKeys = getCurrentUserMentionKeys(getState()).filter(({key}) => {
-            return key !== '@channel' && key !== '@all' && key !== '@here';
-        });
+        const state = getState();
+        const mentionKeys = getMentionSearchKeys(state, filters.mentionTypes);
 
-        const terms = termKeys.map(({key}) => key).join(' ').trim() + ' ';
+        // Terms shown in the search box, without the filters. The trailing space lets the user keep
+        // typing after them.
+        const terms = mentionKeys.join(' ').trim() + ' ';
 
-        trackEvent('api', 'api_posts_search_mention');
+        // With no keys to match, an in: or date filter on its own would return every post it allows
+        // rather than the mentions among them.
+        if (mentionKeys.length === 0) {
+            dispatch(clearSearch());
+        } else {
+            const query = buildMentionSearchQuery(mentionKeys, filters, getCurrentTimezone(state));
+            dispatch(performSearch(query, teamId ?? '', true));
+        }
 
-        dispatch(performSearch(terms, true));
         dispatch(batchActions([
             {
                 type: ActionTypes.UPDATE_RHS_SEARCH_TERMS,
@@ -461,10 +494,31 @@ export function showMentions(): ActionFunc<boolean, GlobalState> {
                 type: ActionTypes.UPDATE_RHS_STATE,
                 state: RHSStates.MENTION,
             },
+            {
+                type: ActionTypes.UPDATE_RHS_SEARCH_TEAM,
+                teamId,
+            },
+            {
+                type: ActionTypes.UPDATE_RHS_MENTION_FILTERS,
+                filters,
+            },
         ]));
 
         return {data: true};
     };
+}
+
+// showMentions opens recent mentions across every team, with no filters applied.
+export function showMentions(): ActionFunc<boolean> {
+    return (dispatch) => dispatch(runMentionSearch(defaultMentionFilters, null));
+}
+
+// updateMentionFilters re-runs the recent mentions search with a new set of filters. The channel
+// selection is cleared by the popover when the team changes, since those channels belong to the team
+// being left, so the filters arrive here ready to search on. It is also how a popped out window
+// applies the filters it was opened with.
+export function updateMentionFilters(filters: MentionFilters, teamId: string | null): ActionFunc<boolean> {
+    return (dispatch) => dispatch(runMentionSearch(filters, teamId));
 }
 
 export function showChannelInfo(channelId: string) {
@@ -520,11 +574,14 @@ export function toggleRhsExpanded() {
     };
 }
 
-export function selectPost(post: Post) {
+export function selectPost(post: Post, previousRhsState?: RhsState) {
+    performance.mark(Mark.PostSelected);
+
     return {
         type: ActionTypes.SELECT_POST,
         postId: post.root_id || post.id,
         channelId: post.channel_id,
+        previousRhsState,
         timestamp: Date.now(),
     };
 }
@@ -532,8 +589,8 @@ export function selectPost(post: Post) {
 export function selectPostById(postId: string): ActionFuncAsync {
     return async (dispatch, getState) => {
         const state = getState();
-        const post = getPost(state, postId) ?? (await dispatch(fetchPost(postId))).data;
-        if (post) {
+        const post: Post | undefined = getPost(state, postId) ?? (await dispatch(fetchPost(postId))).data;
+        if (post && post.state !== 'DELETED' && post.delete_at === 0) {
             const channel = getChannelSelector(state, post.channel_id);
             if (!channel) {
                 await dispatch(getChannel(post.channel_id));
@@ -581,6 +638,7 @@ export function openRHSSearch(): ActionFunc {
     return (dispatch) => {
         dispatch(clearSearch());
         dispatch(updateSearchTerms(''));
+        dispatch(updateSearchTeam(null));
         dispatch(updateSearchResultsTerms(''));
 
         dispatch(updateRhsState(RHSStates.SEARCH));
@@ -589,7 +647,7 @@ export function openRHSSearch(): ActionFunc {
     };
 }
 
-export function openAtPrevious(previous: any): ThunkActionFunc<unknown, GlobalState> {
+export function openAtPrevious(previous: any): ThunkActionFunc<unknown> {
     return (dispatch, getState) => {
         if (!previous) {
             return dispatch(openRHSSearch());
@@ -603,18 +661,18 @@ export function openAtPrevious(previous: any): ThunkActionFunc<unknown, GlobalSt
             const currentChannelId = getCurrentChannelId(getState());
             return dispatch(showChannelMembers(currentChannelId));
         }
-        if (previous.isMentionSearch) {
+        if (previous.isRecentMentions) {
             return dispatch(showMentions());
         }
         if (previous.isPinnedPosts) {
             return dispatch(showPinnedPosts());
         }
-        if (previous.isFlaggedPosts) {
+        if (previous.isSavedPosts) {
             return dispatch(showFlaggedPosts());
         }
         if (previous.selectedPostId) {
             const post = getPost(getState(), previous.selectedPostId);
-            return post ? dispatch(selectPostFromRightHandSideSearchWithPreviousState(post, previous.previousRhsState)) : dispatch(openRHSSearch());
+            return post ? dispatch(selectPostWithPreviousState(post, previous.previousRhsState)) : dispatch(openRHSSearch());
         }
         if (previous.selectedPostCardId) {
             const post = getPost(getState(), previous.selectedPostCardId);
@@ -646,5 +704,17 @@ export function setEditChannelMembers(active: boolean) {
     return {
         type: ActionTypes.SET_EDIT_CHANNEL_MEMBERS,
         active,
+    };
+}
+
+export function measureRhsOpened() {
+    return () => {
+        measureAndReport({
+            name: Measure.RhsLoad,
+            startMark: Mark.PostSelected,
+            canFail: true,
+        });
+
+        performance.clearMarks(Mark.PostSelected);
     };
 }

@@ -1,10 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import CtaButtons from 'components/admin_console/workspace-optimization/cta_buttons';
+
+import {render, screen} from 'tests/react_testing_utils';
 
 describe('components/admin_console/workspace-optimization/cta_buttons', () => {
     const baseProps = {
@@ -14,14 +15,9 @@ describe('components/admin_console/workspace-optimization/cta_buttons', () => {
         actionText: 'Action Text',
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<CtaButtons {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('test ctaButtons list lenght is 3 as defined in baseProps', () => {
-        const wrapper = shallow(<CtaButtons {...baseProps}/>);
-        const ctaButtons = wrapper.find('button');
+    test('test ctaButtons list lenght is 2 as defined in baseProps', () => {
+        render(<CtaButtons {...baseProps}/>);
+        const ctaButtons = screen.getAllByRole('button');
 
         expect(ctaButtons.length).toBe(2);
     });

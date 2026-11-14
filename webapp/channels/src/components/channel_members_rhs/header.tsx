@@ -5,12 +5,14 @@ import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
+import {
+    ArrowBackIosIcon,
+    CloseIcon,
+} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {Channel} from '@mattermost/types/channels';
-
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
-
-import Constants from 'utils/constants';
 
 interface Props {
     channel: Channel;
@@ -27,64 +29,58 @@ const HeaderTitle = styled.span`
 const Header = ({channel, canGoBack, onClose, goBack}: Props) => {
     const {formatMessage} = useIntl();
 
-    const closeSidebarTooltip = (
-        <Tooltip id='closeSidebarTooltip'>
-            <FormattedMessage
-                id='rhs_header.closeSidebarTooltip'
-                defaultMessage='Close'
-            />
-        </Tooltip>
-    );
-
     return (
         <div className='sidebar--right__header'>
             <span className='sidebar--right__title'>
 
                 {canGoBack && (
-                    <button
-                        className='sidebar--right__back btn btn-icon btn-sm'
-                        onClick={goBack}
-                        aria-label={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}
-                    >
-                        <i
-                            className='icon icon-arrow-back-ios'
+                    <WithTooltip title={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}>
+                        <IconButton
+                            size='small'
+                            className='sidebar--right__back'
+                            icon={<Icon glyph={<ArrowBackIosIcon/>}/>}
+                            onClick={goBack}
+                            aria-label={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}
                         />
-                    </button>
+                    </WithTooltip>
                 )}
+                <h2>
+                    <HeaderTitle
+                        id='rhsPanelTitle'
+                    >
+                        <FormattedMessage
+                            id='channel_members_rhs.header.title'
+                            defaultMessage='Members'
+                        />
+                    </HeaderTitle>
 
-                <HeaderTitle>
-                    <FormattedMessage
-                        id='channel_members_rhs.header.title'
-                        defaultMessage='Members'
-                    />
-                </HeaderTitle>
-
-                {channel.display_name &&
+                    {channel.display_name &&
                     <span
                         className='style--none sidebar--right__title__subtitle'
                     >
                         {channel.display_name}
                     </span>
-                }
+                    }
+                </h2>
             </span>
 
-            <OverlayTrigger
-                delayShow={Constants.OVERLAY_TIME_DELAY}
-                placement='top'
-                overlay={closeSidebarTooltip}
+            <WithTooltip
+                title={
+                    <FormattedMessage
+                        id='rhs_header.closeSidebarTooltip'
+                        defaultMessage='Close'
+                    />
+                }
             >
-                <button
+                <IconButton
                     id='rhsCloseButton'
-                    type='button'
-                    className='sidebar--right__close btn btn-icon btn-sm'
+                    size='small'
+                    className='sidebar--right__close'
+                    icon={<Icon glyph={<CloseIcon/>}/>}
                     aria-label={formatMessage({id: 'rhs_header.closeTooltip.icon', defaultMessage: 'Close Sidebar Icon'})}
                     onClick={onClose}
-                >
-                    <i
-                        className='icon icon-close'
-                    />
-                </button>
-            </OverlayTrigger>
+                />
+            </WithTooltip>
         </div>
     );
 };

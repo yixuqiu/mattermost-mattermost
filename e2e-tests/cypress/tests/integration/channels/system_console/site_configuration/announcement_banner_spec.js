@@ -7,11 +7,10 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @enterprise @system_console @announcement_banner
 
-import {hexToRgbArray, rgbArrayToString} from '../../../../utils';
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
+import {hexToRgbArray, rgbArrayToString} from '@/utils';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 describe('Announcement Banner', () => {
     before(() => {
@@ -112,6 +111,9 @@ describe('Announcement Banner', () => {
                 cy.get(`a[href="${bannerEmbedLink}"]`).should('be.visible');
                 cy.get(`a[href="${bannerEndLink}"]`).should('not.be.visible');
             });
+
+        // Go back to Channels
+        cy.get('a.backstage-navbar__back').click();
 
         // # Hover over the banner
         cy.get('@announcementBanner').trigger('mouseover');

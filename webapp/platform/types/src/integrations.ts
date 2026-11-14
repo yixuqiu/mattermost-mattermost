@@ -9,6 +9,7 @@ export type IncomingWebhook = {
     create_at: number;
     update_at: number;
     delete_at: number;
+    last_used: number;
     user_id: string;
     channel_id: string;
     team_id: string;
@@ -17,6 +18,11 @@ export type IncomingWebhook = {
     username: string;
     icon_url: string;
     channel_locked: boolean;
+};
+
+export type IncomingWebhooksWithCount = {
+    incoming_webhooks: IncomingWebhook[];
+    total_count: number;
 };
 
 export type OutgoingWebhook = {
@@ -39,30 +45,30 @@ export type OutgoingWebhook = {
 };
 
 export type Command = {
-    'id': string;
-    'token': string;
-    'create_at': number;
-    'update_at': number;
-    'delete_at': number;
-    'creator_id': string;
-    'team_id': string;
-    'trigger': string;
-    'method': 'P' | 'G' | '';
-    'username': string;
-    'icon_url': string;
-    'auto_complete': boolean;
-    'auto_complete_desc': string;
-    'auto_complete_hint': string;
-    'display_name': string;
-    'description': string;
-    'url': string;
+    id: string;
+    token: string;
+    create_at: number;
+    update_at: number;
+    delete_at: number;
+    creator_id: string;
+    team_id: string;
+    trigger: string;
+    method: 'P' | 'G' | '';
+    username: string;
+    icon_url: string;
+    auto_complete: boolean;
+    auto_complete_desc: string;
+    auto_complete_hint: string;
+    display_name: string;
+    description: string;
+    url: string;
 };
 
 export type CommandArgs = {
     channel_id: string;
     team_id?: string;
     root_id?: string;
-}
+};
 
 export type CommandResponse = {
     response_type: string;
@@ -91,36 +97,39 @@ export type AutocompleteSuggestion = {
 export type CommandAutocompleteSuggestion = AutocompleteSuggestion; // TODO remove this alias after the mattermost-redux migration
 
 export type OAuthApp = {
-    'id': string;
-    'creator_id': string;
-    'create_at': number;
-    'update_at': number;
-    'client_secret': string;
-    'name': string;
-    'description': string;
-    'icon_url': string;
-    'callback_urls': string[];
-    'homepage': string;
-    'is_trusted': boolean;
+    id: string;
+    creator_id: string;
+    create_at: number;
+    update_at: number;
+    client_secret: string;
+    name: string;
+    description: string;
+    icon_url: string;
+    callback_urls: string[];
+    homepage: string;
+    is_trusted: boolean;
+    is_dynamically_registered?: boolean;
+    is_public?: boolean;
 };
 
 export type OutgoingOAuthConnection = {
-    'id': string;
-    'name': string;
-    'creator_id': string;
-    'create_at': number;
-    'update_at': number;
-    'client_id': string;
-    'client_secret'?: string;
-    'credentials_username'?: string;
-    'credentials_password'?: string;
-    'oauth_token_url': string;
-    'grant_type': 'client_credentials' | 'password';
-    'audiences': string[];
+    id: string;
+    name: string;
+    creator_id: string;
+    create_at: number;
+    update_at: number;
+    client_id: string;
+    client_secret?: string;
+    credentials_username?: string;
+    credentials_password?: string;
+    oauth_token_url: string;
+    grant_type: 'client_credentials' | 'password';
+    audiences: string[];
 };
 
 export type IntegrationsState = {
     incomingHooks: IDMappedObjects<IncomingWebhook>;
+    incomingHooksTotalCount: number;
     outgoingHooks: IDMappedObjects<OutgoingWebhook>;
     oauthApps: IDMappedObjects<OAuthApp>;
     outgoingOAuthConnections: IDMappedObjects<OutgoingOAuthConnection>;
@@ -128,13 +137,22 @@ export type IntegrationsState = {
     appsBotIDs: string[];
     systemCommands: IDMappedObjects<Command>;
     commands: IDMappedObjects<Command>;
-    dialog?: {
-        url: string;
-        dialog: Dialog;
-    };
+    dialogTriggerId: string;
+    dialogs: Record<string, OpenDialogRequest>;
 };
 
-type Dialog = {
+export type OpenDialogRequest = {
+    trigger_id: string;
+    url: string;
+    dialog: Dialog;
+
+    // The channel this dialog belongs to. Always populated by the server from the
+    // signed trigger_id — the integration cannot override it. Absent when the dialog
+    // came from a server that predates this field.
+    channel_id?: string;
+};
+
+export type Dialog = {
     callback_id?: string;
     elements?: DialogElement[];
     title: string;
@@ -143,6 +161,13 @@ type Dialog = {
     submit_label?: string;
     notify_on_cancel?: boolean;
     state?: string;
+    source_url?: string;
+
+    // Width tier. Absent means 'small', the width every dialog had before this
+    // existed, so an existing dialog is unaffected.
+    size?: 'small' | 'medium' | 'large';
+    submit_buttons?: string;
+    refresh_on_return?: boolean;
 };
 
 export type DialogSubmission = {
@@ -153,9 +178,11 @@ export type DialogSubmission = {
     channel_id: string;
     team_id: string;
     submission: {
-        [x: string]: string;
+        [x: string]: string | string[];
     };
     cancelled: boolean;
+    type?: string;
+    file_ids?: string[];
 };
 
 export type DialogElement = {
@@ -170,13 +197,59 @@ export type DialogElement = {
     min_length: number;
     max_length: number;
     data_source: string;
+    data_source_url?: string;
+    multiselect?: boolean;
+    allow_multiple?: boolean;
     options: Array<{
         text: string;
         value: any;
     }>;
+    refresh?: boolean;
+
+    // Date/datetime configuration
+    datetime_config?: {
+        min_date?: string;
+        max_date?: string;
+        time_interval?: number;
+        location_timezone?: string;
+        manual_time_entry?: boolean;
+    };
+
+    // Collapsible section configuration. A "collapsible" element groups child
+    // elements behind an expandable title and contributes no value of its own.
+    collapsible_config?: {
+
+        // Child elements rendered inside the collapsible section.
+        elements?: DialogElement[];
+
+        // Initial open/closed state. Omitted/false means the section starts expanded.
+        collapsed?: boolean;
+
+        // Whether the section renders without a box outline. Omitted/false means bordered.
+        borderless?: boolean;
+    };
+
+    label_position?: 'before' | 'after';
+
+    matrix_config?: {
+        rows: Array<{text: string; value: string}>;
+        columns: Array<{text: string; value: string}>;
+        row_selection?: 'multiple' | 'single';
+    };
+
+    // Action button configuration (type "action_button")
+    action_button?: {
+        url: string;
+        context?: Record<string, string>;
+    };
 };
 
 export type SubmitDialogResponse = {
     error?: string;
     errors?: Record<string, string>;
+    type?: string;
+    form?: Dialog;
 };
+
+// Keep in sync with server/public/model/integration_action.go MaxDialogFileIds.
+export const MaxDialogFileIds = 10;

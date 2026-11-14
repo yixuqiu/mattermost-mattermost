@@ -4,7 +4,8 @@
 /** @type {import('jest').Config} */
 
 const config = {
-    moduleDirectories: ['src', 'node_modules'],
+    moduleDirectories: ['node_modules'],
+    modulePaths: ['<rootDir>/src'],
     testEnvironment: 'jsdom',
     testPathIgnorePatterns: ['/node_modules/', '/.rollup.cache/', '/dist/'],
     clearMocks: true,
@@ -16,6 +17,15 @@ const config = {
     },
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
     setupFilesAfterEnv: ['<rootDir>/setup_jest.ts'],
+    collectCoverageFrom: [
+        'src/**/*.{js,jsx,ts,tsx}',
+    ],
+    coveragePathIgnorePatterns: [
+        '/node_modules/',
+        '/.rollup.cache/',
+        '/dist/',
+    ],
+    coverageReporters: ['json', 'lcov', 'text-summary'],
 };
 
 module.exports = config;

@@ -3,10 +3,12 @@
 
 import React from 'react';
 
+import type {SelectOption} from 'components/widgets/modals/components/react_select_item';
+
 import {renderWithContext, screen} from 'tests/react_testing_utils';
 import Constants, {NotificationLevels} from 'utils/constants';
 
-import type {SelectOption, Props} from './index';
+import type {Props} from './index';
 import DesktopNotificationSettings, {
     shouldShowDesktopThreadsSection,
     shouldShowMobileThreadsSection,
@@ -16,6 +18,9 @@ import DesktopNotificationSettings, {
 } from './index';
 
 const validNotificationLevels = Object.values(NotificationLevels);
+
+jest.mock('components/user_settings/notifications/desktop_and_mobile_notification_setting/notification_permission_section_notice', () => () => <div/>);
+jest.mock('components/user_settings/notifications/desktop_and_mobile_notification_setting/notification_permission_title_tag', () => () => <div/>);
 
 describe('DesktopNotificationSettings', () => {
     const baseProps: Props = {
@@ -37,31 +42,13 @@ describe('DesktopNotificationSettings', () => {
         desktopAndMobileSettingsDifferent: false,
     };
 
-    test('should match snapshot, on max setting', () => {
-        const {container} = renderWithContext(
-            <DesktopNotificationSettings {...baseProps}/>,
-        );
-
-        expect(container).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on min setting', () => {
-        const props = {...baseProps, active: false};
-        const {container} = renderWithContext(
-            <DesktopNotificationSettings {...props}/>,
-        );
-
-        expect(container).toMatchSnapshot();
-    });
-
     test('should not show desktop thread notification checkbox when collapsed threads are not enabled', () => {
         const props = {...baseProps, isCollapsedThreadsEnabled: false};
-        const {container} = renderWithContext(
+        renderWithContext(
             <DesktopNotificationSettings {...props}/>,
         );
 
         expect(screen.queryByText('Notify me about replies to threads I\'m following')).toBeNull();
-        expect(container).toMatchSnapshot();
     });
 
     test('should not show desktop thread notification checkbox when desktop is all', () => {
@@ -173,6 +160,88 @@ describe('DesktopNotificationSettings', () => {
         );
 
         expect(screen.queryByText('Trigger mobile notifications when I am:')).toBeNull();
+    });
+
+    // New accessibility tests for the option labels fix
+    describe('Accessibility - Option Labels', () => {
+        test('should render notification option labels as proper text for screen readers', () => {
+            renderWithContext(
+                <DesktopNotificationSettings {...baseProps}/>,
+            );
+
+            // Check that the radio button labels are properly rendered as text
+            expect(screen.getByText('All new messages')).toBeInTheDocument();
+            expect(screen.getByText('Mentions, direct messages, and group messages')).toBeInTheDocument();
+            expect(screen.getByText('Nothing')).toBeInTheDocument();
+        });
+
+        test('should render mobile notification option labels correctly in select dropdown', () => {
+            const props = {...baseProps, desktopAndMobileSettingsDifferent: true};
+            renderWithContext(
+                <DesktopNotificationSettings {...props}/>,
+            );
+
+            // The select component should be present - use more specific selector since there are multiple comboboxes
+            const selectElement = screen.getByLabelText(/Send mobile notifications for:/);
+            expect(selectElement).toBeInTheDocument();
+
+            // The aria-labelledby should reference the correct label
+            expect(selectElement).toHaveAttribute('aria-labelledby', 'sendMobileNotificationsLabel');
+        });
+
+        test('should render mobile notification status options correctly', () => {
+            const props = {...baseProps, desktopActivity: NotificationLevels.MENTION, desktopAndMobileSettingsDifferent: false};
+            renderWithContext(
+                <DesktopNotificationSettings {...props}/>,
+            );
+
+            // The trigger mobile notifications select should be present
+            const selectElement = screen.getByLabelText(/Trigger mobile notifications when I am:/);
+            expect(selectElement).toBeInTheDocument();
+        });
+
+        test('should ensure option labels are MessageDescriptor or string, not React elements', () => {
+            // This test ensures we don't regress to the [object,object] issue
+            const result = getValueOfSendMobileNotificationForSelect(NotificationLevels.ALL);
+            if (result && typeof result === 'object' && 'label' in result) {
+                // The label should be a MessageDescriptor (object) or string, not a React element
+                if (typeof result.label === 'object') {
+                    // If it's an object, it should be a MessageDescriptor with id and defaultMessage
+                    expect(result.label).toHaveProperty('id');
+                    expect(result.label).toHaveProperty('defaultMessage');
+
+                    // Should NOT have React element properties
+                    expect(result.label).not.toHaveProperty('$$typeof');
+                    expect(result.label).not.toHaveProperty('type');
+                    expect(result.label).not.toHaveProperty('props');
+                } else {
+                    // If it's not an object, it should be a string
+                    expect(typeof result.label).toBe('string');
+                }
+                expect(result.label).not.toBeNull();
+            }
+        });
+
+        test('should ensure mobile notification status option labels are properly formatted', () => {
+            const result = getValueOfSendMobileNotificationWhenSelect(Constants.UserStatuses.ONLINE);
+            if (result && typeof result === 'object' && 'label' in result) {
+                // The label should be a MessageDescriptor (object) or string, not a React element
+                if (typeof result.label === 'object') {
+                    // If it's an object, it should be a MessageDescriptor with id and defaultMessage
+                    expect(result.label).toHaveProperty('id');
+                    expect(result.label).toHaveProperty('defaultMessage');
+
+                    // Should NOT have React element properties that would cause [object,object]
+                    expect(result.label).not.toHaveProperty('$$typeof');
+                    expect(result.label).not.toHaveProperty('type');
+                    expect(result.label).not.toHaveProperty('props');
+                } else {
+                    // If it's not an object, it should be a string
+                    expect(typeof result.label).toBe('string');
+                }
+                expect(result.label).not.toBeNull();
+            }
+        });
     });
 });
 

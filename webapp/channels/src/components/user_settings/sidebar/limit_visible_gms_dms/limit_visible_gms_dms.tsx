@@ -5,7 +5,7 @@ import React from 'react';
 import type {RefObject} from 'react';
 import {FormattedMessage} from 'react-intl';
 import ReactSelect from 'react-select';
-import type {ValueType} from 'react-select';
+import type {OnChangeValue, StylesConfig} from 'react-select';
 
 import type {PreferenceType} from '@mattermost/types/preferences';
 
@@ -16,30 +16,28 @@ import SettingItemMax from 'components/setting_item_max';
 import SettingItemMin from 'components/setting_item_min';
 import type SettingItemMinComponent from 'components/setting_item_min';
 
-import {localizeMessage} from 'utils/utils';
+import type {OwnProps} from './index';
 
 type Limit = {
     value: number;
     label: string;
 };
 
-type Props = {
+type Props = OwnProps & {
     active: boolean;
     areAllSectionsInactive: boolean;
-    currentUserId: string;
     savePreferences: (userId: string, preferences: PreferenceType[]) => Promise<ActionResult>;
     dmGmLimit: number;
     updateSection: (section: string) => void;
-}
+};
 
 type State = {
     active: boolean;
     limit: Limit;
     isSaving: boolean;
-}
+};
 
 const limits: Limit[] = [
-    {value: 10000, label: localizeMessage('user.settings.sidebar.limitVisibleGMsDMs.allDirectMessages', 'All Direct Messages')},
     {value: 10, label: '10'},
     {value: 15, label: '15'},
     {value: 20, label: '20'},
@@ -47,7 +45,7 @@ const limits: Limit[] = [
 ];
 
 export default class LimitVisibleGMsDMs extends React.PureComponent<Props, State> {
-    minRef: RefObject<SettingItemMinComponent>;
+    minRef: RefObject<SettingItemMinComponent | null>;
 
     constructor(props: Props) {
         super(props);
@@ -92,17 +90,21 @@ export default class LimitVisibleGMsDMs extends React.PureComponent<Props, State
         }
     }
 
-    handleChange = (selected: ValueType<Limit>) => {
+    handleChange = (selected: OnChangeValue<Limit, boolean>) => {
         if (selected && 'value' in selected) {
             this.setState({limit: selected});
         }
     };
 
     handleSubmit = async () => {
+        if (!this.props.userId) {
+            return;
+        }
+
         this.setState({isSaving: true});
 
-        await this.props.savePreferences(this.props.currentUserId, [{
-            user_id: this.props.currentUserId,
+        await this.props.savePreferences(this.props.userId, [{
+            user_id: this.props.userId,
             category: Preferences.CATEGORY_SIDEBAR_SETTINGS,
             name: Preferences.LIMIT_VISIBLE_DMS_GMS,
             value: this.state.limit.value.toString(),
@@ -152,7 +154,7 @@ export default class LimitVisibleGMsDMs extends React.PureComponent<Props, State
                             classNamePrefix='react-select'
                             id='limitVisibleGMsDMs'
                             options={limits}
-                            clearable={false}
+                            isClearable={false}
                             onChange={this.handleChange}
                             value={this.state.limit}
                             isSearchable={false}
@@ -176,8 +178,8 @@ export default class LimitVisibleGMsDMs extends React.PureComponent<Props, State
 }
 
 const reactStyles = {
-    menuPortal: (provided: React.CSSProperties) => ({
+    menuPortal: (provided) => ({
         ...provided,
         zIndex: 9999,
     }),
-};
+} satisfies StylesConfig<Limit, boolean>;

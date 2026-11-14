@@ -4,7 +4,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,18 +64,19 @@ func (a *App) EnsureBot(rctx request.CTX, pluginID string, bot *model.Bot) (stri
 			if appErr := a.SetPluginKey(pluginID, botUserKey, []byte(user.Id)); appErr != nil {
 				return "", fmt.Errorf("failed to set plugin key: %w", appErr)
 			}
-		} else {
-			rctx.Logger().Error("Plugin attempted to use an account that already exists. Convert user to a bot "+
-				"account in the CLI by running 'mattermost user convert <username> --bot'. If the user is an "+
-				"existing user account you want to preserve, change its username and restart the Mattermost server, "+
-				"after which the plugin will create a bot account with that name. For more information about bot "+
-				"accounts, see https://mattermost.com/pl/default-bot-accounts", mlog.String("username",
-				bot.Username),
-				mlog.String("user_id",
-					user.Id),
-			)
+			return user.Id, nil
 		}
-		return user.Id, nil
+
+		rctx.Logger().Error("Plugin attempted to use an account that already exists. Convert user to a bot "+
+			"account in the CLI by running 'mattermost user convert <username> --bot'. If the user is an "+
+			"existing user account you want to preserve, change its username and restart the Mattermost server, "+
+			"after which the plugin will create a bot account with that name. For more information about bot "+
+			"accounts, see https://mattermost.com/pl/default-bot-accounts", mlog.String("username",
+			bot.Username),
+			mlog.String("user_id",
+				user.Id),
+		)
+		return "", fmt.Errorf("username %q is already taken by a non-bot user", bot.Username)
 	}
 
 	createdBot, err := a.CreateBot(rctx, bot)
@@ -98,14 +98,16 @@ func (a *App) CreateBot(rctx request.CTX, bot *model.Bot) (*model.Bot, *model.Ap
 		return nil, vErr
 	}
 
+	// Reserved for GetOrCreateSystemOwnedBot; blocks squatting the username to inherit the protection against being disabled.
+	if bot.IsSystemOwned() {
+		return nil, model.NewAppError("CreateBot", "app.bot.createbot.reserved_username.app_error", nil, "", http.StatusBadRequest)
+	}
+
 	user, nErr := a.Srv().Store().User().Save(rctx, model.UserFromBot(bot))
 	if nErr != nil {
-		var appErr *model.AppError
-		var invErr *store.ErrInvalidInput
-		switch {
-		case errors.As(nErr, &appErr):
+		if appErr, ok := errors.AsType[*model.AppError](nErr); ok {
 			return nil, appErr
-		case errors.As(nErr, &invErr):
+		} else if invErr, ok := errors.AsType[*store.ErrInvalidInput](nErr); ok {
 			code := ""
 			switch invErr.Field {
 			case "email":
@@ -116,28 +118,26 @@ func (a *App) CreateBot(rctx request.CTX, bot *model.Bot) (*model.Bot, *model.Ap
 				code = "app.user.save.existing.app_error"
 			}
 			return nil, model.NewAppError("CreateBot", code, nil, "", http.StatusBadRequest).Wrap(nErr)
-		default:
-			return nil, model.NewAppError("CreateBot", "app.user.save.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
+		return nil, model.NewAppError("CreateBot", "app.user.save.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 	bot.UserId = user.Id
 
 	savedBot, nErr := a.Srv().Store().Bot().Save(bot)
 	if nErr != nil {
-		a.Srv().Store().User().PermanentDelete(rctx, bot.UserId)
-		var appErr *model.AppError
-		switch {
-		case errors.As(nErr, &appErr): // in case we haven't converted to plain error.
-			return nil, appErr
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("CreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+		if err := a.Srv().Store().User().PermanentDelete(rctx, bot.UserId); err != nil {
+			rctx.Logger().Error("Failed to permanently delete the user after bot save failure", mlog.Err(err))
 		}
+		if appErr, ok := errors.AsType[*model.AppError](nErr); ok { // in case we haven't converted to plain error.
+			return nil, appErr
+		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("CreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 
 	// Get the owner of the bot, if one exists. If not, don't send a message
-	ownerUser, err := a.Srv().Store().User().Get(context.Background(), bot.OwnerId)
-	var nfErr *store.ErrNotFound
-	if err != nil && !errors.As(err, &nfErr) {
+	ownerUser, err := a.Srv().Store().User().Get(rctx, bot.OwnerId)
+	if _, ok := errors.AsType[*store.ErrNotFound](err); err != nil && !ok {
 		return nil, model.NewAppError("CreateBot", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	} else if ownerUser != nil {
 		// Send a message to the bot's creator to inform them that the bot needs to be added
@@ -155,7 +155,7 @@ func (a *App) CreateBot(rctx request.CTX, bot *model.Bot) (*model.Bot, *model.Ap
 			Message:   T("api.bot.teams_channels.add_message_mobile"),
 		}
 
-		if _, err := a.CreatePostAsUser(rctx, botAddPost, rctx.Session().Id, true); err != nil {
+		if _, _, err := a.CreatePostAsUser(rctx, botAddPost, rctx.Session().Id, true); err != nil {
 			return nil, err
 		}
 	}
@@ -164,6 +164,10 @@ func (a *App) CreateBot(rctx request.CTX, bot *model.Bot) (*model.Bot, *model.Ap
 }
 
 func (a *App) GetSystemBot(rctx request.CTX) (*model.Bot, *model.AppError) {
+	return a.GetOrCreateSystemOwnedBot(rctx, model.BotSystemBotUsername, i18n.T("app.system.system_bot.bot_displayname"))
+}
+
+func (a *App) GetOrCreateSystemOwnedBot(rctx request.CTX, botUsername, botDisplayName string) (*model.Bot, *model.AppError) {
 	perPage := 1
 	userOptions := &model.UserGetOptions{
 		Page:     0,
@@ -181,18 +185,13 @@ func (a *App) GetSystemBot(rctx request.CTX) (*model.Bot, *model.AppError) {
 		return nil, model.NewAppError("GetSystemBot", "app.bot.get_system_bot.empty_admin_list.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	T := i18n.GetUserTranslations(sysAdminList[0].Locale)
-	systemBot := &model.Bot{
-		Username:    model.BotSystemBotUsername,
-		DisplayName: T("app.system.system_bot.bot_displayname"),
+	botDef := &model.Bot{
+		Username:    botUsername,
+		DisplayName: botDisplayName,
 		Description: "",
 		OwnerId:     sysAdminList[0].Id,
 	}
 
-	return a.getOrCreateBot(rctx, systemBot)
-}
-
-func (a *App) getOrCreateBot(rctx request.CTX, botDef *model.Bot) (*model.Bot, *model.AppError) {
 	botUser, appErr := a.GetUserByUsername(botDef.Username)
 	if appErr != nil {
 		if appErr.StatusCode != http.StatusNotFound {
@@ -202,12 +201,9 @@ func (a *App) getOrCreateBot(rctx request.CTX, botDef *model.Bot) (*model.Bot, *
 		// cannot find this bot user, save the user
 		user, nErr := a.Srv().Store().User().Save(rctx, model.UserFromBot(botDef))
 		if nErr != nil {
-			var appError *model.AppError
-			var invErr *store.ErrInvalidInput
-			switch {
-			case errors.As(nErr, &appError):
+			if appError, ok := errors.AsType[*model.AppError](nErr); ok {
 				return nil, appError
-			case errors.As(nErr, &invErr):
+			} else if invErr, ok := errors.AsType[*store.ErrInvalidInput](nErr); ok {
 				code := ""
 				switch invErr.Field {
 				case "email":
@@ -217,39 +213,43 @@ func (a *App) getOrCreateBot(rctx request.CTX, botDef *model.Bot) (*model.Bot, *
 				default:
 					code = "app.user.save.existing.app_error"
 				}
-				return nil, model.NewAppError("getOrCreateBot", code, nil, "", http.StatusBadRequest).Wrap(nErr)
-			default:
-				return nil, model.NewAppError("getOrCreateBot", "app.user.save.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+				return nil, model.NewAppError("GetOrCreateSystemOwnedBot", code, nil, "", http.StatusBadRequest).Wrap(nErr)
 			}
+			return nil, model.NewAppError("GetOrCreateSystemOwnedBot", "app.user.save.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
 		botDef.UserId = user.Id
 
 		//save the bot
 		savedBot, nErr := a.Srv().Store().Bot().Save(botDef)
 		if nErr != nil {
-			a.Srv().Store().User().PermanentDelete(rctx, savedBot.UserId)
-			var nAppErr *model.AppError
-			switch {
-			case errors.As(nErr, &nAppErr): // in case we haven't converted to plain error.
-				return nil, nAppErr
-			default: // last fallback in case it doesn't map to an existing app error.
-				return nil, model.NewAppError("getOrCreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+			if err := a.Srv().Store().User().PermanentDelete(rctx, savedBot.UserId); err != nil {
+				rctx.Logger().Error("Failed to permanently delete the user after bot save failure", mlog.Err(err))
 			}
+			if nAppErr, ok := errors.AsType[*model.AppError](nErr); ok { // in case we haven't converted to plain error.
+				return nil, nAppErr
+			}
+			// last fallback in case it doesn't map to an existing app error.
+			return nil, model.NewAppError("GetOrCreateSystemOwnedBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
 		return savedBot, nil
 	}
 
 	if botUser == nil {
-		return nil, model.NewAppError("getOrCreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("GetOrCreateSystemOwnedBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError)
 	}
 
-	//return the bot for this user
-	savedBot, appErr := a.GetBot(rctx, botUser.Id, false)
+	// Bot user exists; fetch including disabled.
+	bot, appErr := a.GetBot(rctx, botUser.Id, true)
 	if appErr != nil {
 		return nil, appErr
 	}
 
-	return savedBot, nil
+	// Auto-heal: re-enable the bot if it was disabled (e.g. its owner was deactivated).
+	if bot.DeleteAt != 0 {
+		return a.UpdateBotActive(rctx, bot.UserId, true)
+	}
+
+	return bot, nil
 }
 
 // PatchBot applies the given patch to the bot and corresponding user.
@@ -263,17 +263,20 @@ func (a *App) PatchBot(rctx request.CTX, botUserId string, botPatch *model.BotPa
 		return bot, nil
 	}
 
+	wasSystemOwned := bot.IsSystemOwned()
 	bot.Patch(botPatch)
 
-	user, nErr := a.Srv().Store().User().Get(context.Background(), botUserId)
+	// Blocks renaming into a protected username; see CreateBot.
+	if !wasSystemOwned && bot.IsSystemOwned() {
+		return nil, model.NewAppError("PatchBot", "app.bot.patchbot.reserved_username.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	user, nErr := a.Srv().Store().User().Get(rctx, botUserId)
 	if nErr != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(nErr, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](nErr); ok {
 			return nil, model.NewAppError("PatchBot", MissingAccountError, nil, "", http.StatusNotFound).Wrap(nErr)
-		default:
-			return nil, model.NewAppError("PatchBot", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
+		return nil, model.NewAppError("PatchBot", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 
 	patchedUser := model.UserFromBot(bot)
@@ -284,40 +287,32 @@ func (a *App) PatchBot(rctx request.CTX, botUserId string, botPatch *model.BotPa
 
 	userUpdate, nErr := a.Srv().Store().User().Update(rctx, user, true)
 	if nErr != nil {
-		var appErr *model.AppError
-		var invErr *store.ErrInvalidInput
-		var conErr *store.ErrConflict
-		switch {
-		case errors.As(nErr, &appErr):
+		if appErr, ok := errors.AsType[*model.AppError](nErr); ok {
 			return nil, appErr
-		case errors.As(nErr, &invErr):
+		} else if _, ok := errors.AsType[*store.ErrInvalidInput](nErr); ok {
 			return nil, model.NewAppError("PatchBot", "app.user.update.find.app_error", nil, "", http.StatusBadRequest).Wrap(nErr)
-		case errors.As(nErr, &conErr):
+		} else if conErr, ok := errors.AsType[*store.ErrConflict](nErr); ok {
 			if conErr.Resource == "Username" {
 				return nil, model.NewAppError("PatchBot", "app.user.save.username_exists.app_error", nil, "", http.StatusBadRequest).Wrap(nErr)
 			}
 			return nil, model.NewAppError("PatchBot", "app.user.save.email_exists.app_error", nil, "", http.StatusBadRequest).Wrap(nErr)
-		default:
-			return nil, model.NewAppError("PatchBot", "app.user.update.finding.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
+		return nil, model.NewAppError("PatchBot", "app.user.update.finding.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 	a.InvalidateCacheForUser(user.Id)
 
 	ruser := userUpdate.New
-	a.sendUpdatedUserEvent(*ruser)
+	a.sendUpdatedUserEvent(ruser)
 
 	bot, nErr = a.Srv().Store().Bot().Update(bot)
 	if nErr != nil {
-		var nfErr *store.ErrNotFound
-		var appErr *model.AppError
-		switch {
-		case errors.As(nErr, &nfErr):
+		if nfErr, ok := errors.AsType[*store.ErrNotFound](nErr); ok {
 			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(nErr)
-		case errors.As(nErr, &appErr): // in case we haven't converted to plain error.
+		} else if appErr, ok := errors.AsType[*model.AppError](nErr); ok { // in case we haven't converted to plain error.
 			return nil, appErr
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("PatchBot", "app.bot.patchbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("PatchBot", "app.bot.patchbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 	return bot, nil
 }
@@ -326,15 +321,35 @@ func (a *App) PatchBot(rctx request.CTX, botUserId string, botPatch *model.BotPa
 func (a *App) GetBot(rctx request.CTX, botUserId string, includeDeleted bool) (*model.Bot, *model.AppError) {
 	bot, err := a.Srv().Store().Bot().Get(botUserId, includeDeleted)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if nfErr, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(err)
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("GetBot", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("GetBot", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 	return bot, nil
+}
+
+// resolveBotOwner returns the bot and its owning user for a bot's user id.
+// owner is nil (with no error) when OwnerId resolves to no user: either a
+// plugin-owned bot, whose OwnerId is a plugin ID the user lookup can never
+// find, or a bot whose owning account has since been deleted. Callers that must
+// tell those apart can use model.Bot.HasUserOwner.
+func (a *App) resolveBotOwner(rctx request.CTX, botUserId string) (owner *model.User, bot *model.Bot, appErr *model.AppError) {
+	bot, appErr = a.GetBot(rctx, botUserId, true)
+	if appErr != nil {
+		return nil, nil, appErr
+	}
+
+	owner, err := a.Srv().Store().User().Get(rctx, bot.OwnerId)
+	if err != nil {
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
+			return nil, bot, nil
+		}
+		return nil, nil, model.NewAppError("resolveBotOwner", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+
+	return owner, bot, nil
 }
 
 // GetBots returns the requested page of bots.
@@ -346,32 +361,73 @@ func (a *App) GetBots(rctx request.CTX, options *model.BotGetOptions) (model.Bot
 	return bots, nil
 }
 
+// IsBotExemptFromDMRestrictions checks if the given user ID is a bot that is
+// exempt from the RestrictDirectMessage=team enforcement. This includes
+// protected system-owned bots, bots owned by the current session's user, and
+// plugin-owned bots.
+func (a *App) IsBotExemptFromDMRestrictions(rctx request.CTX, userID string) (bool, *model.AppError) {
+	bot, appErr := a.GetBot(rctx, userID, false)
+	if appErr != nil {
+		return false, appErr
+	}
+
+	// Protected system-owned bots must be able to send messages to any user
+	// regardless of team membership (e.g. push notification tests, post
+	// reminders, content-flagging notifications, etc.)
+	if bot.IsSystemOwned() {
+		return true, nil
+	}
+
+	if session := rctx.Session(); session != nil && bot.OwnerId == session.UserId {
+		return true, nil
+	}
+
+	pluginsEnvironment := a.GetPluginsEnvironment()
+	if pluginsEnvironment == nil {
+		return false, nil
+	}
+
+	availablePlugins, err := pluginsEnvironment.Available()
+	if err != nil {
+		return false, model.NewAppError("IsBotExemptFromDMRestrictions", "app.plugin.get_plugins.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+
+	pluginIDs := make(map[string]bool, len(availablePlugins))
+	for _, plugin := range availablePlugins {
+		if plugin.Manifest != nil {
+			pluginIDs[plugin.Manifest.Id] = true
+		}
+	}
+
+	return pluginIDs[bot.OwnerId], nil
+}
+
 // UpdateBotActive marks a bot as active or inactive, along with its corresponding user.
 func (a *App) UpdateBotActive(rctx request.CTX, botUserId string, active bool) (*model.Bot, *model.AppError) {
-	user, nErr := a.Srv().Store().User().Get(context.Background(), botUserId)
+	bot, nErr := a.Srv().Store().Bot().Get(botUserId, true)
 	if nErr != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(nErr, &nfErr):
-			return nil, model.NewAppError("PatchBot", MissingAccountError, nil, "", http.StatusNotFound).Wrap(nErr)
-		default:
-			return nil, model.NewAppError("PatchBot", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+		if nfErr, ok := errors.AsType[*store.ErrNotFound](nErr); ok {
+			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(nErr)
 		}
+		return nil, model.NewAppError("UpdateBotActive", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+	}
+
+	// System-owned bots must never be disabled. This is the single choke point
+	// for both direct API calls and the disableUserBots owner-deactivation path.
+	if bot.IsSystemOwned() && !active {
+		return nil, model.NewAppError("UpdateBotActive", "app.bot.update_bot_active.protected_bot.app_error", nil, "", http.StatusForbidden)
+	}
+
+	user, nErr := a.Srv().Store().User().Get(rctx, botUserId)
+	if nErr != nil {
+		if _, ok := errors.AsType[*store.ErrNotFound](nErr); ok {
+			return nil, model.NewAppError("PatchBot", MissingAccountError, nil, "", http.StatusNotFound).Wrap(nErr)
+		}
+		return nil, model.NewAppError("PatchBot", "app.user.get.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 
 	if _, err := a.UpdateActive(rctx, user, active); err != nil {
 		return nil, err
-	}
-
-	bot, nErr := a.Srv().Store().Bot().Get(botUserId, true)
-	if nErr != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(nErr, &nfErr):
-			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(nErr)
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("UpdateBotActive", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
-		}
 	}
 
 	changed := true
@@ -405,14 +461,24 @@ func (a *App) UpdateBotActive(rctx request.CTX, botUserId string, active bool) (
 // PermanentDeleteBot permanently deletes a bot and its corresponding user.
 func (a *App) PermanentDeleteBot(rctx request.CTX, botUserId string) *model.AppError {
 	if err := a.Srv().Store().Bot().PermanentDelete(botUserId); err != nil {
-		var invErr *store.ErrInvalidInput
-		switch {
-		case errors.As(err, &invErr):
+		if invErr, ok := errors.AsType[*store.ErrInvalidInput](err); ok {
 			return model.NewAppError("PermanentDeleteBot", "app.bot.permenent_delete.bad_id", map[string]any{"user_id": invErr.Value}, "", http.StatusBadRequest).Wrap(err)
-		default: // last fallback in case it doesn't map to an existing app error.
-			return model.NewAppError("PatchBot", "app.bot.permanent_delete.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return model.NewAppError("PatchBot", "app.bot.permanent_delete.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
+
+	if err := a.Srv().Store().Session().PermanentDeleteSessionsByUser(botUserId); err != nil {
+		return model.NewAppError("PermanentDeleteBot", "app.session.permanent_delete_sessions_by_user.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+
+	if err := a.Srv().Store().UserAccessToken().DeleteAllForUser(botUserId); err != nil {
+		return model.NewAppError("PermanentDeleteBot", "app.user_access_token.delete.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+
+	// Sessions are cached in memory by token, so clearing the cache is required
+	// to stop the deleted bot's access tokens from continuing to authenticate.
+	a.ClearSessionCacheForUser(botUserId)
 
 	if err := a.Srv().Store().User().PermanentDelete(rctx, botUserId); err != nil {
 		return model.NewAppError("PermanentDeleteBot", "app.user.permanent_delete.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
@@ -425,29 +491,24 @@ func (a *App) PermanentDeleteBot(rctx request.CTX, botUserId string) *model.AppE
 func (a *App) UpdateBotOwner(rctx request.CTX, botUserId, newOwnerId string) (*model.Bot, *model.AppError) {
 	bot, err := a.Srv().Store().Bot().Get(botUserId, true)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if nfErr, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(err)
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("UpdateBotOwner", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("UpdateBotOwner", "app.bot.getbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	bot.OwnerId = newOwnerId
 
 	bot, err = a.Srv().Store().Bot().Update(bot)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		var appErr *model.AppError
-		switch {
-		case errors.As(err, &nfErr):
+		if nfErr, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return nil, model.MakeBotNotFoundError("SqlBotStore.Get", nfErr.ID).Wrap(err)
-		case errors.As(err, &appErr): // in case we haven't converted to plain error.
+		} else if appErr, ok := errors.AsType[*model.AppError](err); ok { // in case we haven't converted to plain error.
 			return nil, appErr
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("PatchBot", "app.bot.patchbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("PatchBot", "app.bot.patchbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	return bot, nil
@@ -542,7 +603,7 @@ func (a *App) notifySysadminsBotOwnerDeactivated(rctx request.CTX, userID string
 	}
 
 	// user being disabled
-	user, err := a.GetUser(userID)
+	user, err := a.GetUser(rctx, userID)
 	if err != nil {
 		return err
 	}
@@ -561,7 +622,7 @@ func (a *App) notifySysadminsBotOwnerDeactivated(rctx request.CTX, userID string
 			Type:      model.PostTypeSystemGeneric,
 		}
 
-		_, appErr = a.CreatePost(rctx, post, channel, false, true)
+		_, _, appErr = a.CreatePost(rctx, post, channel, model.CreatePostFlags{SetOnline: true})
 		if appErr != nil {
 			return appErr
 		}
@@ -600,15 +661,39 @@ func (a *App) getDisableBotSysadminMessage(user *model.User, userBots model.BotL
 
 // ConvertUserToBot converts a user to bot.
 func (a *App) ConvertUserToBot(rctx request.CTX, user *model.User) (*model.Bot, *model.AppError) {
+	// Clear OAuth credentials before converting to bot
+	if user.AuthService != "" {
+		emptyString := ""
+		userAuth := &model.UserAuth{
+			AuthService: "",
+			AuthData:    &emptyString,
+		}
+
+		_, err := a.UpdateUserAuth(rctx, user.Id, userAuth)
+		if err != nil {
+			return nil, err
+		}
+
+		// Refresh user data
+		updatedUser, err := a.GetUser(rctx, user.Id)
+		if err != nil {
+			return nil, err
+		}
+		user = updatedUser
+	}
+
 	bot, err := a.Srv().Store().Bot().Save(model.BotFromUser(user))
 	if err != nil {
-		var appErr *model.AppError
-		switch {
-		case errors.As(err, &appErr): // in case we haven't converted to plain error.
+		if appErr, ok := errors.AsType[*model.AppError](err); ok { // in case we haven't converted to plain error.
 			return nil, appErr
-		default: // last fallback in case it doesn't map to an existing app error.
-			return nil, model.NewAppError("CreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		// last fallback in case it doesn't map to an existing app error.
+		return nil, model.NewAppError("CreateBot", "app.bot.createbot.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
+	if err := a.RevokeAllSessions(rctx, user.Id); err != nil {
+		return nil, err
+	}
+	a.InvalidateCacheForUser(user.Id)
+
 	return bot, nil
 }

@@ -4,20 +4,21 @@
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
 
+import {Illustration} from '@mattermost/compass-ui/components/illustration';
+import BotAccountsSvg from '@mattermost/compass-ui/illustrations/bot-accounts';
+import IncomingWebhookSvg from '@mattermost/compass-ui/illustrations/incoming-webhook';
+import OutgoingWebhookSvg from '@mattermost/compass-ui/illustrations/outgoing-webhook';
+import SlashCommandsSvg from '@mattermost/compass-ui/illustrations/slash-commands';
 import type {Team} from '@mattermost/types/teams';
 
 import {Permissions} from 'mattermost-redux/constants';
 
+import OauthApplicationsSvg from 'components/common/svg_images_components/oauth_applications_svg';
+import OutgoingOauthConnectionsSvg from 'components/common/svg_images_components/outgoing_oauth_connections_svg';
 import ExternalLink from 'components/external_link';
 import SystemPermissionGate from 'components/permissions_gates/system_permission_gate';
 import TeamPermissionGate from 'components/permissions_gates/team_permission_gate';
 
-import BotAccountsIcon from 'images/bot_default_icon.png';
-import IncomingWebhookIcon from 'images/incoming_webhook.jpg';
-import OAuthIcon from 'images/oauth_icon.png';
-import OutgoingOAuthConnectionsIcon from 'images/outgoing_oauth_connection.png';
-import OutgoingWebhookIcon from 'images/outgoing_webhook.jpg';
-import SlashCommandIcon from 'images/slash_command_icon.jpg';
 import * as Utils from 'utils/utils';
 
 import IntegrationOption from './integration_option';
@@ -30,7 +31,7 @@ type Props = {
     enableOAuthServiceProvider: boolean;
     enableOutgoingOAuthConnections: boolean;
     team: Team;
-}
+};
 
 export default class Integrations extends React.PureComponent <Props> {
     componentDidMount() {
@@ -39,7 +40,7 @@ export default class Integrations extends React.PureComponent <Props> {
 
     updateTitle = () => {
         const currentSiteName = this.props.siteName || '';
-        document.title = Utils.localizeMessage('admin.sidebar.integrations', 'Integrations') + ' - ' + this.props.team.display_name + ' ' + currentSiteName;
+        document.title = Utils.localizeMessage({id: 'admin.sidebar.integrations', defaultMessage: 'Integrations'}) + ' - ' + this.props.team.display_name + ' ' + currentSiteName;
     };
 
     render() {
@@ -49,12 +50,19 @@ export default class Integrations extends React.PureComponent <Props> {
             options.push(
                 <TeamPermissionGate
                     teamId={this.props.team.id}
-                    permissions={[Permissions.MANAGE_INCOMING_WEBHOOKS]}
+                    permissions={[Permissions.MANAGE_INCOMING_WEBHOOKS, Permissions.MANAGE_OWN_INCOMING_WEBHOOKS]}
                     key='incomingWebhookPermission'
                 >
                     <IntegrationOption
                         key='incomingWebhook'
-                        image={IncomingWebhookIcon}
+                        image={(
+                            <Illustration
+                                height='80px'
+                                width='116px'
+                            >
+                                <IncomingWebhookSvg/>
+                            </Illustration>
+                        )}
                         title={
                             <FormattedMessage
                                 id='integrations.incomingWebhook.title'
@@ -77,12 +85,19 @@ export default class Integrations extends React.PureComponent <Props> {
             options.push(
                 <TeamPermissionGate
                     teamId={this.props.team.id}
-                    permissions={[Permissions.MANAGE_OUTGOING_WEBHOOKS]}
+                    permissions={[Permissions.MANAGE_OUTGOING_WEBHOOKS, Permissions.MANAGE_OWN_OUTGOING_WEBHOOKS]}
                     key='outgoingWebhookPermission'
                 >
                     <IntegrationOption
                         key='outgoingWebhook'
-                        image={OutgoingWebhookIcon}
+                        image={(
+                            <Illustration
+                                height='80px'
+                                width='116px'
+                            >
+                                <OutgoingWebhookSvg/>
+                            </Illustration>
+                        )}
                         title={
                             <FormattedMessage
                                 id='integrations.outgoingWebhook.title'
@@ -105,12 +120,19 @@ export default class Integrations extends React.PureComponent <Props> {
             options.push(
                 <TeamPermissionGate
                     teamId={this.props.team.id}
-                    permissions={[Permissions.MANAGE_SLASH_COMMANDS]}
+                    permissions={[Permissions.MANAGE_SLASH_COMMANDS, Permissions.MANAGE_OWN_SLASH_COMMANDS]}
                     key='commandPermission'
                 >
                     <IntegrationOption
                         key='command'
-                        image={SlashCommandIcon}
+                        image={(
+                            <Illustration
+                                height='80px'
+                                width='136px'
+                            >
+                                <SlashCommandsSvg/>
+                            </Illustration>
+                        )}
                         title={
                             <FormattedMessage
                                 id='integrations.command.title'
@@ -120,7 +142,7 @@ export default class Integrations extends React.PureComponent <Props> {
                         description={
                             <FormattedMessage
                                 id='integrations.command.description'
-                                defaultMessage='Slash commands send events to an external integration'
+                                defaultMessage='Slash commands send events to external integrations'
                             />
                         }
                         link={'/' + this.props.team.name + '/integrations/commands'}
@@ -137,7 +159,14 @@ export default class Integrations extends React.PureComponent <Props> {
                 >
                     <IntegrationOption
                         key='oauth2Apps'
-                        image={OAuthIcon}
+                        image={(
+                            <Illustration
+                                height='80px'
+                                width='106px'
+                            >
+                                <OauthApplicationsSvg/>
+                            </Illustration>
+                        )}
                         title={
                             <FormattedMessage
                                 id='integrations.oauthApps.title'
@@ -147,7 +176,7 @@ export default class Integrations extends React.PureComponent <Props> {
                         description={
                             <FormattedMessage
                                 id='integrations.oauthApps.description'
-                                defaultMessage='Auth 2.0 allows external applications to make authorized requests to the Mattermost API'
+                                defaultMessage='OAuth 2.0 allows external applications to make authorized requests to the Mattermost API'
                             />
                         }
                         link={'/' + this.props.team.name + '/integrations/oauth2-apps'}
@@ -165,7 +194,14 @@ export default class Integrations extends React.PureComponent <Props> {
                 >
                     <IntegrationOption
                         key='outgoingOAuthConnections'
-                        image={OutgoingOAuthConnectionsIcon}
+                        image={(
+                            <Illustration
+                                height='80px'
+                                width='106px'
+                            >
+                                <OutgoingOauthConnectionsSvg/>
+                            </Illustration>
+                        )}
                         title={
                             <FormattedMessage
                                 id='integrations.outgoingOAuthConnections.title'
@@ -190,7 +226,14 @@ export default class Integrations extends React.PureComponent <Props> {
                 key='botsPermissions'
             >
                 <IntegrationOption
-                    image={BotAccountsIcon}
+                    image={(
+                        <Illustration
+                            height='80px'
+                            width='106px'
+                        >
+                            <BotAccountsSvg/>
+                        </Illustration>
+                    )}
                     title={
                         <FormattedMessage
                             id='bots.manage.header'
@@ -237,7 +280,7 @@ export default class Integrations extends React.PureComponent <Props> {
                         }}
                     />
                 </div>
-                <div className='integrations-list d-flex flex-wrap'>
+                <div className='integrations-list'>
                     {options}
                 </div>
             </div>

@@ -5,15 +5,16 @@ import React from 'react';
 import type {WrappedComponentProps} from 'react-intl';
 import {FormattedMessage, defineMessage, defineMessages, injectIntl} from 'react-intl';
 
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
 import type {AdminConfig, ClientLicense, EmailSettings} from '@mattermost/types/config';
 
 import ExternalLink from 'components/external_link';
 
 import {Constants, DocLinks} from 'utils/constants';
 
-import AdminSettings from './admin_settings';
-import type {BaseProps, BaseState} from './admin_settings';
 import DropdownSetting from './dropdown_setting';
+import OLDAdminSettings from './old_admin_settings';
+import type {BaseProps, BaseState} from './old_admin_settings';
 import SettingsGroup from './settings_group';
 import TextSetting from './text_setting';
 
@@ -34,12 +35,16 @@ const PUSH_NOTIFICATIONS_OFF = 'off';
 const PUSH_NOTIFICATIONS_MHPNS = 'mhpns';
 const PUSH_NOTIFICATIONS_MTPNS = 'mtpns';
 const PUSH_NOTIFICATIONS_CUSTOM = 'custom';
+const PUSH_NOTIFICATIONS_LOCATION_GLOBAL = 'global';
 const PUSH_NOTIFICATIONS_LOCATION_US = 'us';
 const PUSH_NOTIFICATIONS_LOCATION_DE = 'de';
+const PUSH_NOTIFICATIONS_LOCATION_JP = 'jp';
 
 const PUSH_NOTIFICATIONS_SERVER_DIC = {
+    [PUSH_NOTIFICATIONS_LOCATION_GLOBAL]: Constants.MHPNS_GLOBAL,
     [PUSH_NOTIFICATIONS_LOCATION_US]: Constants.MHPNS_US,
     [PUSH_NOTIFICATIONS_LOCATION_DE]: Constants.MHPNS_DE,
+    [PUSH_NOTIFICATIONS_LOCATION_JP]: Constants.MHPNS_JP,
 };
 
 const DROPDOWN_ID_SERVER_TYPE = 'pushNotificationServerType';
@@ -57,7 +62,7 @@ export const searchableStrings = [
     messages.pushServerTitle,
 ];
 
-class PushSettings extends AdminSettings<Props, State> {
+export class PushSettings extends OLDAdminSettings<Props, State> {
     canSave = () => {
         return this.state.pushNotificationServerType !== PUSH_NOTIFICATIONS_MHPNS || this.state.agree;
     };
@@ -112,18 +117,30 @@ class PushSettings extends AdminSettings<Props, State> {
     getStateFromConfig(config: Props['config']) {
         let pushNotificationServerType: EmailSettings['PushNotificationServerType'] = PUSH_NOTIFICATIONS_CUSTOM;
         let agree = false;
-        let pushNotificationServerLocation: EmailSettings['PushNotificationServerLocation'] = PUSH_NOTIFICATIONS_LOCATION_US;
+        let pushNotificationServerLocation: EmailSettings['PushNotificationServerLocation'] = PUSH_NOTIFICATIONS_LOCATION_GLOBAL;
         if (!config.EmailSettings.SendPushNotifications) {
             pushNotificationServerType = PUSH_NOTIFICATIONS_OFF;
-        } else if (config.EmailSettings.PushNotificationServer === Constants.MHPNS_US &&
+        } else if (config.EmailSettings.PushNotificationServer === Constants.MHPNS_GLOBAL &&
+            this.props.license.IsLicensed === 'true' && this.props.license.MHPNS === 'true') {
+            pushNotificationServerType = PUSH_NOTIFICATIONS_MHPNS;
+            pushNotificationServerLocation = PUSH_NOTIFICATIONS_LOCATION_GLOBAL;
+            agree = true;
+        } else if ((config.EmailSettings.PushNotificationServer === Constants.MHPNS_US ||
+                   config.EmailSettings.PushNotificationServer === Constants.MHPNS_LEGACY_US) &&
             this.props.license.IsLicensed === 'true' && this.props.license.MHPNS === 'true') {
             pushNotificationServerType = PUSH_NOTIFICATIONS_MHPNS;
             pushNotificationServerLocation = PUSH_NOTIFICATIONS_LOCATION_US;
             agree = true;
-        } else if (config.EmailSettings.PushNotificationServer === Constants.MHPNS_DE &&
+        } else if ((config.EmailSettings.PushNotificationServer === Constants.MHPNS_DE ||
+                   config.EmailSettings.PushNotificationServer === Constants.MHPNS_LEGACY_DE) &&
             this.props.license.IsLicensed === 'true' && this.props.license.MHPNS === 'true') {
             pushNotificationServerType = PUSH_NOTIFICATIONS_MHPNS;
             pushNotificationServerLocation = PUSH_NOTIFICATIONS_LOCATION_DE;
+            agree = true;
+        } else if (config.EmailSettings.PushNotificationServer === Constants.MHPNS_JP &&
+            this.props.license.IsLicensed === 'true' && this.props.license.MHPNS === 'true') {
+            pushNotificationServerType = PUSH_NOTIFICATIONS_MHPNS;
+            pushNotificationServerLocation = PUSH_NOTIFICATIONS_LOCATION_JP;
             agree = true;
         } else if (config.EmailSettings.PushNotificationServer === Constants.MTPNS) {
             pushNotificationServerType = PUSH_NOTIFICATIONS_MTPNS;
@@ -223,7 +240,7 @@ class PushSettings extends AdminSettings<Props, State> {
             pushServerHelpText = (
                 <FormattedMessage
                     id='admin.email.mtpnsHelp'
-                    defaultMessage='Download <linkIOS>Mattermost iOS app</linkIOS> from iTunes. Download <linkAndroid>Mattermost Android app</linkAndroid> from Google Play. Learn more about the <linkHPNS>Mattermost Hosted Push Notification Service</linkHPNS>.'
+                    defaultMessage='Download <linkIOS>Mattermost iOS app</linkIOS> from iTunes. Download <linkAndroid>Mattermost Android app</linkAndroid> from Google Play. Learn more about the <linkTPNS>Mattermost Test Push Notification Service</linkTPNS>.'
                     values={{
                         linkIOS: (msg) => (
                             <ExternalLink
@@ -241,7 +258,7 @@ class PushSettings extends AdminSettings<Props, State> {
                                 {msg}
                             </ExternalLink>
                         ),
-                        linkHPNS: (msg) => (
+                        linkTPNS: (msg) => (
                             <ExternalLink
                                 href={DocLinks.SETUP_PUSH_NOTIFICATIONS}
                                 location='push_settings'
@@ -277,34 +294,34 @@ class PushSettings extends AdminSettings<Props, State> {
                 <div className='form-group'>
                     <div className='col-sm-4'/>
                     <div className='col-sm-8'>
-                        <input
-                            type='checkbox'
+                        <Checkbox
                             checked={this.state.agree}
-                            onChange={this.handleAgreeChange}
                             disabled={this.props.isDisabled}
-                        />
-                        <FormattedMessage
-                            id='admin.email.agreeHPNS'
-                            defaultMessage=' I understand and accept the Mattermost Hosted Push Notification Service <linkTerms>Terms of Service</linkTerms> and <linkPrivacy>Privacy Policy</linkPrivacy>.'
-                            values={{
-                                linkTerms: (msg) => (
-                                    <ExternalLink
-                                        href='https://mattermost.com/hpns-terms/'
-                                        location='push_settings'
-                                    >
-                                        {msg}
-                                    </ExternalLink>
-                                ),
-                                linkPrivacy: (msg) => (
-                                    <ExternalLink
-                                        href='https://mattermost.com/data-processing-addendum/'
-                                        location='push_settings'
-                                    >
-                                        {msg}
-                                    </ExternalLink>
-                                ),
-                            }}
-                        />
+                            onChange={this.handleAgreeChange}
+                        >
+                            <FormattedMessage
+                                id='admin.email.agreeHPNS'
+                                defaultMessage=' I understand and accept the Mattermost Hosted Push Notification Service <linkTerms>Terms of Service</linkTerms> and <linkPrivacy>Privacy Policy</linkPrivacy>.'
+                                values={{
+                                    linkTerms: (msg) => (
+                                        <ExternalLink
+                                            href='https://mattermost.com/hpns-terms/'
+                                            location='push_settings'
+                                        >
+                                            {msg}
+                                        </ExternalLink>
+                                    ),
+                                    linkPrivacy: (msg) => (
+                                        <ExternalLink
+                                            href='https://mattermost.com/data-processing-addendum/'
+                                            location='push_settings'
+                                        >
+                                            {msg}
+                                        </ExternalLink>
+                                    ),
+                                }}
+                            />
+                        </Checkbox>
                     </div>
                 </div>
             );
@@ -313,8 +330,10 @@ class PushSettings extends AdminSettings<Props, State> {
         let locationDropdown;
         if (this.state.pushNotificationServerType === PUSH_NOTIFICATIONS_MHPNS) {
             const pushNotificationServerLocations = [
+                {value: PUSH_NOTIFICATIONS_LOCATION_GLOBAL, text: this.props.intl.formatMessage({id: 'admin.email.pushServerLocationGlobal', defaultMessage: 'Global'})},
                 {value: PUSH_NOTIFICATIONS_LOCATION_US, text: this.props.intl.formatMessage({id: 'admin.email.pushServerLocationUS', defaultMessage: 'US'})},
                 {value: PUSH_NOTIFICATIONS_LOCATION_DE, text: this.props.intl.formatMessage({id: 'admin.email.pushServerLocationDE', defaultMessage: 'Germany'})},
+                {value: PUSH_NOTIFICATIONS_LOCATION_JP, text: this.props.intl.formatMessage({id: 'admin.email.pushServerLocationJP', defaultMessage: 'Japan'})},
             ];
 
             locationDropdown = (
@@ -325,6 +344,12 @@ class PushSettings extends AdminSettings<Props, State> {
                         <FormattedMessage
                             id='admin.email.pushServerLocationTitle'
                             defaultMessage='Push Notification Server location:'
+                        />
+                    }
+                    helpText={
+                        <FormattedMessage
+                            id='admin.email.pushServerLocationHelp'
+                            defaultMessage='Location of the push notification server. Global uses geobalancing to route requests to the nearest server for optimal performance.'
                         />
                     }
                     value={this.state.pushNotificationServerLocation}
@@ -365,14 +390,14 @@ class PushSettings extends AdminSettings<Props, State> {
                     label={
                         <FormattedMessage
                             id='admin.team.maxNotificationsPerChannelTitle'
-                            defaultMessage='Max Notifications Per Channel:'
+                            defaultMessage='Large Channel Notification Threshold:'
                         />
                     }
                     placeholder={defineMessage({id: 'admin.team.maxNotificationsPerChannelExample', defaultMessage: 'E.g.: "1000"'})}
                     helpText={
                         <FormattedMessage
                             id='admin.team.maxNotificationsPerChannelDescription'
-                            defaultMessage='Maximum total number of users in a channel before users typing messages, @all, @here, and @channel no longer send notifications because of performance.'
+                            defaultMessage='The maximum number of users that can be mentioned using @here, @all, or @channel. Above this limit, mentions and typing indicators are disabled, and users will see a system message if they try to use them.'
                         />
                     }
                     value={this.state.maxNotificationsPerChannel}

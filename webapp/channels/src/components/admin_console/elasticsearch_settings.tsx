@@ -8,22 +8,25 @@ import {FormattedMessage, defineMessage, defineMessages} from 'react-intl';
 import type {AdminConfig} from '@mattermost/types/config';
 import type {Job, JobType} from '@mattermost/types/jobs';
 
-import {elasticsearchPurgeIndexes, elasticsearchTest, rebuildChannelsIndex} from 'actions/admin_actions.jsx';
+import {elasticsearchPurgeIndexes, elasticsearchTest, rebuildChannelsIndex} from 'actions/admin_actions';
 
 import ExternalLink from 'components/external_link';
+import WarningIcon from 'components/widgets/icons/fa_warning_icon';
 
 import {DocLinks, JobStatuses, JobTypes} from 'utils/constants';
 
-import AdminSettings from './admin_settings';
-import type {BaseProps, BaseState} from './admin_settings';
 import BooleanSetting from './boolean_setting';
 import JobsTable from './jobs';
+import OLDAdminSettings from './old_admin_settings';
+import type {BaseProps, BaseState} from './old_admin_settings';
 import RequestButton from './request_button/request_button';
+import SettingSet from './setting_set';
 import SettingsGroup from './settings_group';
 import TextSetting from './text_setting';
 
 interface State extends BaseState {
     connectionUrl: string;
+    backend: string;
     skipTLSVerification: boolean;
     ca: string;
     clientCert: string;
@@ -34,6 +37,8 @@ interface State extends BaseState {
     enableIndexing: boolean;
     enableSearching: boolean;
     enableAutocomplete: boolean;
+    enableSearchPublicChannelsWithoutMembership: boolean;
+    enableFileIndexing: boolean;
     configTested: boolean;
     canSave: boolean;
     canPurgeAndIndex: boolean;
@@ -58,23 +63,24 @@ export const messages = defineMessages({
     passwordDescription: {id: 'admin.elasticsearch.passwordDescription', defaultMessage: '(Optional) The password to authenticate to the Elasticsearch server.'},
     sniffTitle: {id: 'admin.elasticsearch.sniffTitle', defaultMessage: 'Enable Cluster Sniffing:'},
     sniffDescription: {id: 'admin.elasticsearch.sniffDescription', defaultMessage: 'When true, sniffing finds and connects to all data nodes in your cluster automatically.'},
+    sniffWarning: {id: 'admin.elasticsearch.sniffWarning', defaultMessage: 'Do not enable cluster sniffing with cloud-hosted providers such as Elastic Cloud or Amazon OpenSearch Service.'},
     testHelpText: {id: 'admin.elasticsearch.testHelpText', defaultMessage: 'Tests if the Mattermost server can connect to the Elasticsearch server specified. Testing the connection only saves the configuration if the test is successful. A successful test will also re-initialize the client if you have started Elasticsearch after starting Mattermost. But this will not restart the workers. To do that, please toggle "Enable Elasticsearch Indexing".'},
     elasticsearch_test_button: {id: 'admin.elasticsearch.elasticsearch_test_button', defaultMessage: 'Test Connection'},
     bulkIndexingTitle: {id: 'admin.elasticsearch.bulkIndexingTitle', defaultMessage: 'Bulk Indexing:'},
     help: {id: 'admin.elasticsearch.createJob.help', defaultMessage: 'All users, channels and posts in the database will be indexed from oldest to newest. Elasticsearch is available during indexing but search results may be incomplete until the indexing job is complete.'},
     rebuildChannelsIndexTitle: {id: 'admin.elasticsearch.rebuildChannelsIndexTitle', defaultMessage: 'Rebuild Channels Index'},
-    rebuildChannelIndexHelpText: {id: 'admin.elasticsearch.rebuildChannelsIndex.helpText', defaultMessage: 'This purges the channels index and re-indexes all channels in the database, from oldest to newest. Channel autocomplete is available during indexing but search results may be incomplete until the indexing job is complete.\n<b>Note- Please ensure no other indexing job is in progress in the table above.</b>'},
+    rebuildChannelIndexHelpText: {id: 'admin.elasticsearch.rebuildChannelsIndex.helpText', defaultMessage: 'This purges the channels index and re-indexes all channels in the database, from oldest to newest. Channel autocomplete is available during indexing but search results may be incomplete until the indexing job is complete.\n\n<b>Note: Please ensure no other indexing job is in progress in the table above.</b>'}, // eslint-disable-line formatjs/no-multiple-whitespaces
     rebuildChannelsIndexButtonText: {id: 'admin.elasticsearch.rebuildChannelsIndex.title', defaultMessage: 'Rebuild Channels Index'},
     purgeIndexesHelpText: {id: 'admin.elasticsearch.purgeIndexesHelpText', defaultMessage: 'Purging will entirely remove the indexes on the Elasticsearch server. Search results may be incomplete until a bulk index of the existing database is rebuilt.'},
-    purgeIndexesButton: {id: 'admin.elasticsearch.purgeIndexesButton', defaultMessage: 'Purge Index'},
+    purgeIndexesButton: {id: 'admin.elasticsearch.purgeIndexesButton', defaultMessage: 'Purge Indexes'},
     label: {id: 'admin.elasticsearch.purgeIndexesButton.label', defaultMessage: 'Purge Indexes:'},
     enableSearchingTitle: {id: 'admin.elasticsearch.enableSearchingTitle', defaultMessage: 'Enable Elasticsearch for search queries:'},
     enableSearchingDescription: {id: 'admin.elasticsearch.enableSearchingDescription', defaultMessage: 'Requires a successful connection to the Elasticsearch server. When true, Elasticsearch will be used for all search queries using the latest index. Search results may be incomplete until a bulk index of the existing post database is finished. When false, database search is used.'},
 });
 
-export const searchableStrings: Array<string|MessageDescriptor|[MessageDescriptor, {[key: string]: any}]> = [
-    [messages.connectionUrlDescription, {documentationLink: ''}],
-    [messages.enableIndexingDescription, {documentationLink: ''}],
+export const searchableStrings: Array<string | MessageDescriptor | [MessageDescriptor, {[key: string]: any}]> = [
+    [messages.connectionUrlDescription, {link: (msg: string) => msg}],
+    [messages.enableIndexingDescription, {link: (msg: string) => msg}],
     messages.title,
     messages.enableIndexingTitle,
     messages.connectionUrlTitle,
@@ -86,6 +92,7 @@ export const searchableStrings: Array<string|MessageDescriptor|[MessageDescripto
     messages.passwordDescription,
     messages.sniffTitle,
     messages.sniffDescription,
+    messages.sniffWarning,
     messages.testHelpText,
     messages.elasticsearch_test_button,
     messages.bulkIndexingTitle,
@@ -97,9 +104,10 @@ export const searchableStrings: Array<string|MessageDescriptor|[MessageDescripto
     messages.enableSearchingDescription,
 ];
 
-export default class ElasticsearchSettings extends AdminSettings<Props, State> {
+export default class ElasticsearchSettings extends OLDAdminSettings<Props, State> {
     getConfigFromState = (config: AdminConfig) => {
         config.ElasticsearchSettings.ConnectionURL = this.state.connectionUrl;
+        config.ElasticsearchSettings.Backend = this.state.backend;
         config.ElasticsearchSettings.SkipTLSVerification = this.state.skipTLSVerification;
         config.ElasticsearchSettings.CA = this.state.ca;
         config.ElasticsearchSettings.ClientCert = this.state.clientCert;
@@ -111,6 +119,8 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
         config.ElasticsearchSettings.EnableSearching = this.state.enableSearching;
         config.ElasticsearchSettings.EnableAutocomplete = this.state.enableAutocomplete;
         config.ElasticsearchSettings.IgnoredPurgeIndexes = this.state.ignoredPurgeIndexes;
+        config.ElasticsearchSettings.EnableSearchPublicChannelsWithoutMembership = this.state.enableSearchPublicChannelsWithoutMembership;
+        config.ElasticsearchSettings.EnableFileIndexing = this.state.enableFileIndexing;
 
         return config;
     };
@@ -118,6 +128,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
     getStateFromConfig(config: AdminConfig) {
         return {
             connectionUrl: config.ElasticsearchSettings.ConnectionURL,
+            backend: config.ElasticsearchSettings.Backend,
             skipTLSVerification: config.ElasticsearchSettings.SkipTLSVerification,
             ca: config.ElasticsearchSettings.CA,
             clientCert: config.ElasticsearchSettings.ClientCert,
@@ -128,6 +139,8 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
             enableIndexing: config.ElasticsearchSettings.EnableIndexing,
             enableSearching: config.ElasticsearchSettings.EnableSearching,
             enableAutocomplete: config.ElasticsearchSettings.EnableAutocomplete,
+            enableSearchPublicChannelsWithoutMembership: config.ElasticsearchSettings.EnableSearchPublicChannelsWithoutMembership,
+            enableFileIndexing: config.ElasticsearchSettings.EnableFileIndexing,
             configTested: true,
             canSave: true,
             canPurgeAndIndex: config.ElasticsearchSettings.EnableIndexing,
@@ -141,6 +154,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                 this.setState({
                     enableSearching: false,
                     enableAutocomplete: false,
+                    enableSearchPublicChannelsWithoutMembership: false,
                 });
             } else {
                 this.setState({
@@ -150,14 +164,14 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
             }
         }
 
-        if (id === 'connectionUrl' || id === 'skipTLSVerification' || id === 'username' || id === 'password' || id === 'sniff' || id === 'ca' || id === 'clientCert' || id === 'clientKey') {
+        if (id === 'connectionUrl' || id === 'backend' || id === 'skipTLSVerification' || id === 'username' || id === 'password' || id === 'sniff' || id === 'ca' || id === 'clientCert' || id === 'clientKey') {
             this.setState({
                 configTested: false,
                 canSave: false,
             });
         }
 
-        if (id !== 'enableSearching' && id !== 'enableAutocomplete') {
+        if (id !== 'enableSearching' && id !== 'enableAutocomplete' && id !== 'enableSearchPublicChannelsWithoutMembership') {
             this.setState({
                 canPurgeAndIndex: false,
             });
@@ -176,7 +190,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
         return this.state.canSave;
     };
 
-    doTestConfig = (success: () => void, error: (error: {message: string; detailed_message?: string}) => void): void => {
+    doTestConfig = (success: () => void, error: (error: {message: string; detailed_error?: string}) => void): void => {
         const config = JSON.parse(JSON.stringify(this.props.config));
         this.getConfigFromState(config);
 
@@ -189,7 +203,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                 });
                 success();
             },
-            (err: {message: string; detailed_message?: string}) => {
+            (err: {message: string; detailed_error?: string}) => {
                 this.setState({
                     configTested: false,
                     canSave: false,
@@ -260,6 +274,26 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                     onChange={this.handleSettingChanged}
                     setByEnv={this.isSetByEnv('ElasticsearchSettings.EnableIndexing')}
                     disabled={this.props.isDisabled}
+                />
+                <TextSetting
+                    id='backend'
+                    label={
+                        <FormattedMessage
+                            id='admin.elasticsearch.backendTitle'
+                            defaultMessage='Backend type:'
+                        />
+                    }
+                    placeholder={defineMessage({id: 'admin.elasticsearch.backendExample', defaultMessage: 'E.g.: "elasticsearch"'})}
+                    helpText={
+                        <FormattedMessage
+                            id='admin.elasticsearch.backendDescription'
+                            defaultMessage='The type of the search backend. Changing this setting requires a server restart before taking effect.'
+                        />
+                    }
+                    value={this.state.backend}
+                    disabled={this.props.isDisabled || !this.state.enableIndexing}
+                    onChange={this.handleSettingChanged}
+                    setByEnv={this.isSetByEnv('ElasticsearchSettings.Backend')}
                 />
                 <TextSetting
                     id='connectionUrl'
@@ -379,7 +413,17 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                 <BooleanSetting
                     id='sniff'
                     label={<FormattedMessage {...messages.sniffTitle}/>}
-                    helpText={<FormattedMessage {...messages.sniffDescription}/>}
+                    helpText={
+                        <>
+                            <FormattedMessage {...messages.sniffDescription}/>
+                            {this.state.sniff && (
+                                <div className='alert alert-warning'>
+                                    <WarningIcon/>
+                                    <FormattedMessage {...messages.sniffWarning}/>
+                                </div>
+                            )}
+                        </>
+                    }
                     value={this.state.sniff}
                     disabled={this.props.isDisabled || !this.state.enableIndexing}
                     onChange={this.handleSettingChanged}
@@ -388,6 +432,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                 <RequestButton
                     id='testConfig'
                     requestAction={this.doTestConfig}
+                    includeDetailedError={true}
                     helpText={<FormattedMessage {...messages.testHelpText}/>}
                     buttonText={<FormattedMessage {...messages.elasticsearch_test_button}/>}
                     successMessage={defineMessage({
@@ -396,27 +441,24 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                     })}
                     disabled={!this.state.enableIndexing}
                 />
-                <div className='form-group'>
-                    <label className='control-label col-sm-4'>
-                        <FormattedMessage {...messages.bulkIndexingTitle}/>
-                    </label>
-                    <div className='col-sm-8'>
-                        <div className='job-table-setting'>
-                            <JobsTable
-                                jobType={JobTypes.ELASTICSEARCH_POST_INDEXING as JobType}
-                                disabled={!this.state.canPurgeAndIndex || this.props.isDisabled!}
-                                createJobButtonText={
-                                    <FormattedMessage
-                                        id='admin.elasticsearch.createJob.title'
-                                        defaultMessage='Index Now'
-                                    />
-                                }
-                                createJobHelpText={<FormattedMessage {...messages.help}/>}
-                                getExtraInfoText={this.getExtraInfo}
-                            />
-                        </div>
+                <SettingSet
+                    label={<FormattedMessage {...messages.bulkIndexingTitle}/>}
+                >
+                    <div className='job-table-setting'>
+                        <JobsTable
+                            jobType={JobTypes.ELASTICSEARCH_POST_INDEXING as JobType}
+                            disabled={!this.state.canPurgeAndIndex || this.props.isDisabled!}
+                            createJobButtonText={
+                                <FormattedMessage
+                                    id='admin.elasticsearch.createJob.title'
+                                    defaultMessage='Index Now'
+                                />
+                            }
+                            createJobHelpText={<FormattedMessage {...messages.help}/>}
+                            getExtraInfoText={this.getExtraInfo}
+                        />
                     </div>
-                </div>
+                </SettingSet>
                 <RequestButton
                     id='rebuildChannelsIndexButton'
                     requestAction={rebuildChannelsIndex}
@@ -435,6 +477,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                     })}
                     errorMessage={defineMessage({
                         id: 'admin.elasticsearch.rebuildIndexSuccessfully.error',
+                        // eslint-disable-next-line formatjs/enforce-placeholders -- error provided by RequestButton
                         defaultMessage: 'Failed to trigger channels index rebuild job: {error}',
                     })}
                     disabled={!this.state.canPurgeAndIndex || this.props.isDisabled!}
@@ -451,6 +494,7 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                     })}
                     errorMessage={defineMessage({
                         id: 'admin.elasticsearch.purgeIndexesButton.error',
+                        // eslint-disable-next-line formatjs/enforce-placeholders -- error provided by RequestButton
                         defaultMessage: 'Failed to purge indexes: {error}',
                     })}
                     disabled={this.props.isDisabled || !this.state.canPurgeAndIndex}
@@ -503,6 +547,44 @@ export default class ElasticsearchSettings extends AdminSettings<Props, State> {
                     disabled={this.props.isDisabled || !this.state.enableIndexing || !this.state.configTested}
                     onChange={this.handleSettingChanged}
                     setByEnv={this.isSetByEnv('ElasticsearchSettings.EnableAutocomplete')}
+                />
+                <BooleanSetting
+                    id='enableSearchPublicChannelsWithoutMembership'
+                    label={
+                        <FormattedMessage
+                            id='admin.elasticsearch.enableSearchPublicChannelsWithoutMembershipTitle'
+                            defaultMessage='Allow searching public channels without membership:'
+                        />
+                    }
+                    helpText={
+                        <FormattedMessage
+                            id='admin.elasticsearch.enableSearchPublicChannelsWithoutMembershipDescription'
+                            defaultMessage='When enabled, users can find messages in public channels they have not joined. When enabled for the first time, existing posts will be updated in the background. This process is throttled to avoid impacting search performance. This setting has no effect when Compliance Mode is enabled.'
+                        />
+                    }
+                    value={this.state.enableSearchPublicChannelsWithoutMembership}
+                    disabled={this.props.isDisabled || !this.state.enableIndexing || !this.state.configTested}
+                    onChange={this.handleSettingChanged}
+                    setByEnv={this.isSetByEnv('ElasticsearchSettings.EnableSearchPublicChannelsWithoutMembership')}
+                />
+                <BooleanSetting
+                    id='enableFileIndexing'
+                    label={
+                        <FormattedMessage
+                            id='admin.elasticsearch.enableFileIndexingTitle'
+                            defaultMessage='Enable file indexing:'
+                        />
+                    }
+                    helpText={
+                        <FormattedMessage
+                            id='admin.elasticsearch.enableFileIndexingDescription'
+                            defaultMessage='When false, new or updated file attachments are not indexed. File search continues to return previously indexed files, but files uploaded while this setting is false are not searchable until a bulk index is run after re-enabling it.'
+                        />
+                    }
+                    value={this.state.enableFileIndexing}
+                    disabled={this.props.isDisabled || !this.state.enableIndexing || !this.state.configTested}
+                    onChange={this.handleSettingChanged}
+                    setByEnv={this.isSetByEnv('ElasticsearchSettings.EnableFileIndexing')}
                 />
             </SettingsGroup>
         );

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/mattermost/mattermost/server/v8/channels/utils/testutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,4 +115,21 @@ func TestGetUnproxiedImageURL(t *testing.T) {
 			assert.Equal(t, test.Expected, getUnproxiedImageURL(test.Input, siteURL))
 		})
 	}
+}
+
+func TestOnConfigChange(t *testing.T) {
+	t.Run("for local proxy, should update site URL when that changes", func(t *testing.T) {
+		proxy := makeTestLocalProxy()
+
+		require.Equal(t, "https://mattermost.example.com", proxy.siteURL.String())
+		require.Equal(t, "https://mattermost.example.com", proxy.backend.(*LocalBackend).baseURL.String())
+
+		newConfig := proxy.ConfigService.Config().Clone()
+		newConfig.ServiceSettings.SiteURL = new("https://new.example.com")
+
+		proxy.ConfigService.(*testutils.StaticConfigService).UpdateConfig(newConfig)
+
+		require.Equal(t, "https://new.example.com", proxy.siteURL.String())
+		require.Equal(t, "https://new.example.com", proxy.backend.(*LocalBackend).baseURL.String())
+	})
 }

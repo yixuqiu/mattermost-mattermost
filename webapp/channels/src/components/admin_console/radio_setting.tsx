@@ -1,20 +1,26 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import classNames from 'classnames';
 import React from 'react';
 
+import {Radio} from '@mattermost/compass-ui/components/radio';
+
 import Setting from './setting';
+
+import './radio_setting.scss';
 
 interface Props {
     id: string;
     label: React.ReactNode;
-    values: Array<{ text: string; value: string }>;
+    values: Array<{text: string; value: string}>;
     value: string;
     setByEnv: boolean;
     disabled?: boolean;
     helpText?: React.ReactNode;
     onChange(id: string, value: any): void;
 }
+
 const RadioSetting = ({
     id,
     label,
@@ -29,24 +35,29 @@ const RadioSetting = ({
         onChange(id, e.target.value);
     };
 
-    const options = values.map(({value: optionValue, text}) => (
-        <div
-            className='radio'
-            key={optionValue}
-        >
-            <label>
-                <input
-                    type='radio'
-                    value={optionValue}
-                    name={id}
-                    checked={optionValue === value}
-                    onChange={handleChange}
-                    disabled={disabled || setByEnv}
-                />
-                {text}
-            </label>
-        </div>
-    ));
+    const isDisabled = disabled || setByEnv;
+
+    const options = values.map(({value: optionValue, text}) => {
+        const radioClassName = classNames('RadioSetting__radio', {
+            'RadioSetting__radio--disabled': isDisabled,
+        });
+
+        return (
+            <Radio
+                key={optionValue}
+                className={radioClassName}
+                name={id}
+                value={optionValue}
+                checked={optionValue === value}
+                onChange={handleChange}
+                disabled={isDisabled}
+            >
+                <span className='RadioSetting__text'>
+                    {text}
+                </span>
+            </Radio>
+        );
+    });
 
     return (
         <Setting

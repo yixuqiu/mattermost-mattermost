@@ -7,7 +7,6 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @enterprise @not_cloud @system_console
 
 describe('MM-T2574 Session Lengths', () => {
@@ -53,8 +52,8 @@ describe('MM-T2574 Session Lengths', () => {
     it('should match help text', () => {
         const helpText = {
             extendSessionLengthWithActivity: {
-                false: 'When true, sessions will be automatically extended when the user is active in their Mattermost client. Users sessions will only expire if they are not active in their Mattermost client for the entire duration of the session lengths defined in the fields below. When false, sessions will not extend with activity in Mattermost. User sessions will immediately expire at the end of the session length or idle timeouts defined below. ',
-                true: 'When true, sessions will be automatically extended when the user is active in their Mattermost client. Users sessions will only expire if they are not active in their Mattermost client for the entire duration of the session lengths defined in the fields below. When false, sessions will not extend with activity in Mattermost. User sessions will immediately expire at the end of the session length or idle timeouts defined below. ',
+                false: 'When true, sessions will be automatically extended when the user is active in their Mattermost client. User sessions will only expire if they are not active in their Mattermost client for the entire duration of the session lengths defined in the fields below. When false, sessions will not extend with activity in Mattermost. User sessions will immediately expire at the end of the session length or idle timeouts defined below. ',
+                true: 'When true, sessions will be automatically extended when the user is active in their Mattermost client. User sessions will only expire if they are not active in their Mattermost client for the entire duration of the session lengths defined in the fields below. When false, sessions will not extend with activity in Mattermost. User sessions will immediately expire at the end of the session length or idle timeouts defined below. ',
             },
             sessionLengthWebInHours: {
                 false: 'The number of hours from the last time a user entered their credentials to the expiry of the user\'s session. After changing this setting, the new session length will take effect after the next time the user enters their credentials.',
@@ -78,13 +77,13 @@ describe('MM-T2574 Session Lengths', () => {
             },
         };
 
-        cy.get('#extendSessionLengthWithActivityfalse').check();
+        cy.get('#extendSessionLengthWithActivityfalse').should('exist').check();
         Object.entries(helpText).forEach(([key, value]) => {
             cy.findByTestId(key).should('exist');
             cy.findByTestId(`${key}help-text`).should('have.text', value.false);
         });
 
-        cy.get('#extendSessionLengthWithActivitytrue').check();
+        cy.get('#extendSessionLengthWithActivitytrue').should('exist').check();
         Object.entries(helpText).forEach(([key, value]) => {
             if (value.true) {
                 cy.findByTestId(key).should('exist');

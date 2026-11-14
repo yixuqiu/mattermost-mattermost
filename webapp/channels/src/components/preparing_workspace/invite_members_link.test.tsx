@@ -3,38 +3,13 @@
 
 import React from 'react';
 
-import {trackEvent} from 'actions/telemetry_actions';
-
 import {withIntl} from 'tests/helpers/intl-test-helper';
-import {fireEvent, render, screen} from 'tests/react_testing_utils';
+import {render, screen, userEvent} from 'tests/react_testing_utils';
 
 import InviteMembersLink from './invite_members_link';
 
-jest.mock('actions/telemetry_actions', () => ({
-    trackEvent: jest.fn(),
-}));
-
 describe('components/preparing-workspace/invite_members_link', () => {
     const inviteURL = 'https://invite-url.mattermost.com';
-
-    it('should match snapshot', () => {
-        const component = withIntl(<InviteMembersLink inviteURL={inviteURL}/>);
-
-        const {container} = render(component);
-        expect(container).toMatchSnapshot();
-    });
-
-    it('should match snapshot when displayed including the input field', () => {
-        const component = withIntl(
-            <InviteMembersLink
-                inviteURL={inviteURL}
-                inputAndButtonStyle={true}
-            />,
-        );
-
-        const {container} = render(component);
-        expect(container).toMatchSnapshot();
-    });
 
     it('renders only with the button if the inputAndButton option is false', () => {
         const component = withIntl(
@@ -69,18 +44,7 @@ describe('components/preparing-workspace/invite_members_link', () => {
         expect(button).toBeInTheDocument();
     });
 
-    it('calls the trackEvent function when the copy button is clicked', () => {
-        const component = withIntl(<InviteMembersLink inviteURL={inviteURL}/>);
-        render(component);
-        const button = screen.getByRole('button', {name: /copy link/i});
-        fireEvent.click(button);
-        expect(trackEvent).toHaveBeenCalledWith(
-            'first_admin_setup',
-            'admin_setup_click_copy_invite_link',
-        );
-    });
-
-    it('changes the button text to "Link Copied" when the URL is copied', () => {
+    it('changes the button text to "Link Copied" when the URL is copied', async () => {
         const component = withIntl(<InviteMembersLink inviteURL={inviteURL}/>);
         render(component);
         const button = screen.getByRole('button', {name: /copy link/i});
@@ -88,7 +52,7 @@ describe('components/preparing-workspace/invite_members_link', () => {
         const linkCopiedText = 'Link Copied';
         expect(button).toHaveTextContent(originalText);
 
-        fireEvent.click(button);
+        await userEvent.click(button);
 
         expect(button).toHaveTextContent(linkCopiedText);
     });

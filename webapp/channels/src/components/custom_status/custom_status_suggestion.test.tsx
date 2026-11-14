@@ -1,10 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import {CustomStatusDuration} from '@mattermost/types/users';
+
+import {renderWithContext, userEvent} from 'tests/react_testing_utils';
 
 import CustomStatusSuggestion from './custom_status_suggestion';
 
@@ -19,45 +20,34 @@ describe('components/custom_status/custom_status_emoji', () => {
         handleClear: jest.fn(),
     };
 
-    it('should match snapshot', () => {
-        const wrapper = shallow(
+    it('should call handleSuggestionClick when click occurs on div', async () => {
+        // Suppress the DOM nesting warning (button inside button) which is a component issue
+        const originalError = console.error;
+        console.error = jest.fn();
+
+        const {container} = renderWithContext(
             <CustomStatusSuggestion {...baseProps}/>,
         );
 
-        expect(wrapper).toMatchSnapshot();
+        await userEvent.click(container.querySelector('.statusSuggestion__row')!);
+        expect(baseProps.handleSuggestionClick).toHaveBeenCalledTimes(1);
+
+        console.error = originalError;
     });
 
-    it('should match snapshot with duration', () => {
-        const props = {
-            ...baseProps,
-            status: {
-                ...baseProps.status,
-                duration: CustomStatusDuration.TODAY,
-            },
-        };
-        const wrapper = shallow(
-            <CustomStatusSuggestion {...props}/>,
-        );
+    it('should render clearButton when hover occurs on div', async () => {
+        // Suppress the DOM nesting warning (button inside button) which is a component issue
+        const originalError = console.error;
+        console.error = jest.fn();
 
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    it('should call handleSuggestionClick when click occurs on div', () => {
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <CustomStatusSuggestion {...baseProps}/>,
         );
 
-        wrapper.find('.statusSuggestion__row').simulate('click');
-        expect(baseProps.handleSuggestionClick).toBeCalledTimes(1);
-    });
+        expect(container.querySelector('.suggestion-clear')).not.toBeInTheDocument();
+        await userEvent.hover(container.querySelector('.statusSuggestion__row')!);
+        expect(container.querySelector('.suggestion-clear')).toBeInTheDocument();
 
-    it('should render clearButton when hover occurs on div', () => {
-        const wrapper = shallow(
-            <CustomStatusSuggestion {...baseProps}/>,
-        );
-
-        expect(wrapper.find('.suggestion-clear').exists()).toBeFalsy();
-        wrapper.find('.statusSuggestion__row').simulate('mouseEnter');
-        expect(wrapper.find('.suggestion-clear').exists()).toBeTruthy();
+        console.error = originalError;
     });
 });

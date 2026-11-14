@@ -1,21 +1,30 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type {IncomingWebhook, OutgoingWebhook, Command, OAuthApp, OutgoingOAuthConnection} from '@mattermost/types/integrations';
+import type {IncomingWebhook, IncomingWebhooksWithCount, OutgoingWebhook, Command, OAuthApp, OutgoingOAuthConnection} from '@mattermost/types/integrations';
 
+import {IntegrationTypes} from 'mattermost-redux/action_types';
+import {logError} from 'mattermost-redux/actions/errors';
+import {forceLogoutIfNecessary} from 'mattermost-redux/actions/helpers';
 import * as IntegrationActions from 'mattermost-redux/actions/integrations';
 import {getProfilesByIds} from 'mattermost-redux/actions/users';
+import {Client4} from 'mattermost-redux/client';
 import {appsEnabled} from 'mattermost-redux/selectors/entities/apps';
+import {getCurrentChannelId} from 'mattermost-redux/selectors/entities/channels';
+import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {getUser} from 'mattermost-redux/selectors/entities/users';
-import type {ActionFuncAsync} from 'mattermost-redux/types/actions';
+
+import type {ActionFuncAsync} from 'types/store';
 
 const DEFAULT_PAGE_SIZE = 100;
 
-export function loadIncomingHooksAndProfilesForTeam(teamId: string, page = 0, perPage = DEFAULT_PAGE_SIZE): ActionFuncAsync<IncomingWebhook[]> {
+export function loadIncomingHooksAndProfilesForTeam(teamId: string, page = 0, perPage = DEFAULT_PAGE_SIZE, includeTotalCount = false): ActionFuncAsync<IncomingWebhook[] | IncomingWebhooksWithCount> {
     return async (dispatch) => {
-        const {data} = await dispatch(IntegrationActions.getIncomingHooks(teamId, page, perPage));
+        const {data} = await dispatch(IntegrationActions.getIncomingHooks(teamId, page, perPage, includeTotalCount));
         if (data) {
-            dispatch(loadProfilesForIncomingHooks(data));
+            const isWebhooksWithCount = IntegrationActions.isIncomingWebhooksWithCount(data);
+            const hooks = isWebhooksWithCount ? (data as IncomingWebhooksWithCount).incoming_webhooks : data;
+            dispatch(loadProfilesForIncomingHooks(hooks as IncomingWebhook[]));
         }
         return {data};
     };
@@ -166,5 +175,32 @@ export function loadProfilesForOutgoingOAuthConnections(connections: OutgoingOAu
 
         dispatch(getProfilesByIds(list));
         return {data: null};
+    };
+}
+
+export function executeDialogAction(url: string, context?: Record<string, string>, dialogChannelId?: string): ActionFuncAsync {
+    return async (dispatch, getState) => {
+        const state = getState();
+
+        // Prefer the dialog's own channel over the current channel, so a child dialog
+        // action targets the dialog's context even if the user has navigated away. The
+        // server mints the child dialog's trigger against whatever is sent here, which
+        // is how the child inherits the parent's channel.
+        const channelId = dialogChannelId || getCurrentChannelId(state);
+        const teamId = getCurrentTeamId(state);
+
+        let data;
+        try {
+            data = await Client4.executeDialogAction(url, context, channelId, teamId);
+        } catch (error) {
+            forceLogoutIfNecessary(error, dispatch, getState);
+            dispatch(logError(error));
+            return {error};
+        }
+
+        if (data?.trigger_id) {
+            dispatch({type: IntegrationTypes.RECEIVED_DIALOG_TRIGGER_ID, data: data.trigger_id});
+        }
+        return {data};
     };
 }

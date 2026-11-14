@@ -1,18 +1,21 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
+import {renderWithContext} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
 
 import SearchChannelSuggestion from './search_channel_suggestion';
 
-describe('components/suggestion/search_channel_suggestion', () => {
-    const mockChannel = TestHelper.getChannelMock();
+function makeState(overrides: any[] = []) {
+    return {plugins: {components: {ChannelIconOverride: overrides}}} as any;
+}
 
+describe('components/suggestion/search_channel_suggestion', () => {
     const baseProps = {
-        item: mockChannel,
+        id: 'test-suggestion',
+        item: TestHelper.getChannelMock(),
         isSelection: false,
         currentUserId: 'userid1',
         teammateIsBot: false,
@@ -22,69 +25,28 @@ describe('components/suggestion/search_channel_suggestion', () => {
         onMouseMove: jest.fn(),
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...baseProps}/>,
+    test('should render override icon for open channel when matcher matches', () => {
+        const mockChannel = TestHelper.getChannelMock({type: 'O'});
+        const props = {...baseProps, item: mockChannel};
+        const {container} = renderWithContext(
+            <SearchChannelSuggestion {...props}/>,
+            makeState([{id: '1', pluginId: 'mbe', matcher: () => true, iconName: 'shield-outline'}]),
         );
 
-        expect(wrapper).toMatchSnapshot();
+        const icon = container.querySelector('i');
+        expect(icon).toHaveClass('icon', 'icon-shield-outline');
+        expect(icon).not.toHaveClass('icon-globe');
     });
 
-    test('should match snapshot, isSelection is false', () => {
-        const props = {...baseProps, isSelection: false};
-        const wrapper = shallow(
+    test('should render fallback icon for open channel when matcher returns false', () => {
+        const mockChannel = TestHelper.getChannelMock({type: 'O'});
+        const props = {...baseProps, item: mockChannel};
+        const {container} = renderWithContext(
             <SearchChannelSuggestion {...props}/>,
+            makeState([{id: '1', pluginId: 'mbe', matcher: () => false, iconName: 'shield-outline'}]),
         );
 
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, isSelection is true', () => {
-        const props = {...baseProps, isSelection: true};
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, channel type DM_CHANNEL', () => {
-        mockChannel.type = 'D';
-        const props = {...baseProps, item: mockChannel, isSelection: true};
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, channel type GM_CHANNEL', () => {
-        mockChannel.type = 'G';
-        const props = {...baseProps, item: mockChannel, isSelection: true};
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, channel type OPEN_CHANNEL', () => {
-        mockChannel.type = 'O';
-        const props = {...baseProps, item: mockChannel, isSelection: true};
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, channel type PRIVATE_CHANNEL', () => {
-        mockChannel.type = 'P';
-        const props = {...baseProps, item: mockChannel, isSelection: true};
-        const wrapper = shallow(
-            <SearchChannelSuggestion {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
+        const icon = container.querySelector('i');
+        expect(icon).toHaveClass('icon', 'icon-globe');
     });
 });

@@ -4,9 +4,8 @@
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
 
-import {trackEvent} from 'actions/telemetry_actions';
+import {Button} from '@mattermost/compass-ui/components/button';
 
-import type {TelemetryProps} from 'components/common/hooks/useOpenPricingModal';
 import useOpenSalesLink from 'components/common/hooks/useOpenSalesLink';
 import CloudTrialSvg from 'components/common/svg_images_components/cloud_trial_svg';
 import PrivateCloudSvg from 'components/common/svg_images_components/private_cloud_svg';
@@ -17,15 +16,13 @@ import {CloudLinks, CloudProducts} from 'utils/constants';
 type Props = {
     isFreeTrial: boolean;
     subscriptionPlan: string | undefined;
-    onUpgradeMattermostCloud: (telemetryProps?: TelemetryProps | undefined) => void;
-}
+};
 
 const ContactSalesCard = (props: Props) => {
     const [openSalesLink, contactSalesLink] = useOpenSalesLink();
     const {
         isFreeTrial,
         subscriptionPlan,
-        onUpgradeMattermostCloud,
     } = props;
     let title;
     let description;
@@ -35,7 +32,6 @@ const ContactSalesCard = (props: Props) => {
             location='contact_sales_card'
             href={CloudLinks.PRICING}
             rel='noopener noreferrer'
-            onClick={() => trackEvent('cloud_admin', 'click_pricing_link')}
         >
             {CloudLinks.PRICING}
         </ExternalLink>
@@ -66,25 +62,11 @@ const ContactSalesCard = (props: Props) => {
         description = (
             <FormattedMessage
                 id='admin.billing.subscription.privateCloudCard.cloudEnterprise.description'
-                defaultMessage='At Mattermost, we work with you and your organization to meet your needs throughout the product. If you’re considering a wider rollout, talk to us.'
+                defaultMessage="At Mattermost, we work with you and your organization to meet your needs throughout the product. If you're considering a wider rollout, talk to us."
             />
         );
     } else {
         switch (subscriptionPlan) {
-        case CloudProducts.STARTER:
-            title = (
-                <FormattedMessage
-                    id='admin.billing.subscription.privateCloudCard.cloudFree.title'
-                    defaultMessage='Upgrade to Cloud Professional'
-                />
-            );
-            description = (
-                <FormattedMessage
-                    id='admin.billing.subscription.privateCloudCard.cloudFree.description'
-                    defaultMessage='Optimize your processes with Guest Accounts, Office365 suite integrations, GitLab SSO and advanced permissions.'
-                />
-            );
-            break;
         case CloudProducts.PROFESSIONAL:
             title = (
                 <FormattedMessage
@@ -110,7 +92,7 @@ const ContactSalesCard = (props: Props) => {
             description = (
                 <FormattedMessage
                     id='admin.billing.subscription.privateCloudCard.cloudEnterprise.description'
-                    defaultMessage='At Mattermost, we work with you and your organization to meet your needs throughout the product. If you’re considering a wider rollout, talk to us.'
+                    defaultMessage="At Mattermost, we work with you and your organization to meet your needs throughout the product. If you're considering a wider rollout, talk to us."
                 />
             );
             break;
@@ -142,46 +124,34 @@ const ContactSalesCard = (props: Props) => {
                     {description}
                 </div>
                 {(isFreeTrial || subscriptionPlan === CloudProducts.ENTERPRISE || isCloudLegacyPlan) &&
-                    <ExternalLink
-                        location='contact_sales_card'
-                        href={contactSalesLink}
+                    <Button
+                        asChild={true}
+                        emphasis='tertiary'
                         className='PrivateCloudCard__actionButton'
-                        onClick={() => trackEvent('cloud_admin', 'click_contact_sales')}
+                    >
+                        <ExternalLink
+                            location='contact_sales_card'
+                            href={contactSalesLink}
+                        >
+                            <FormattedMessage
+                                id='admin.billing.subscription.privateCloudCard.contactSales'
+                                defaultMessage='Contact Sales'
+                            />
+                        </ExternalLink>
+                    </Button>
+                }
+                {(!isFreeTrial && subscriptionPlan !== CloudProducts.ENTERPRISE && subscriptionPlan !== CloudProducts.LEGACY) &&
+                    <Button
+                        type='button'
+                        onClick={openSalesLink}
+                        emphasis='tertiary'
+                        className='PrivateCloudCard__actionButton'
                     >
                         <FormattedMessage
                             id='admin.billing.subscription.privateCloudCard.contactSales'
                             defaultMessage='Contact Sales'
                         />
-
-                    </ExternalLink>
-                }
-                {(!isFreeTrial && subscriptionPlan !== CloudProducts.ENTERPRISE && subscriptionPlan !== CloudProducts.LEGACY) &&
-                    <button
-                        type='button'
-                        onClick={() => {
-                            if (subscriptionPlan === CloudProducts.STARTER) {
-                                onUpgradeMattermostCloud({trackingLocation: 'admin_console_subscription_card_upgrade_now_button'});
-                            } else {
-                                openSalesLink();
-                            }
-                        }}
-                        className='PrivateCloudCard__actionButton'
-                    >
-                        {subscriptionPlan === CloudProducts.STARTER ? (
-                            <FormattedMessage
-                                id='admin.billing.subscription.privateCloudCard.upgradeNow'
-                                defaultMessage='Upgrade Now'
-                            />
-                        ) : (
-                            <FormattedMessage
-                                id='admin.billing.subscription.privateCloudCard.contactSales'
-                                defaultMessage='Contact Sales'
-                            />
-                        )
-
-                        }
-
-                    </button>
+                    </Button>
                 }
             </div>
             <div className='PrivateCloudCard__image'>

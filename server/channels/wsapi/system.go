@@ -25,7 +25,7 @@ func ping(req *model.WebSocketRequest) (map[string]any, *model.AppError) {
 
 func (api *API) websocketNotificationAck(req *model.WebSocketRequest) (map[string]any, *model.AppError) {
 	// Log the ACKs if necessary
-	api.App.NotificationsLog().Debug("Websocket notification acknowledgment",
+	api.App.Log().LogM(mlog.MlvlNotificationDebug, "Websocket notification acknowledgment",
 		mlog.String("type", model.NotificationTypeWebsocket),
 		mlog.String("user_id", req.Session.UserId),
 		mlog.Any("user_agent", req.Data["user_agent"]),
@@ -36,7 +36,7 @@ func (api *API) websocketNotificationAck(req *model.WebSocketRequest) (map[strin
 	)
 
 	// Count metrics for websocket acks
-	api.App.CountNotificationAck(model.NotificationTypeWebsocket)
+	api.App.CountNotificationAck(model.NotificationTypeWebsocket, model.NotificationNoPlatform)
 
 	status := req.Data["status"]
 	reason := req.Data["reason"]
@@ -44,19 +44,29 @@ func (api *API) websocketNotificationAck(req *model.WebSocketRequest) (map[strin
 		return nil, nil
 	}
 
-	notificationStatus := model.NotificationStatus(status.(string))
+	statusStr, ok := status.(string)
+	if !ok {
+		return nil, NewInvalidWebSocketParamError(req.Action, "status")
+	}
+
+	notificationStatus := model.NotificationStatus(statusStr)
 	if reason == nil && notificationStatus != model.NotificationStatusSuccess {
 		return nil, nil
 	}
 	var notificationReason model.NotificationReason
 	if reason != nil {
-		notificationReason = model.NotificationReason(reason.(string))
+		reasonStr, ok := reason.(string)
+		if !ok {
+			return nil, NewInvalidWebSocketParamError(req.Action, "reason")
+		}
+		notificationReason = model.NotificationReason(reasonStr)
 	}
 
 	api.App.CountNotificationReason(
 		notificationStatus,
 		model.NotificationTypeWebsocket,
 		notificationReason,
+		model.NotificationNoPlatform,
 	)
 
 	return nil, nil

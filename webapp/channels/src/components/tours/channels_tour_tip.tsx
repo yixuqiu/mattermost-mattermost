@@ -1,22 +1,29 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {FormattedMessage} from 'react-intl';
-import type {Placement} from 'tippy.js';
+import type {Placement} from '@floating-ui/react';
+import React, {type JSX} from 'react';
+import {FormattedMessage, defineMessages} from 'react-intl';
 
+import {ChevronLeftIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import type {PunchOutCoordsHeightAndWidth} from '@mattermost/components';
 import {TourTip} from '@mattermost/components';
-
-import {t} from 'utils/i18n';
 
 import {useTourTipManager} from './tour_manager';
 import {getLastStep} from './utils';
 
 // TODO MM-51399 These strings are properly defined in @mattermost/components, but the i18n tooling currently can't
 // find them there, so we've had to redefine them here
-t('tutorial_tip.out');
-t('tutorial_tip.seen');
+defineMessages({
+    optOut: {
+        id: 'tutorial_tip.out',
+        defaultMessage: 'Opt out of these tips.',
+    },
+    seenBefore: {
+        id: 'tutorial_tip.seen',
+        defaultMessage: 'Seen this before? ',
+    },
+});
 
 export type ChannelsTourTipProps = {
     screen: JSX.Element;
@@ -25,7 +32,7 @@ export type ChannelsTourTipProps = {
     overlayPunchOut: PunchOutCoordsHeightAndWidth | null;
     singleTip?: boolean;
     placement?: Placement;
-    pulsatingDotPlacement?: Omit<Placement, 'auto'| 'auto-end'>;
+    pulsatingDotPlacement?: Omit<Placement, 'auto' | 'auto-end'>;
     pulsatingDotTranslate?: {x: number; y: number};
     offset?: [number, number];
     width?: string | number;
@@ -34,7 +41,7 @@ export type ChannelsTourTipProps = {
     tippyBlueStyle?: boolean;
     showOptOut?: boolean;
     interactivePunchOut?: boolean;
-}
+};
 
 export const ChannelsTourTip = ({
     title,
@@ -66,46 +73,37 @@ export const ChannelsTourTip = ({
     } = useTourTipManager(tourCategory);
 
     const prevBtn = (
-        <>
-            <i className='icon icon-chevron-left'/>
-            <FormattedMessage
-                id='generic.previous'
-                defaultMessage='Previous'
-            />
-        </>
+        <FormattedMessage
+            id='generic.previous'
+            defaultMessage='Previous'
+        />
     );
 
-    const nextBtn = (): JSX.Element => {
-        let buttonText = (
-            <>
-                <FormattedMessage
-                    id={'tutorial_tip.ok'}
-                    defaultMessage={'Next'}
-                />
-                <i className='icon icon-chevron-right'/>
-            </>
+    const lastStep = getLastStep(tourSteps);
+    let nextBtn = (
+        <FormattedMessage
+            id='tutorial_tip.ok'
+            defaultMessage='Next'
+        />
+    );
+    let nextTrailingGlyph: JSX.Element | undefined = <ChevronRightIcon/>;
+    if (singleTip) {
+        nextBtn = (
+            <FormattedMessage
+                id='tutorial_tip.got_it'
+                defaultMessage='Got it'
+            />
         );
-        if (singleTip) {
-            buttonText = (
-                <FormattedMessage
-                    id={'tutorial_tip.got_it'}
-                    defaultMessage={'Got it'}
-                />
-            );
-            return buttonText;
-        }
-
-        const lastStep = getLastStep(tourSteps);
-        if (currentStep === lastStep) {
-            buttonText = (
-                <FormattedMessage
-                    id={'tutorial_tip.done'}
-                    defaultMessage={'Done'}
-                />
-            );
-        }
-        return buttonText;
-    };
+        nextTrailingGlyph = undefined;
+    } else if (currentStep === lastStep) {
+        nextBtn = (
+            <FormattedMessage
+                id='tutorial_tip.done'
+                defaultMessage='Done'
+            />
+        );
+        nextTrailingGlyph = undefined;
+    }
 
     return (
         <TourTip
@@ -116,8 +114,10 @@ export const ChannelsTourTip = ({
             singleTip={singleTip}
             imageURL={imageURL}
             overlayPunchOut={overlayPunchOut}
-            nextBtn={nextBtn()}
+            nextBtn={nextBtn}
+            nextTrailingGlyph={nextTrailingGlyph}
             prevBtn={singleTip ? undefined : prevBtn}
+            prevLeadingGlyph={singleTip ? undefined : <ChevronLeftIcon/>}
             step={currentStep}
             placement={placement}
             pulsatingDotPlacement={pulsatingDotPlacement}

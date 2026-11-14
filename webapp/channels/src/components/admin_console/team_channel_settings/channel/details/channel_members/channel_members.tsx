@@ -10,8 +10,6 @@ import type {UserProfile, GetFilteredUsersStatsOpts} from '@mattermost/types/use
 import GeneralConstants from 'mattermost-redux/constants/general';
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
-import {trackEvent} from 'actions/telemetry_actions.jsx';
-
 import type {FilterOptions} from 'components/admin_console/filter/filter';
 import UserGrid from 'components/admin_console/user_grid/user_grid';
 import type {BaseMembership} from 'components/admin_console/user_grid/user_grid_role_dropdown';
@@ -50,11 +48,11 @@ type Props = {
         setUserGridSearch: (term: string) => void;
         setUserGridFilters: (filters: GetFilteredUsersStatsOpts) => void;
     };
-}
+};
 
 type State = {
     loading: boolean;
-}
+};
 
 const PROFILE_CHUNK_SIZE = 10;
 
@@ -163,9 +161,6 @@ export default class ChannelMembers extends React.PureComponent<Props, State> {
             if (channelRoles.length > 0) {
                 filters = {...filters, channel_roles: channelRoles};
             }
-            [...systemRoles, ...channelRoles].forEach((role) => {
-                trackEvent('admin_channel_config_page', `${role}_filter_applied_to_members_block`, {channel_id: this.props.channelId});
-            });
 
             this.props.actions.setUserGridFilters(filters);
             this.props.actions.getFilteredUsersStats({in_channel: this.props.channelId, include_bots: true, ...filters});
@@ -244,7 +239,7 @@ export default class ChannelMembers extends React.PureComponent<Props, State> {
                 button={
                     <ToggleModalButton
                         id='addChannelMembers'
-                        className='btn btn-primary'
+                        emphasis='primary'
                         modalId={ModalIdentifiers.CHANNEL_INVITE}
                         dialogType={ChannelInviteModal}
                         disabled={isDisabled}

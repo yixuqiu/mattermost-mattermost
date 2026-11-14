@@ -1,177 +1,98 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import classNames from 'classnames';
-import deepEqual from 'fast-deep-equal';
-import type {History} from 'history';
-import React from 'react';
+import React, {lazy} from 'react';
 import {Route, Switch, Redirect} from 'react-router-dom';
 import type {RouteComponentProps} from 'react-router-dom';
 
-import type {ClientConfig} from '@mattermost/types/config';
-import {ServiceEnvironment} from '@mattermost/types/config';
+import {isAndroid, isChromebook, isDesktopApp, isIos} from '@mattermost/shared/utils/user_agent';
 
 import {setSystemEmojis} from 'mattermost-redux/actions/emojis';
 import {setUrl} from 'mattermost-redux/actions/general';
 import {Client4} from 'mattermost-redux/client';
-import {rudderAnalytics, RudderTelemetryHandler} from 'mattermost-redux/client/rudder';
-import type {Theme} from 'mattermost-redux/selectors/entities/preferences';
-import type {ActionResult} from 'mattermost-redux/types/actions';
 
-import {measurePageLoadTelemetry, temporarilySetPageLoadContext, trackEvent, trackSelectorMetrics} from 'actions/telemetry_actions.jsx';
+import {temporarilySetPageLoadContext} from 'actions/telemetry_actions';
 import BrowserStore from 'stores/browser_store';
 
-import AccessProblem from 'components/access_problem';
-import AnnouncementBarController from 'components/announcement_bar';
-import AppBar from 'components/app_bar/app_bar';
-import {makeAsyncComponent} from 'components/async_load';
-import CloudEffects from 'components/cloud_effects';
-import CompassThemeProvider from 'components/compass_theme_provider/compass_theme_provider';
-import OpenPluginInstallPost from 'components/custom_open_plugin_install_post_renderer';
-import GlobalHeader from 'components/global_header/global_header';
+import {makeAsyncComponent, makeAsyncPluggableComponent} from 'components/async_load';
+import GlobalClassificationBanner from 'components/global_classification_banner';
+import GlobalHeader from 'components/global_header';
 import {HFRoute} from 'components/header_footer_route/header_footer_route';
 import {HFTRoute, LoggedInHFTRoute} from 'components/header_footer_template_route';
-import MobileViewWatcher from 'components/mobile_view_watcher';
-import ModalController from 'components/modal_controller';
-import LaunchingWorkspace, {LAUNCHING_WORKSPACE_FULLSCREEN_Z_INDEX} from 'components/preparing_workspace/launching_workspace';
+import InitialLoadingScreen from 'components/initial_loading_screen';
+import LoggedIn from 'components/logged_in';
+import LoggedInRoute from 'components/logged_in_route';
+import {LAUNCHING_WORKSPACE_FULLSCREEN_Z_INDEX} from 'components/preparing_workspace/launching_workspace';
 import {Animations} from 'components/preparing_workspace/steps';
-import SidebarRight from 'components/sidebar_right';
-import SidebarRightMenu from 'components/sidebar_right_menu';
-import SystemNotice from 'components/system_notice';
-import TeamSidebar from 'components/team_sidebar';
-import WindowSizeObserver from 'components/window_size_observer/WindowSizeObserver';
+import ProductPluggable from 'components/product_pluggable';
+import Readout from 'components/readout/readout';
+import {WithUserTheme} from 'components/theme_provider';
 
-import webSocketClient from 'client/web_websocket_client';
 import {initializePlugins} from 'plugins';
-import Pluggable from 'plugins/pluggable';
-import A11yController from 'utils/a11y_controller';
-import {PageLoadContext} from 'utils/constants';
+import 'utils/a11y_controller_instance';
+import {expirationScheduler} from 'utils/burn_on_read_expiration_scheduler';
+import {PageLoadContext, SCHEDULED_POST_URL_SUFFIX} from 'utils/constants';
+import DesktopApp from 'utils/desktop_api';
 import {EmojiIndicesByAlias} from 'utils/emoji';
 import {TEAM_NAME_PATH_PATTERN} from 'utils/path';
+import {isTeamScopedProduct} from 'utils/products';
 import {getSiteURL} from 'utils/url';
-import * as UserAgent from 'utils/user_agent';
-import * as Utils from 'utils/utils';
-
-import type {ProductComponent, PluginComponent} from 'types/store/plugins';
+import {isTextDroppableEvent} from 'utils/utils';
 
 import LuxonController from './luxon_controller';
+import PerformanceReporterController from './performance_reporter_controller';
 import RootProvider from './root_provider';
 import RootRedirect from './root_redirect';
 
-import 'plugins/export.js';
+import type {PropsFromRedux} from './index';
 
-const LazyErrorPage = React.lazy(() => import('components/error_page'));
-const LazyLogin = React.lazy(() => import('components/login/login'));
-const LazyAdminConsole = React.lazy(() => import('components/admin_console'));
-const LazyLoggedIn = React.lazy(() => import('components/logged_in'));
-const LazyPasswordResetSendLink = React.lazy(() => import('components/password_reset_send_link'));
-const LazyPasswordResetForm = React.lazy(() => import('components/password_reset_form'));
-const LazySignup = React.lazy(() => import('components/signup/signup'));
-const LazyTermsOfService = React.lazy(() => import('components/terms_of_service'));
-const LazyShouldVerifyEmail = React.lazy(() => import('components/should_verify_email/should_verify_email'));
-const LazyDoVerifyEmail = React.lazy(() => import('components/do_verify_email/do_verify_email'));
-const LazyClaimController = React.lazy(() => import('components/claim'));
-const LazyLinkingLandingPage = React.lazy(() => import('components/linking_landing_page'));
-const LazySelectTeam = React.lazy(() => import('components/select_team'));
-const LazyAuthorize = React.lazy(() => import('components/authorize'));
-const LazyCreateTeam = React.lazy(() => import('components/create_team'));
-const LazyMfa = React.lazy(() => import('components/mfa/mfa_controller'));
-const LazyPreparingWorkspace = React.lazy(() => import('components/preparing_workspace'));
-const LazyTeamController = React.lazy(() => import('components/team_controller'));
-const LazyOnBoardingTaskList = React.lazy(() => import('components/onboarding_tasklist'));
+import 'plugins/export';
 
-const CreateTeam = makeAsyncComponent('CreateTeam', LazyCreateTeam);
-const ErrorPage = makeAsyncComponent('ErrorPage', LazyErrorPage);
-const TermsOfService = makeAsyncComponent('TermsOfService', LazyTermsOfService);
-const Login = makeAsyncComponent('LoginController', LazyLogin);
-const AdminConsole = makeAsyncComponent('AdminConsole', LazyAdminConsole);
-const LoggedIn = makeAsyncComponent('LoggedIn', LazyLoggedIn);
-const PasswordResetSendLink = makeAsyncComponent('PasswordResedSendLink', LazyPasswordResetSendLink);
-const PasswordResetForm = makeAsyncComponent('PasswordResetForm', LazyPasswordResetForm);
-const Signup = makeAsyncComponent('SignupController', LazySignup);
-const ShouldVerifyEmail = makeAsyncComponent('ShouldVerifyEmail', LazyShouldVerifyEmail);
-const DoVerifyEmail = makeAsyncComponent('DoVerifyEmail', LazyDoVerifyEmail);
-const ClaimController = makeAsyncComponent('ClaimController', LazyClaimController);
-const LinkingLandingPage = makeAsyncComponent('LinkingLandingPage', LazyLinkingLandingPage);
-const SelectTeam = makeAsyncComponent('SelectTeam', LazySelectTeam);
-const Authorize = makeAsyncComponent('Authorize', LazyAuthorize);
-const Mfa = makeAsyncComponent('Mfa', LazyMfa);
-const PreparingWorkspace = makeAsyncComponent('PreparingWorkspace', LazyPreparingWorkspace);
-const TeamController = makeAsyncComponent('TeamController', LazyTeamController);
-const OnBoardingTaskList = makeAsyncComponent('OnboardingTaskList', LazyOnBoardingTaskList);
+const MobileViewWatcher = makeAsyncComponent('MobileViewWatcher', lazy(() => import('components/mobile_view_watcher')));
+const WindowSizeObserver = makeAsyncComponent('WindowSizeObserver', lazy(() => import('components/window_size_observer/WindowSizeObserver')));
+const ErrorPage = makeAsyncComponent('ErrorPage', lazy(() => import('components/error_page')));
+const Login = makeAsyncComponent('LoginController', lazy(() => import('components/login/login')));
+const PasswordResetSendLink = makeAsyncComponent('PasswordResedSendLink', lazy(() => import('components/password_reset_send_link')));
+const PasswordResetForm = makeAsyncComponent('PasswordResetForm', lazy(() => import('components/password_reset_form')));
+const Signup = makeAsyncComponent('SignupController', lazy(() => import('components/signup/signup')));
+const ShouldVerifyEmail = makeAsyncComponent('ShouldVerifyEmail', lazy(() => import('components/should_verify_email/should_verify_email')));
+const DoVerifyEmail = makeAsyncComponent('DoVerifyEmail', lazy(() => import('components/do_verify_email/do_verify_email')));
+const ClaimController = makeAsyncComponent('ClaimController', lazy(() => import('components/claim')));
+const TermsOfService = makeAsyncComponent('TermsOfService', lazy(() => import('components/terms_of_service')));
+const LinkingLandingPage = makeAsyncComponent('LinkingLandingPage', lazy(() => import('components/linking_landing_page')));
+const AdminConsole = makeAsyncComponent('AdminConsole', lazy(() => import('components/admin_console')));
+const SelectTeam = makeAsyncComponent('SelectTeam', lazy(() => import('components/select_team')));
+const Authorize = makeAsyncComponent('Authorize', lazy(() => import('components/authorize')));
+const CreateTeam = makeAsyncComponent('CreateTeam', lazy(() => import('components/create_team')));
+const Mfa = makeAsyncComponent('Mfa', lazy(() => import('components/mfa/mfa_controller')));
+const PreparingWorkspace = makeAsyncComponent('PreparingWorkspace', lazy(() => import('components/preparing_workspace')));
+const LaunchingWorkspace = makeAsyncComponent('LaunchingWorkspace', lazy(() => import('components/preparing_workspace/launching_workspace')));
+const TeamController = makeAsyncComponent('TeamController', lazy(() => import('components/team_controller')));
+const AnnouncementBarController = makeAsyncComponent('AnnouncementBarController', lazy(() => import('components/announcement_bar')));
+const SystemNotice = makeAsyncComponent('SystemNotice', lazy(() => import('components/system_notice')));
+const TeamSidebar = makeAsyncComponent('TeamSidebar', lazy(() => import('components/team_sidebar')));
+const ProductRail = makeAsyncComponent('ProductRail', lazy(() => import('components/product_rail/product_rail')));
+const SidebarRight = makeAsyncComponent('SidebarRight', lazy(() => import('components/sidebar_right')));
+const ModalController = makeAsyncComponent('ModalController', lazy(() => import('components/modal_controller')));
+const AppBar = makeAsyncComponent('AppBar', lazy(() => import('components/app_bar/app_bar')));
+const ComponentLibrary = makeAsyncComponent('ComponentLibrary', lazy(() => import('components/component_library')));
+const PopoutController = makeAsyncComponent('PopoutController', lazy(() => import('components/popout_controller')));
+const Help = makeAsyncComponent('Help', lazy(() => import('components/help')));
 
-type LoggedInRouteProps = {
-    component: React.ComponentType<RouteComponentProps<any>>;
-    path: string | string[];
-    theme?: Theme; // the routes that send the theme are the ones that will actually need to show the onboarding tasklist
-};
+const Pluggable = makeAsyncPluggableComponent();
 
-function LoggedInRoute(props: LoggedInRouteProps) {
-    const {component: Component, theme, ...rest} = props;
-    return (
-        <Route
-            {...rest}
-            render={(routeProps) => (
-                <LoggedIn {...routeProps}>
-                    {theme && <CompassThemeProvider theme={theme}>
-                        <OnBoardingTaskList/>
-                    </CompassThemeProvider>}
-                    <Component {...(routeProps)}/>
-                </LoggedIn>
-            )}
-        />
-    );
-}
-
-const noop = () => {};
-
-export type Actions = {
-    getProfiles: (page?: number, pageSize?: number, options?: Record<string, any>) => Promise<ActionResult>;
-    loadRecentlyUsedCustomEmojis: () => Promise<unknown>;
-    migrateRecentEmojis: () => void;
-    loadConfigAndMe: () => Promise<{config?: Partial<ClientConfig>; isMeLoaded: boolean}>;
-    registerCustomPostRenderer: (type: string, component: any, id: string) => Promise<ActionResult>;
-    initializeProducts: () => Promise<unknown>;
-    handleLoginLogoutSignal: (e: StorageEvent) => unknown;
-    redirectToOnboardingOrDefaultTeam: (history: History) => unknown;
-}
-
-type Props = {
-    theme: Theme;
-    telemetryEnabled: boolean;
-    telemetryId?: string;
-    iosDownloadLink?: string;
-    androidDownloadLink?: string;
-    appDownloadLink?: string;
-    noAccounts: boolean;
-    showTermsOfService: boolean;
-    permalinkRedirectTeamName: string;
-    isCloud: boolean;
-    actions: Actions;
-    plugins?: PluginComponent[];
-    products: ProductComponent[];
-    showLaunchingWorkspace: boolean;
-    rhsIsExpanded: boolean;
-    rhsIsOpen: boolean;
-    shouldShowAppBar: boolean;
-} & RouteComponentProps
+export type Props = PropsFromRedux & RouteComponentProps;
 
 interface State {
-    configLoaded?: boolean;
+    shouldMountAppRoutes?: boolean;
 }
 
 export default class Root extends React.PureComponent<Props, State> {
-    private mounted: boolean;
-
     // The constructor adds a bunch of event listeners,
     // so we do need this.
-    private a11yController: A11yController;
-
     constructor(props: Props) {
         super(props);
-        this.mounted = false;
 
-        // Redux
         setUrl(getSiteURL());
 
         // Disable auth header to enable CSRF check
@@ -179,132 +100,43 @@ export default class Root extends React.PureComponent<Props, State> {
 
         setSystemEmojis(new Set(EmojiIndicesByAlias.keys()));
 
-        // Force logout of all tabs if one tab is logged out
-        window.addEventListener('storage', this.handleLogoutLoginSignal);
-
-        // Prevent drag and drop files from navigating away from the app
-        document.addEventListener('drop', (e) => {
-            if (e.dataTransfer && e.dataTransfer.items.length > 0 && e.dataTransfer.items[0].kind === 'file') {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        });
-
-        document.addEventListener('dragover', (e) => {
-            if (!Utils.isTextDroppableEvent(e) && !document.body.classList.contains('focalboard-body')) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        });
-
         this.state = {
-            configLoaded: false,
+            shouldMountAppRoutes: false,
         };
-
-        this.a11yController = new A11yController();
     }
 
-    onConfigLoaded = (config: Partial<ClientConfig>) => {
-        const telemetryId = this.props.telemetryId;
-
-        const rudderUrl = 'https://pdat.matterlytics.com';
-        let rudderKey = '';
-        switch (config.ServiceEnvironment) {
-        case ServiceEnvironment.PRODUCTION:
-            rudderKey = '1aoejPqhgONMI720CsBSRWzzRQ9';
-            break;
-        case ServiceEnvironment.TEST:
-            rudderKey = '1aoeoCDeh7OCHcbW2kseWlwUFyq';
-            break;
-        case ServiceEnvironment.DEV:
-            break;
-        }
-
-        if (rudderKey !== '' && this.props.telemetryEnabled) {
-            const rudderCfg: {setCookieDomain?: string} = {};
-            const siteURL = config.SiteURL;
-            if (siteURL !== '') {
-                try {
-                    rudderCfg.setCookieDomain = new URL(siteURL || '').hostname;
-                    // eslint-disable-next-line no-empty
-                } catch (_) {}
-            }
-            rudderAnalytics.load(rudderKey, rudderUrl || '', rudderCfg);
-
-            rudderAnalytics.identify(telemetryId, {}, {
-                context: {
-                    ip: '0.0.0.0',
-                },
-                page: {
-                    path: '',
-                    referrer: '',
-                    search: '',
-                    title: '',
-                    url: '',
-                },
-                anonymousId: '00000000000000000000000000',
-            });
-
-            rudderAnalytics.page('ApplicationLoaded', {
-                path: '',
-                referrer: '',
-                search: ('' as any),
-                title: '',
-                url: '',
-            } as any,
-            {
-                context: {
-                    ip: '0.0.0.0',
-                },
-                anonymousId: '00000000000000000000000000',
-            });
-
-            const utmParams = this.captureUTMParams();
-            rudderAnalytics.ready(() => {
-                Client4.setTelemetryHandler(new RudderTelemetryHandler());
-                if (utmParams) {
-                    trackEvent('utm_params', 'utm_params', utmParams);
-                }
-            });
-        }
-
-        if (this.props.location.pathname === '/' && this.props.noAccounts) {
-            this.props.history.push('/signup_user_complete');
-        }
-
+    onConfigLoaded = () => {
         Promise.all([
             this.props.actions.initializeProducts(),
             initializePlugins(),
         ]).then(() => {
-            if (this.mounted) {
-                // supports enzyme tests, set state if and only if
-                // the component is still mounted on screen
-                this.setState({configLoaded: true});
-            }
+            this.setState({shouldMountAppRoutes: true});
         });
 
         this.props.actions.migrateRecentEmojis();
         this.props.actions.loadRecentlyUsedCustomEmojis();
-
         this.showLandingPageIfNecessary();
-
-        Utils.applyTheme(this.props.theme);
     };
 
     private showLandingPageIfNecessary = () => {
+        // Only show Landing Page if enabled
+        if (!this.props.enableDesktopLandingPage) {
+            return;
+        }
+
         // We have nothing to redirect to if we're already on Desktop App
         // Chromebook has no Desktop App to switch to
-        if (UserAgent.isDesktopApp() || UserAgent.isChromebook()) {
+        if (isDesktopApp() || isChromebook()) {
             return;
         }
 
         // Nothing to link to if we've removed the Android App download link
-        if (UserAgent.isAndroidWeb() && !this.props.androidDownloadLink) {
+        if (isAndroid() && !this.props.androidDownloadLink) {
             return;
         }
 
         // Nothing to link to if we've removed the iOS App download link
-        if (UserAgent.isIosWeb() && !this.props.iosDownloadLink) {
+        if (isIos() && !this.props.iosDownloadLink) {
             return;
         }
 
@@ -347,10 +179,7 @@ export default class Root extends React.PureComponent<Props, State> {
         BrowserStore.setLandingPageSeen(true);
     };
 
-    componentDidUpdate(prevProps: Props) {
-        if (!deepEqual(prevProps.theme, this.props.theme)) {
-            Utils.applyTheme(this.props.theme);
-        }
+    componentDidUpdate(prevProps: Props, prevState: State) {
         if (this.props.location.pathname === '/') {
             if (this.props.noAccounts) {
                 prevProps.history.push('/signup_user_complete');
@@ -358,12 +187,20 @@ export default class Root extends React.PureComponent<Props, State> {
                 prevProps.history.push('/terms_of_service');
             }
         }
+
         if (
             this.props.shouldShowAppBar !== prevProps.shouldShowAppBar ||
             this.props.rhsIsOpen !== prevProps.rhsIsOpen ||
             this.props.rhsIsExpanded !== prevProps.rhsIsExpanded
         ) {
             this.setRootMeta();
+        }
+
+        if (prevState.shouldMountAppRoutes === false && this.state.shouldMountAppRoutes === true) {
+            if (!doesRouteBelongToTeamControllerRoutes(this.props.location.pathname)) {
+                DesktopApp.reactAppInitialized();
+                InitialLoadingScreen.stop('root');
+            }
         }
     }
 
@@ -392,34 +229,61 @@ export default class Root extends React.PureComponent<Props, State> {
     }
 
     initiateMeRequests = async () => {
-        const {config, isMeLoaded} = await this.props.actions.loadConfigAndMe();
+        const {isLoaded, isMeRequested} = await this.props.actions.loadConfigAndMe();
 
-        if (isMeLoaded && this.props.location.pathname === '/') {
-            this.props.actions.redirectToOnboardingOrDefaultTeam(this.props.history);
+        if (isLoaded) {
+            const isUserAtRootRoute = this.props.location.pathname === '/';
+
+            if (isUserAtRootRoute) {
+                if (isMeRequested) {
+                    this.props.actions.redirectToOnboardingOrDefaultTeam(this.props.history, new URLSearchParams(this.props.location.search));
+                } else if (this.props.noAccounts) {
+                    this.props.history.push('/signup_user_complete');
+                }
+            }
+
+            this.onConfigLoaded();
         }
+    };
 
-        if (config) {
-            this.onConfigLoaded(config);
+    handleDropEvent = (e: DragEvent) => {
+        if (e.dataTransfer && e.dataTransfer.items.length > 0 && e.dataTransfer.items[0].kind === 'file') {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    };
+
+    handleDragOverEvent = (e: DragEvent) => {
+        if (!isTextDroppableEvent(e) && !document.body.classList.contains('focalboard-body')) {
+            e.preventDefault();
+            e.stopPropagation();
         }
     };
 
     componentDidMount() {
         temporarilySetPageLoadContext(PageLoadContext.PAGE_LOAD);
 
-        this.mounted = true;
-
         this.initiateMeRequests();
 
-        // See figma design on issue https://mattermost.atlassian.net/browse/MM-43649
-        this.props.actions.registerCustomPostRenderer('custom_pl_notification', OpenPluginInstallPost, 'plugin_install_post_message_renderer');
+        // Initialize burn-on-read expiration scheduler
+        expirationScheduler.initialize(this.props.dispatch);
 
-        measurePageLoadTelemetry();
-        trackSelectorMetrics();
+        // Force logout of all tabs if one tab is logged out
+        window.addEventListener('storage', this.handleLogoutLoginSignal);
+
+        // Prevent drag and drop files from navigating away from the app
+        document.addEventListener('drop', this.handleDropEvent);
+
+        document.addEventListener('dragover', this.handleDragOverEvent);
     }
 
     componentWillUnmount() {
-        this.mounted = false;
+        // Cleanup burn-on-read expiration scheduler
+        expirationScheduler.cleanup();
+
         window.removeEventListener('storage', this.handleLogoutLoginSignal);
+        document.removeEventListener('drop', this.handleDropEvent);
+        document.removeEventListener('dragover', this.handleDragOverEvent);
     }
 
     handleLogoutLoginSignal = (e: StorageEvent) => {
@@ -439,7 +303,7 @@ export default class Root extends React.PureComponent<Props, State> {
     };
 
     render() {
-        if (!this.state.configLoaded) {
+        if (!this.state.shouldMountAppRoutes) {
             return <div/>;
         }
 
@@ -447,6 +311,7 @@ export default class Root extends React.PureComponent<Props, State> {
             <RootProvider>
                 <MobileViewWatcher/>
                 <LuxonController/>
+                <PerformanceReporterController/>
                 <Switch>
                     <Route
                         path={'/error'}
@@ -455,10 +320,6 @@ export default class Root extends React.PureComponent<Props, State> {
                     <HFRoute
                         path={'/login'}
                         component={Login}
-                    />
-                    <HFRoute
-                        path={'/access_problem'}
-                        component={AccessProblem}
                     />
                     <HFTRoute
                         path={'/reset_password'}
@@ -489,15 +350,24 @@ export default class Root extends React.PureComponent<Props, State> {
                         component={TermsOfService}
                     />
                     <Route
+                        path={'/help/:page?'}
+                        component={Help}
+                    />
+                    <Route
                         path={'/landing'}
                         component={LinkingLandingPage}
                     />
+                    {this.props.isDevModeEnabled && (
+                        <Route
+                            path={'/component_library'}
+                            component={ComponentLibrary}
+                        />
+                    )}
                     <Route
                         path={'/admin_console'}
                     >
                         <Switch>
                             <LoggedInRoute
-                                theme={this.props.theme}
                                 path={'/admin_console'}
                                 component={AdminConsole}
                             />
@@ -532,97 +402,94 @@ export default class Root extends React.PureComponent<Props, State> {
                         from={'/_redirect/pl/:postid'}
                         to={`/${this.props.permalinkRedirectTeamName}/pl/:postid`}
                     />
-                    <CompassThemeProvider theme={this.props.theme}>
+                    <Route
+                        path={'/_popout'}
+                        component={PopoutController}
+                    />
+                    <WithUserTheme>
                         {(this.props.showLaunchingWorkspace && !this.props.location.pathname.includes('/preparing-workspace') &&
                             <LaunchingWorkspace
                                 fullscreen={true}
                                 zIndex={LAUNCHING_WORKSPACE_FULLSCREEN_Z_INDEX}
                                 show={true}
-                                onPageView={noop}
                                 transitionDirection={Animations.Reasons.EnterFromBefore}
                             />
                         )}
+
                         <WindowSizeObserver/>
                         <ModalController/>
+                        <GlobalClassificationBanner position='top'/>
                         <AnnouncementBarController/>
                         <SystemNotice/>
                         <GlobalHeader/>
-                        <CloudEffects/>
                         <TeamSidebar/>
-                        <Switch>
-                            {this.props.products?.filter((product) => Boolean(product.publicComponent)).map((product) => (
-                                <Route
-                                    key={`${product.id}-public`}
-                                    path={`${product.baseURL}/public`}
-                                    render={(props) => {
-                                        return (
-                                            <Pluggable
-                                                pluggableName={'Product'}
-                                                subComponentName={'publicComponent'}
-                                                pluggableId={product.id}
-                                                css={{gridArea: 'center'}}
-                                                {...props}
-                                            />
-                                        );
-                                    }}
-                                />
-                            ))}
-                            {this.props.products?.map((product) => (
-                                <Route
-                                    key={product.id}
-                                    path={product.baseURL}
-                                    render={(props) => {
-                                        let pluggable = (
-                                            <Pluggable
-                                                pluggableName={'Product'}
-                                                subComponentName={'mainComponent'}
-                                                pluggableId={product.id}
-                                                webSocketClient={webSocketClient}
-                                                css={product.wrapped ? undefined : {gridArea: 'center'}}
-                                            />
-                                        );
-                                        if (product.wrapped) {
-                                            pluggable = (
-                                                <div className={classNames(['product-wrapper', {wide: !product.showTeamSidebar}])}>
-                                                    {pluggable}
-                                                </div>
+                        <ProductRail/>
+                        <div className='main-wrapper'>
+                            <Switch>
+                                {this.props.products?.filter((product) => Boolean(product.publicComponent)).map((product) => (
+                                    <Route
+                                        key={`${product.id}-public`}
+                                        path={`${product.baseURL}/public`}
+                                        render={(props) => {
+                                            return (
+                                                <Pluggable
+                                                    pluggableName={'Product'}
+                                                    subComponentName={'publicComponent'}
+                                                    pluggableId={product.id}
+                                                    css={{gridArea: 'center'}}
+                                                    {...props}
+                                                />
                                             );
-                                        }
-                                        return (
+                                        }}
+                                    />
+                                ))}
+                                {this.props.products?.filter((product) => !isTeamScopedProduct(product)).map((product) => (
+                                    <Route
+                                        key={product.id}
+                                        path={product.baseURL}
+                                        render={(props) => (
                                             <LoggedIn {...props}>
-                                                {pluggable}
+                                                <ProductPluggable product={product}/>
                                             </LoggedIn>
-                                        );
-                                    }}
+                                        )}
+                                    />
+                                ))}
+                                {this.props.plugins?.map((plugin) => (
+                                    <Route
+                                        key={plugin.id}
+                                        path={'/plug/' + plugin.route}
+                                        render={() => (
+                                            <Pluggable
+                                                pluggableName={'CustomRouteComponent'}
+                                                pluggableId={plugin.id}
+                                                css={{gridArea: 'center'}}
+                                            />
+                                        )}
+                                    />
+                                ))}
+                                <LoggedInRoute
+                                    path={`/:team(${TEAM_NAME_PATH_PATTERN})`}
+                                    component={TeamController}
                                 />
-                            ))}
-                            {this.props.plugins?.map((plugin) => (
-                                <Route
-                                    key={plugin.id}
-                                    path={'/plug/' + (plugin as any).route}
-                                    render={() => (
-                                        <Pluggable
-                                            pluggableName={'CustomRouteComponent'}
-                                            pluggableId={plugin.id}
-                                            css={{gridArea: 'center'}}
-                                        />
-                                    )}
-                                />
-                            ))}
-                            <LoggedInRoute
-                                theme={this.props.theme}
-                                path={`/:team(${TEAM_NAME_PATH_PATTERN})`}
-                                component={TeamController}
-                            />
-                            <RootRedirect/>
-                        </Switch>
+                                <RootRedirect/>
+                            </Switch>
+                            <SidebarRight/>
+                        </div>
+                        <GlobalClassificationBanner position='bottom'/>
                         <Pluggable pluggableName='Global'/>
-                        <SidebarRight/>
                         <AppBar/>
-                        <SidebarRightMenu/>
-                    </CompassThemeProvider>
+                        <Readout/>
+                    </WithUserTheme>
                 </Switch>
             </RootProvider>
         );
     }
+}
+
+export function doesRouteBelongToTeamControllerRoutes(pathname: RouteComponentProps['location']['pathname']): boolean {
+    // Note: we have specifically added admin_console to the negative lookahead as admin_console can have integrations as subpaths (admin_console/integrations/bot_accounts)
+    // and we don't want to treat those as team controller routes.
+    const TEAM_CONTROLLER_PATH_PATTERN = new RegExp(`^/(?!admin_console)([a-z0-9\\-_]+)/(channels|messages|threads|recaps|drafts|integrations|emoji|${SCHEDULED_POST_URL_SUFFIX})(/.*)?$`);
+
+    return TEAM_CONTROLLER_PATH_PATTERN.test(pathname);
 }

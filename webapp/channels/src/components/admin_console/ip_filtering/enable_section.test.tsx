@@ -1,10 +1,9 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {screen, fireEvent} from '@testing-library/react';
 import React from 'react';
 
-import {renderWithContext} from 'tests/react_testing_utils';
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 
 import EnableSectionContent from './enable_section';
 jest.mock('components/external_link', () => {
@@ -31,21 +30,33 @@ describe('EnableSectionContent', () => {
 
         expect(screen.getByText('Enable IP Filtering')).toBeInTheDocument();
         expect(screen.getByText('Limit access to your workspace by IP address.')).toBeInTheDocument();
-        expect(screen.getByTestId('filterToggle-button')).toBeInTheDocument();
-        expect(screen.getByRole('button', {pressed: true})).toBeInTheDocument();
+        expect(screen.getByRole('switch', {checked: true})).toBeInTheDocument();
     });
 
-    test('clicking the toggle calls setFilterToggle', () => {
+    test('clicking the toggle calls setFilterToggle', async () => {
         renderWithContext(
             <EnableSectionContent
                 {...baseProps}
             />,
         );
 
-        fireEvent.click(screen.getByTestId('filterToggle-button'));
+        await userEvent.click(screen.getByRole('switch'));
 
         expect(setFilterToggle).toHaveBeenCalledTimes(1);
         expect(setFilterToggle).toHaveBeenCalledWith(false);
+    });
+
+    test('clicking the toggle when off calls setFilterToggle with true', async () => {
+        renderWithContext(
+            <EnableSectionContent
+                {...baseProps}
+                filterToggle={false}
+            />,
+        );
+
+        await userEvent.click(screen.getByRole('switch'));
+
+        expect(setFilterToggle).toHaveBeenCalledWith(true);
     });
 
     test('renders the component, with toggle not pressed if filterToggle is false', () => {
@@ -58,8 +69,7 @@ describe('EnableSectionContent', () => {
 
         expect(screen.getByText('Enable IP Filtering')).toBeInTheDocument();
         expect(screen.getByText('Limit access to your workspace by IP address.')).toBeInTheDocument();
-        expect(screen.getByTestId('filterToggle-button')).toBeInTheDocument();
-        expect(screen.getByRole('button', {pressed: false})).toBeInTheDocument();
+        expect(screen.getByRole('switch', {checked: false})).toBeInTheDocument();
     });
 });
 

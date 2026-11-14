@@ -1,11 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
-import {FormattedMessage} from 'react-intl';
 
 import SiteNameAndDescription from 'components/common/site_name_and_description';
+
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 
 describe('/components/common/SiteNameAndDescription', () => {
     const baseProps = {
@@ -13,19 +13,16 @@ describe('/components/common/SiteNameAndDescription', () => {
         siteName: 'Mattermost',
     };
 
-    test('should match snapshot, default', () => {
-        const wrapper = shallow(<SiteNameAndDescription {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find('h1').text()).toEqual(baseProps.siteName);
-        expect(wrapper.find(FormattedMessage).exists()).toBe(true);
+    test('should render default', () => {
+        renderWithContext(<SiteNameAndDescription {...baseProps}/>);
+        expect(screen.getByRole('heading', {level: 1})).toHaveTextContent(baseProps.siteName);
+        expect(screen.getByText('All team communication in one place, searchable and accessible anywhere')).toBeInTheDocument();
     });
 
-    test('should match snapshot, with custom site name and description', () => {
+    test('should render with custom site name and description', () => {
         const props = {...baseProps, customDescriptionText: 'custom_description_text', siteName: 'other_site'};
-        const wrapper = shallow(<SiteNameAndDescription {...props}/>);
-
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find('h1').text()).toEqual(props.siteName);
-        expect(wrapper.find('h3').text()).toEqual(props.customDescriptionText);
+        renderWithContext(<SiteNameAndDescription {...props}/>);
+        expect(screen.getByRole('heading', {level: 1})).toHaveTextContent(props.siteName);
+        expect(screen.getByRole('heading', {level: 3})).toHaveTextContent(props.customDescriptionText);
     });
 });

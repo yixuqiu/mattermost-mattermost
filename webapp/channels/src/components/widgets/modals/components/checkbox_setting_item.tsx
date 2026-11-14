@@ -4,13 +4,15 @@
 import type {ReactNode} from 'react';
 import React from 'react';
 
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+
 import type {BaseSettingItemProps} from './base_setting_item';
 import BaseSettingItem from './base_setting_item';
 
 export type FieldsetCheckbox = {
     dataTestId?: string;
     name: string;
-}
+};
 
 type Props = BaseSettingItemProps & {
     inputFieldData: FieldsetCheckbox;
@@ -23,7 +25,7 @@ type Props = BaseSettingItemProps & {
     handleChange: (e: boolean) => void;
     className?: string;
     descriptionAboveContent?: boolean;
-}
+};
 
 export default function CheckboxSettingItem({
     title,
@@ -33,25 +35,27 @@ export default function CheckboxSettingItem({
     inputFieldTitle,
     handleChange,
     className,
+    dataTestId,
     descriptionAboveContent = false,
 }: Props) {
+    const checkboxId = inputFieldData.name.replaceAll(' ', '-');
+
     const content = (
-        <fieldset
+        <div
             key={inputFieldData.name}
             className='mm-modal-generic-section-item__fieldset-checkbox-ctr'
         >
-            <label className='mm-modal-generic-section-item__fieldset-checkbox'>
-                <input
-                    className='mm-modal-generic-section-item__input-checkbox'
-                    data-testid={inputFieldData.dataTestId}
-                    type='checkbox'
-                    name={inputFieldData.name}
-                    checked={inputFieldValue}
-                    onChange={(e) => handleChange(e.target.checked)}
-                />
+            <Checkbox
+                className='mm-modal-generic-section-item__fieldset-checkbox'
+                data-testid={inputFieldData.dataTestId}
+                name={inputFieldData.name}
+                id={checkboxId}
+                checked={inputFieldValue}
+                onChange={(e) => handleChange(e.target.checked)}
+            >
                 {inputFieldTitle}
-            </label>
-        </fieldset>
+            </Checkbox>
+        </div>
     );
 
     return (
@@ -59,6 +63,7 @@ export default function CheckboxSettingItem({
             content={content}
             title={title}
             description={description}
+            dataTestId={dataTestId}
             className={className}
             descriptionAboveContent={descriptionAboveContent}
         />

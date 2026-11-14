@@ -40,12 +40,42 @@ type Team struct {
 	LastTeamIconUpdate  int64   `json:"last_team_icon_update,omitempty"`
 	SchemeId            *string `json:"scheme_id"`
 	GroupConstrained    *bool   `json:"group_constrained"`
-	PolicyID            *string `json:"policy_id"`
+	PolicyID            *string `json:"policy_id"` // Data Retention policy — unrelated to ABAC below
 	CloudLimitsArchived bool    `json:"cloud_limits_archived"`
+
+	// Not persisted; derived by the store via EXISTS on AccessControlPolicies(Type='team').
+	// Use HasMembershipPolicyAction for enforcement — this is a read-path signal only.
+	PolicyEnforced bool            `json:"policy_enforced"`
+	PolicyActions  map[string]bool `json:"policy_actions,omitempty"` // hydrated lazily; nil when not hydrated
+	// PolicyAutoAdd reports whether the team's policy auto-adds qualifying
+	// members, derived by the store from the policy's membership rule.
+	PolicyAutoAdd bool `json:"policy_auto_add"`
+	// PolicyIsActive carries the same value as PolicyAutoAdd.
+	//
+	// Deprecated: use PolicyAutoAdd. Auto-adding members is no longer tied to a
+	// policy's active flag.
+	PolicyIsActive bool `json:"policy_is_active"`
+
+	// Not persisted; a transient per-viewer hint set on public, policy-enforced
+	// teams the requesting user qualifies to join and is not already a member of.
+	// Never set on private teams. Carries no policy detail.
+	Recommended bool `json:"recommended,omitempty"`
 }
 
-func (o *Team) Auditable() map[string]interface{} {
-	return map[string]interface{}{
+// HasPolicyAction is nil-safe; returns false when PolicyActions is nil or empty.
+func (o *Team) HasPolicyAction(action string) bool {
+	if o == nil || len(o.PolicyActions) == 0 {
+		return false
+	}
+	return o.PolicyActions[action]
+}
+
+func (o *Team) HasMembershipPolicyAction() bool {
+	return o.HasPolicyAction(AccessControlPolicyActionMembership)
+}
+
+func (o *Team) Auditable() map[string]any {
+	return map[string]any{
 		"id":                    o.Id,
 		"create_at":             o.CreateAt,
 		"update_at":             o.UpdateAt,
@@ -74,8 +104,8 @@ type TeamPatch struct {
 	CloudLimitsArchived *bool   `json:"cloud_limits_archived"`
 }
 
-func (o *TeamPatch) Auditable() map[string]interface{} {
-	return map[string]interface{}{
+func (o *TeamPatch) Auditable() map[string]any {
+	return map[string]any{
 		"allow_open_invite":     o.AllowOpenInvite,
 		"group_constrained":     o.GroupConstrained,
 		"cloud_limits_archived": o.CloudLimitsArchived,

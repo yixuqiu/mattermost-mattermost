@@ -1,10 +1,9 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {FormattedMessage} from 'react-intl';
+import React, {type JSX} from 'react';
 
-import WithTooltip from 'components/with_tooltip';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import './multi_select_card.scss';
 
@@ -12,11 +11,11 @@ export type Props = {
     onClick: () => void;
     icon: JSX.Element;
     id: string;
-    defaultMessage: string;
+    buttonText: string;
     checked: boolean;
     tooltip?: string;
     size?: 'regular' | 'small';
-}
+};
 const MultiSelectCard = (props: Props) => {
     const buttonProps: {
         className: string;
@@ -38,10 +37,7 @@ const MultiSelectCard = (props: Props) => {
         >
             {props.icon}
             <span className='MultiSelectCard__label'>
-                <FormattedMessage
-                    id={props.id}
-                    defaultMessage={props.defaultMessage}
-                />
+                {props.buttonText}
             </span>
             {props.checked && <i className='MultiSelectCard__checkmark icon icon-check-circle'/>}
         </button>
@@ -50,8 +46,6 @@ const MultiSelectCard = (props: Props) => {
     if (props.tooltip) {
         button = (
             <WithTooltip
-                id={props.id}
-                placement='top'
                 title={props.tooltip}
             >
                 {button}

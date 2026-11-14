@@ -18,20 +18,20 @@ type ConfigDiff struct {
 	ActualVal any    `json:"actual_val"`
 }
 
-func (c *ConfigDiff) Auditable() map[string]interface{} {
-	return map[string]interface{}{
+func (c *ConfigDiff) Auditable() map[string]any {
+	return map[string]any{
 		"path":       c.Path,
 		"base_val":   c.BaseVal,
 		"actual_val": c.ActualVal,
 	}
 }
 
-func (cd *ConfigDiffs) Auditable() map[string]interface{} {
-	var s []interface{}
+func (cd *ConfigDiffs) Auditable() map[string]any {
+	var s []any
 	for _, d := range cd.Sanitize() {
 		s = append(s, d.Auditable())
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"config_diffs": s,
 	}
 }
@@ -40,8 +40,9 @@ var configSensitivePaths = map[string]bool{
 	"LdapSettings.BindPassword":                              true,
 	"FileSettings.PublicLinkSalt":                            true,
 	"FileSettings.AmazonS3SecretAccessKey":                   true,
+	"FileSettings.AzureAccessKey":                            true,
+	"FileSettings.ExportAzureAccessKey":                      true,
 	"SqlSettings.DataSource":                                 true,
-	"SqlSettings.AtRestEncryptKey":                           true,
 	"SqlSettings.DataSourceReplicas":                         true,
 	"SqlSettings.DataSourceSearchReplicas":                   true,
 	"EmailSettings.SMTPPassword":                             true,
@@ -50,6 +51,7 @@ var configSensitivePaths = map[string]bool{
 	"Office365Settings.Secret":                               true,
 	"OpenIdSettings.Secret":                                  true,
 	"ElasticsearchSettings.Password":                         true,
+	"CacheSettings.RedisPassword":                            true,
 	"MessageExportSettings.GlobalRelaySettings.SMTPUsername": true,
 	"MessageExportSettings.GlobalRelaySettings.SMTPPassword": true,
 	"MessageExportSettings.GlobalRelaySettings.EmailAddress": true,
@@ -60,21 +62,24 @@ var configSensitivePaths = map[string]bool{
 // Sanitize replaces sensitive config values in the diff with asterisks filled strings.
 func (cd ConfigDiffs) Sanitize() ConfigDiffs {
 	if len(cd) == 1 {
+		// PluginSettings.Plugins gets sanitized anyway, so there is no need to use the plugin manifests here.
+		var pluginManifests []*model.Manifest
+
 		cfgPtr, ok := cd[0].BaseVal.(*model.Config)
 		if ok {
-			cfgPtr.Sanitize()
+			cfgPtr.Sanitize(pluginManifests, nil)
 		}
 		cfgPtr, ok = cd[0].ActualVal.(*model.Config)
 		if ok {
-			cfgPtr.Sanitize()
+			cfgPtr.Sanitize(pluginManifests, nil)
 		}
 		cfgVal, ok := cd[0].BaseVal.(model.Config)
 		if ok {
-			cfgVal.Sanitize()
+			cfgVal.Sanitize(pluginManifests, nil)
 		}
 		cfgVal, ok = cd[0].ActualVal.(model.Config)
 		if ok {
-			cfgVal.Sanitize()
+			cfgVal.Sanitize(pluginManifests, nil)
 		}
 	}
 
@@ -106,7 +111,7 @@ func diff(base, actual reflect.Value, label string) ([]ConfigDiff, error) {
 	baseType := base.Type()
 	actualType := actual.Type()
 
-	if baseType.Kind() == reflect.Ptr {
+	if baseType.Kind() == reflect.Pointer {
 		base = reflect.Indirect(base)
 		actual = reflect.Indirect(actual)
 		baseType = base.Type()
@@ -122,7 +127,7 @@ func diff(base, actual reflect.Value, label string) ([]ConfigDiff, error) {
 		if base.NumField() != actual.NumField() {
 			return nil, fmt.Errorf("not same number of fields in struct")
 		}
-		for i := 0; i < base.NumField(); i++ {
+		for i := range base.NumField() {
 			fieldLabel := baseType.Field(i).Name
 			if label != "" {
 				fieldLabel = label + "." + fieldLabel

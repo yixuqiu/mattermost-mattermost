@@ -15,31 +15,32 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
-	"github.com/mattermost/mattermost/server/v8/channels/audit"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
+	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
 )
 
 const (
-	MaximumPluginFileSize = 50 * 1024 * 1024
+	// MaxPluginMemory is the maximum number of bytes to hold in memory when reading a plugin bundle.
+	MaxPluginMemory = 50 * 1024 * 1024
 )
 
 func (api *API) InitPlugin() {
-	api.BaseRoutes.Plugins.Handle("", api.APISessionRequired(uploadPlugin, handlerParamFileAPI)).Methods("POST")
-	api.BaseRoutes.Plugins.Handle("", api.APISessionRequired(getPlugins)).Methods("GET")
-	api.BaseRoutes.Plugin.Handle("", api.APISessionRequired(removePlugin)).Methods("DELETE")
-	api.BaseRoutes.Plugins.Handle("/install_from_url", api.APISessionRequired(installPluginFromURL)).Methods("POST")
-	api.BaseRoutes.Plugins.Handle("/marketplace", api.APISessionRequired(installMarketplacePlugin)).Methods("POST")
+	api.BaseRoutes.Plugins.Handle("", api.APISessionRequired(uploadPlugin, handlerParamFileAPI)).Methods(http.MethodPost)
+	api.BaseRoutes.Plugins.Handle("", api.APISessionRequired(getPlugins)).Methods(http.MethodGet)
+	api.BaseRoutes.Plugin.Handle("", api.APISessionRequired(removePlugin)).Methods(http.MethodDelete)
+	api.BaseRoutes.Plugins.Handle("/install_from_url", api.APISessionRequired(installPluginFromURL)).Methods(http.MethodPost)
+	api.BaseRoutes.Plugins.Handle("/marketplace", api.APISessionRequired(installMarketplacePlugin)).Methods(http.MethodPost)
 
-	api.BaseRoutes.Plugins.Handle("/statuses", api.APISessionRequired(getPluginStatuses)).Methods("GET")
-	api.BaseRoutes.Plugin.Handle("/enable", api.APISessionRequired(enablePlugin)).Methods("POST")
-	api.BaseRoutes.Plugin.Handle("/disable", api.APISessionRequired(disablePlugin)).Methods("POST")
+	api.BaseRoutes.Plugins.Handle("/statuses", api.APISessionRequired(getPluginStatuses)).Methods(http.MethodGet)
+	api.BaseRoutes.Plugin.Handle("/enable", api.APISessionRequired(enablePlugin)).Methods(http.MethodPost)
+	api.BaseRoutes.Plugin.Handle("/disable", api.APISessionRequired(disablePlugin)).Methods(http.MethodPost)
 
-	api.BaseRoutes.Plugins.Handle("/webapp", api.APIHandler(getWebappPlugins)).Methods("GET")
+	api.BaseRoutes.Plugins.Handle("/webapp", api.APIHandler(getWebappPlugins)).Methods(http.MethodGet)
 
-	api.BaseRoutes.Plugins.Handle("/marketplace", api.APISessionRequired(getMarketplacePlugins)).Methods("GET")
+	api.BaseRoutes.Plugins.Handle("/marketplace", api.APISessionRequired(getMarketplacePlugins)).Methods(http.MethodGet)
 
-	api.BaseRoutes.Plugins.Handle("/marketplace/first_admin_visit", api.APIHandler(setFirstAdminVisitMarketplaceStatus)).Methods("POST")
-	api.BaseRoutes.Plugins.Handle("/marketplace/first_admin_visit", api.APISessionRequired(getFirstAdminVisitMarketplaceStatus)).Methods("GET")
+	api.BaseRoutes.Plugins.Handle("/marketplace/first_admin_visit", api.APIHandler(setFirstAdminVisitMarketplaceStatus)).Methods(http.MethodPost)
+	api.BaseRoutes.Plugins.Handle("/marketplace/first_admin_visit", api.APISessionRequired(getFirstAdminVisitMarketplaceStatus)).Methods(http.MethodGet)
 }
 
 func uploadPlugin(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -49,7 +50,7 @@ func uploadPlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("uploadPlugin", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventUploadPlugin, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
@@ -57,7 +58,11 @@ func uploadPlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(MaximumPluginFileSize); err != nil {
+	if err := r.ParseMultipartForm(MaxPluginMemory); err != nil {
+		if err.Error() == "http: request body too large" {
+			c.Err = model.NewAppError("uploadPlugin", "api.plugin.upload.file_too_large.app_error", nil, "", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -74,7 +79,7 @@ func uploadPlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = model.NewAppError("uploadPlugin", "api.plugin.upload.array.app_error", nil, "", http.StatusBadRequest)
 		return
 	}
-	audit.AddEventParameter(auditRec, "filename", pluginArray[0].Filename)
+	model.AddEventParameterToAuditRec(auditRec, "filename", pluginArray[0].Filename)
 
 	file, err := pluginArray[0].Open()
 	if err != nil {
@@ -100,7 +105,7 @@ func installPluginFromURL(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("installPluginFromURL", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventInstallPluginFromURL, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
@@ -110,7 +115,7 @@ func installPluginFromURL(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	force, _ := strconv.ParseBool(r.URL.Query().Get("force"))
 	downloadURL := r.URL.Query().Get("plugin_download_url")
-	audit.AddEventParameter(auditRec, "url", downloadURL)
+	model.AddEventParameterToAuditRec(auditRec, "url", downloadURL)
 
 	pluginFileBytes, err := c.App.DownloadFromURL(downloadURL)
 	if err != nil {
@@ -133,7 +138,7 @@ func installMarketplacePlugin(c *Context, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("installMarketplacePlugin", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventInstallMarketplacePlugin, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
@@ -146,7 +151,7 @@ func installMarketplacePlugin(c *Context, w http.ResponseWriter, r *http.Request
 		c.Err = model.NewAppError("installMarketplacePlugin", "app.plugin.marketplace_plugin_request.app_error", nil, "", http.StatusNotImplemented).Wrap(err)
 		return
 	}
-	audit.AddEventParameter(auditRec, "plugin_id", pluginRequest.Id)
+	model.AddEventParameterToAuditRec(auditRec, "plugin_id", pluginRequest.Id)
 
 	// Always install the latest compatible version
 	// https://mattermost.atlassian.net/browse/MM-41981
@@ -223,9 +228,9 @@ func removePlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("removePlugin", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventRemovePlugin, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
-	audit.AddEventParameter(auditRec, "plugin_id", c.Params.PluginId)
+	model.AddEventParameterToAuditRec(auditRec, "plugin_id", c.Params.PluginId)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
 		c.SetPermissionError(model.PermissionSysconsoleWritePlugins)
@@ -254,15 +259,26 @@ func getWebappPlugins(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	preAuthOnly := c.AppContext.Session().UserId == "" && *c.App.Config().PluginSettings.RestrictUnauthenticatedWebappPlugins
+
 	clientManifests := []*model.Manifest{}
 	for _, m := range manifests {
-		if m.HasClient() {
-			manifest := m.ClientManifest()
-
-			// There is no reason to expose the SettingsSchema in this API call; it's not used in the webapp.
-			manifest.SettingsSchema = nil
-			clientManifests = append(clientManifests, manifest)
+		if !m.HasClient() {
+			continue
 		}
+
+		if preAuthOnly {
+			if m.Webapp.PreAuth {
+				clientManifests = append(clientManifests, m.PreAuthClientManifest())
+			}
+			continue
+		}
+
+		manifest := m.ClientManifest()
+
+		// There is no reason to expose the SettingsSchema in this API call; it's not used in the webapp.
+		manifest.SettingsSchema = nil
+		clientManifests = append(clientManifests, manifest)
 	}
 
 	js, err := json.Marshal(clientManifests)
@@ -271,7 +287,9 @@ func getWebappPlugins(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write(js)
+	if _, err := w.Write(js); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getMarketplacePlugins(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -309,7 +327,9 @@ func getMarketplacePlugins(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write(json)
+	if _, err := w.Write(json); err != nil {
+		c.Logger.Warn("Error while writing json response", mlog.Err(err))
+	}
 }
 
 func enablePlugin(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -323,9 +343,9 @@ func enablePlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("enablePlugin", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventEnablePlugin, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
-	audit.AddEventParameter(auditRec, "plugin_id", c.Params.PluginId)
+	model.AddEventParameterToAuditRec(auditRec, "plugin_id", c.Params.PluginId)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
 		c.SetPermissionError(model.PermissionSysconsoleWritePlugins)
@@ -352,9 +372,9 @@ func disablePlugin(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auditRec := c.MakeAuditRecord("disablePlugin", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventDisablePlugin, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
-	audit.AddEventParameter(auditRec, "plugin_id", c.Params.PluginId)
+	model.AddEventParameterToAuditRec(auditRec, "plugin_id", c.Params.PluginId)
 
 	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWritePlugins) {
 		c.SetPermissionError(model.PermissionSysconsoleWritePlugins)
@@ -401,6 +421,16 @@ func parseMarketplacePluginFilter(u *url.URL) (*model.MarketplacePluginFilter, e
 }
 
 func installPlugin(c *Context, w http.ResponseWriter, plugin io.ReadSeeker, force bool) {
+	conflict, err := fileutils.CheckDirectoryConflict(*c.App.Config().PluginSettings.Directory, *c.App.Config().ImportSettings.Directory)
+	if err != nil {
+		c.Err = model.NewAppError("installPlugin", "api.plugin.install.check_directory.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+	if conflict {
+		c.Err = model.NewAppError("installPlugin", "api.plugin.install.directory_conflict.app_error", nil, "", http.StatusForbidden)
+		return
+	}
+
 	manifest, appErr := c.App.InstallPlugin(plugin, force)
 	if appErr != nil {
 		c.Err = appErr
@@ -413,7 +443,7 @@ func installPlugin(c *Context, w http.ResponseWriter, plugin io.ReadSeeker, forc
 }
 
 func setFirstAdminVisitMarketplaceStatus(c *Context, w http.ResponseWriter, r *http.Request) {
-	auditRec := c.MakeAuditRecord("setFirstAdminVisitMarketplaceStatus", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventSetFirstAdminVisitMarketplaceStatus, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 
@@ -441,7 +471,7 @@ func setFirstAdminVisitMarketplaceStatus(c *Context, w http.ResponseWriter, r *h
 }
 
 func getFirstAdminVisitMarketplaceStatus(c *Context, w http.ResponseWriter, r *http.Request) {
-	auditRec := c.MakeAuditRecord("getFirstAdminVisitMarketplaceStatus", audit.Fail)
+	auditRec := c.MakeAuditRecord(model.AuditEventGetFirstAdminVisitMarketplaceStatus, model.AuditStatusFail)
 	defer c.LogAuditRec(auditRec)
 	c.LogAudit("attempt")
 

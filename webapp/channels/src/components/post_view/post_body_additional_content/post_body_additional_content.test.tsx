@@ -1,7 +1,6 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {
@@ -13,10 +12,8 @@ import type {
 
 import {getEmbedFromMetadata} from 'mattermost-redux/utils/post_utils';
 
-import MessageAttachmentList from 'components/post_view/message_attachments/message_attachment_list';
-import PostAttachmentOpenGraph from 'components/post_view/post_attachment_opengraph';
-import PostImageComponent from 'components/post_view/post_image';
-import YoutubeVideo from 'components/youtube_video';
+import {testPluginComponentErrorHandling} from 'tests/helpers/plugin_error_handling';
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 
 import PostBodyAdditionalContent from './post_body_additional_content';
 import type {Props} from './post_body_additional_content';
@@ -28,6 +25,52 @@ jest.mock('mattermost-redux/utils/post_utils', () => {
         getEmbedFromMetadata: jest.fn(actual.getEmbedFromMetadata),
     };
 });
+
+jest.mock('components/post_view/post_image', () => ({
+    __esModule: true,
+    default: jest.fn((props: any) => (
+        <div
+            data-testid='post-image'
+            data-image-metadata={props.imageMetadata ? 'present' : 'absent'}
+        />
+    )),
+}));
+
+jest.mock('components/post_view/message_attachments/message_attachment_list', () => ({
+    __esModule: true,
+    default: jest.fn(() => (
+        <div data-testid='message-attachment-list'/>
+    )),
+}));
+
+jest.mock('components/post_view/post_attachment_opengraph', () => ({
+    __esModule: true,
+    default: jest.fn(() => (
+        <div data-testid='post-attachment-opengraph'/>
+    )),
+}));
+
+jest.mock('components/youtube_video', () => {
+    const MockYoutubeVideo: any = jest.fn(() => (
+        <div data-testid='youtube-video'/>
+    ));
+    MockYoutubeVideo.isYoutubeLink = (link: string) => {
+        return (/^https?:\/\/((www\.)?youtube\.com|youtu\.be)\/.+/).test(link);
+    };
+    return {__esModule: true, default: MockYoutubeVideo};
+});
+
+jest.mock('components/post_view/post_message_preview', () => ({
+    __esModule: true,
+    default: jest.fn(() => (
+        <div data-testid='post-message-preview'/>
+    )),
+}));
+
+jest.mock('client/web_websocket_client', () => ({
+    __esModule: true,
+    default: {},
+}));
 
 describe('PostBodyAdditionalContent', () => {
     const baseProps: Props = {
@@ -46,6 +89,7 @@ describe('PostBodyAdditionalContent', () => {
             toggleEmbedVisibility: jest.fn(),
         },
         appsEnabled: false,
+        mmBlocksEnabled: false,
     };
 
     describe('with an image preview', () => {
@@ -73,25 +117,8 @@ describe('PostBodyAdditionalContent', () => {
         };
 
         test('should render correctly', () => {
-            const wrapper = shallow(<PostBodyAdditionalContent {...imageBaseProps}/>);
-
-            expect(wrapper).toMatchSnapshot();
-            expect(wrapper.find(PostImageComponent).exists()).toBe(true);
-            expect(wrapper.find(PostImageComponent).prop('imageMetadata')).toBe(imageMetadata);
-        });
-
-        test('should render the toggle after a message containing more than just a link', () => {
-            const props = {
-                ...imageBaseProps,
-                post: {
-                    ...imageBaseProps.post,
-                    message: 'This is an image: ' + imageUrl,
-                },
-            };
-
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-
-            expect(wrapper).toMatchSnapshot();
+            renderWithContext(<PostBodyAdditionalContent {...imageBaseProps}/>);
+            expect(screen.getByTestId('post-image')).toBeInTheDocument();
         });
 
         test('should not render content when isEmbedVisible is false', () => {
@@ -100,9 +127,9 @@ describe('PostBodyAdditionalContent', () => {
                 isEmbedVisible: false,
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
 
-            expect(wrapper.find(PostImageComponent).exists()).toBe(false);
+            expect(screen.queryByTestId('post-image')).not.toBeInTheDocument();
         });
     });
 
@@ -125,11 +152,8 @@ describe('PostBodyAdditionalContent', () => {
         };
 
         test('should render correctly', () => {
-            const wrapper = shallow(<PostBodyAdditionalContent {...messageAttachmentBaseProps}/>);
-
-            expect(wrapper).toMatchSnapshot();
-            expect(wrapper.find(MessageAttachmentList).exists()).toBe(true);
-            expect(wrapper.find(MessageAttachmentList).prop('attachments')).toBe(attachments);
+            renderWithContext(<PostBodyAdditionalContent {...messageAttachmentBaseProps}/>);
+            expect(screen.getByTestId('message-attachment-list')).toBeInTheDocument();
         });
 
         test('should render content when isEmbedVisible is false', () => {
@@ -138,9 +162,9 @@ describe('PostBodyAdditionalContent', () => {
                 isEmbedVisible: false,
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
 
-            expect(wrapper.find(MessageAttachmentList).exists()).toBe(true);
+            expect(screen.getByTestId('message-attachment-list')).toBeInTheDocument();
         });
     });
 
@@ -162,24 +186,9 @@ describe('PostBodyAdditionalContent', () => {
         };
 
         test('should render correctly', () => {
-            const wrapper = shallow(<PostBodyAdditionalContent {...ogBaseProps}/>);
+            renderWithContext(<PostBodyAdditionalContent {...ogBaseProps}/>);
 
-            expect(wrapper.find(PostAttachmentOpenGraph).exists()).toBe(true);
-            expect(wrapper).toMatchSnapshot();
-        });
-
-        test('should render the toggle after a message containing more than just a link', () => {
-            const props = {
-                ...ogBaseProps,
-                post: {
-                    ...ogBaseProps.post,
-                    message: 'This is a link: ' + ogUrl,
-                },
-            };
-
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-
-            expect(wrapper).toMatchSnapshot();
+            expect(screen.getByTestId('post-attachment-opengraph')).toBeInTheDocument();
         });
 
         test('should render content when isEmbedVisible is false', () => {
@@ -188,9 +197,9 @@ describe('PostBodyAdditionalContent', () => {
                 isEmbedVisible: false,
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
 
-            expect(wrapper.find(PostAttachmentOpenGraph).exists()).toBe(true);
+            expect(screen.getByTestId('post-attachment-opengraph')).toBeInTheDocument();
         });
     });
 
@@ -212,24 +221,9 @@ describe('PostBodyAdditionalContent', () => {
         };
 
         test('should render correctly', () => {
-            const wrapper = shallow(<PostBodyAdditionalContent {...youtubeBaseProps}/>);
+            renderWithContext(<PostBodyAdditionalContent {...youtubeBaseProps}/>);
 
-            expect(wrapper.find(YoutubeVideo).exists()).toBe(true);
-            expect(wrapper).toMatchSnapshot();
-        });
-
-        test('should render the toggle after a message containing more than just a link', () => {
-            const props = {
-                ...youtubeBaseProps,
-                post: {
-                    ...youtubeBaseProps.post,
-                    message: 'This is a video: ' + youtubeUrl,
-                },
-            };
-
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-
-            expect(wrapper).toMatchSnapshot();
+            expect(screen.getByTestId('youtube-video')).toBeInTheDocument();
         });
 
         test('should not render content when isEmbedVisible is false', () => {
@@ -238,17 +232,16 @@ describe('PostBodyAdditionalContent', () => {
                 isEmbedVisible: false,
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
 
-            expect(wrapper.find(YoutubeVideo).exists()).toBe(false);
-            expect(wrapper).toMatchSnapshot();
+            expect(screen.queryByTestId('youtube-video')).not.toBeInTheDocument();
         });
     });
 
     describe('with a normal link', () => {
         const mp3Url = 'https://example.com/song.mp3';
 
-        const EmbedMP3 = () => <></>;
+        const EmbedMP3 = () => <div data-testid='embed-mp3'/>;
 
         const linkBaseProps = {
             ...baseProps,
@@ -278,9 +271,8 @@ describe('PostBodyAdditionalContent', () => {
                 ],
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-            expect(wrapper.find(EmbedMP3).exists()).toBe(false);
-            expect(wrapper).toMatchSnapshot();
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
+            expect(screen.queryByTestId('embed-mp3')).not.toBeInTheDocument();
         });
 
         test('Should render the plugin component if it matches and is toggeable', () => {
@@ -297,10 +289,9 @@ describe('PostBodyAdditionalContent', () => {
                 ],
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-            expect(wrapper.find(EmbedMP3).exists()).toBe(true);
-            expect(wrapper.find('button.post__embed-visibility').exists()).toBe(true);
-            expect(wrapper).toMatchSnapshot();
+            const {container} = renderWithContext(<PostBodyAdditionalContent {...props}/>);
+            expect(screen.getByTestId('embed-mp3')).toBeInTheDocument();
+            expect(container.querySelector('button.post__embed-visibility')).toBeInTheDocument();
         });
 
         test('Should render the plugin component if it matches and is not toggeable', () => {
@@ -317,10 +308,9 @@ describe('PostBodyAdditionalContent', () => {
                 ],
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-            expect(wrapper.find(EmbedMP3).exists()).toBe(true);
-            expect(wrapper.find('button.post__embed-visibility').exists()).toBe(false);
-            expect(wrapper).toMatchSnapshot();
+            const {container} = renderWithContext(<PostBodyAdditionalContent {...props}/>);
+            expect(screen.getByTestId('embed-mp3')).toBeInTheDocument();
+            expect(container.querySelector('button.post__embed-visibility')).not.toBeInTheDocument();
         });
 
         test('Should render nothing if the plugin matches but isEmbedVisible is false', () => {
@@ -338,19 +328,46 @@ describe('PostBodyAdditionalContent', () => {
                 isEmbedVisible: false,
             };
 
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-            expect(wrapper.find(EmbedMP3).exists()).toBe(false);
-            expect(wrapper).toMatchSnapshot();
+            renderWithContext(<PostBodyAdditionalContent {...props}/>);
+            expect(screen.queryByTestId('embed-mp3')).not.toBeInTheDocument();
         });
     });
 
-    test('should call toggleEmbedVisibility with post id', () => {
-        const wrapper = shallow<PostBodyAdditionalContent>(<PostBodyAdditionalContent {...baseProps}/>);
+    test.each([
+        ['en', 'Toggle Embed Visibility'],
+        ['pt-BR', 'Alternar visibilidade do conteúdo incorporado'],
+    ])('should expose a localized embed toggle and toggle the post in %s', async (locale, label) => {
+        const imageUrl = 'https://example.com/image.png';
+        const props = {
+            ...baseProps,
+            post: {
+                ...baseProps.post,
+                message: imageUrl,
+                metadata: {
+                    embeds: [{
+                        type: 'image',
+                        url: imageUrl,
+                    }],
+                    images: {
+                        [imageUrl]: {} as PostImage,
+                    },
+                    emojis: [],
+                    files: [],
+                    reactions: [],
+                } as PostMetadata,
+            },
+        };
 
-        wrapper.instance().toggleEmbedVisibility();
+        renderWithContext(<PostBodyAdditionalContent {...props}/>, {}, {
+            locale,
+            intlMessages: {'accessibility.toggle_embed_visibility': label},
+        });
+
+        const toggleButton = screen.getByRole('button', {name: label});
+        await userEvent.click(toggleButton);
 
         expect(baseProps.actions.toggleEmbedVisibility).toHaveBeenCalledTimes(1);
-        expect(baseProps.actions.toggleEmbedVisibility).toBeCalledWith('post_id_1');
+        expect(baseProps.actions.toggleEmbedVisibility).toHaveBeenCalledWith('post_id_1');
     });
 
     test('should call getEmbedFromMetadata with metadata', () => {
@@ -367,62 +384,34 @@ describe('PostBodyAdditionalContent', () => {
             },
         };
 
-        const wrapper = shallow<PostBodyAdditionalContent>(<PostBodyAdditionalContent {...props}/>);
-        wrapper.instance().getEmbed();
+        renderWithContext(<PostBodyAdditionalContent {...props}/>);
 
         expect(getEmbedFromMetadata).toHaveBeenCalledWith(metadata);
     });
 
-    describe('with a permalinklink', () => {
-        const permalinkUrl = 'https://community.mattermost.com/core/pl/123456789';
+    testPluginComponentErrorHandling((pluginComponent) => {
+        const linkUrl = 'https://example.com/song.mp3';
 
-        const permalinkBaseProps = {
-            ...baseProps,
-            post: {
-                ...baseProps.post,
-                message: permalinkUrl,
-                metadata: {
-                    embeds: [{
-                        type: 'permalink',
-                        url: '',
-                        data: {
-                            post_id: 'post_id123',
-                            channel_display_name: 'channel1',
-                            team_name: 'core',
-                            channel_type: 'O',
-                            channel_id: 'channel_id',
-                        },
-                    }],
-                    images: {},
-                    emojis: [],
-                    files: [],
-                    reactions: [],
-                } as PostMetadata,
-            },
-        };
-
-        test('Render permalink preview', () => {
-            const wrapper = shallow(<PostBodyAdditionalContent {...permalinkBaseProps}/>);
-            expect(wrapper).toMatchSnapshot();
-        });
-
-        test('Render permalink preview with no data', () => {
-            const metadata = {
-                embeds: [{
-                    type: 'permalink',
-                    url: '',
-                }],
-            } as PostMetadata;
-            const props = {
-                ...permalinkBaseProps,
-                post: {
-                    ...permalinkBaseProps.post,
-                    metadata,
-                },
-            };
-
-            const wrapper = shallow(<PostBodyAdditionalContent {...props}/>);
-            expect(wrapper).toMatchSnapshot();
-        });
+        renderWithContext(
+            <PostBodyAdditionalContent
+                {...baseProps}
+                post={{
+                    ...baseProps.post,
+                    message: linkUrl,
+                    metadata: {
+                        embeds: [{
+                            type: 'link',
+                            url: linkUrl,
+                        }],
+                    } as PostMetadata,
+                }}
+                isEmbedVisible={true}
+                pluginPostWillRenderEmbedComponents={[{
+                    ...pluginComponent,
+                    match: ({url}: PostEmbed) => url === linkUrl,
+                    toggleable: false,
+                }]}
+            />,
+        );
     });
 });

@@ -5,6 +5,12 @@ import React, {memo, useEffect, useState} from 'react';
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 
+import CloseIcon from '@mattermost/compass-icons/components/close';
+import DownloadOutlineIcon from '@mattermost/compass-icons/components/download-outline';
+import LinkVariantIcon from '@mattermost/compass-icons/components/link-variant';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {FileInfo} from '@mattermost/types/files';
 
 import {getFilePublicLink} from 'mattermost-redux/actions/files';
@@ -12,21 +18,23 @@ import {getFilePublicLink as selectFilePublicLink} from 'mattermost-redux/select
 
 import CopyButton from 'components/copy_button';
 import ExternalLink from 'components/external_link';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
+import MarkdownViewToggle from 'components/markdown_view_toggle/markdown_view_toggle';
+import {useMarkdownView} from 'components/markdown_view_toggle/use_markdown_view';
 
-import Constants, {FileTypes} from 'utils/constants';
+import {FileTypes} from 'utils/constants';
 import {copyToClipboard, getFileType} from 'utils/utils';
 
 import type {GlobalState} from 'types/store';
 
+import {FILE_PREVIEW_ICON_BUTTON_CLASS, FILE_PREVIEW_ICON_BUTTON_PROPS} from '../icon_button';
 import {isFileInfo} from '../types';
 import type {LinkInfo} from '../types';
 
 import './file_preview_modal_main_actions.scss';
 
+const COPIED_TOOLTIP_DURATION = 2000;
+
 interface Props {
-    usedInside?: 'Header' | 'Footer';
     showOnlyClose?: boolean;
     showClose?: boolean;
     showPublicLink?: boolean;
@@ -38,21 +46,44 @@ interface Props {
     canCopyContent: boolean;
     handleModalClose: () => void;
     content: string;
+    showMarkdownToggle?: boolean;
 }
 
-const FilePreviewModalMainActions: React.FC<Props> = (props: Props) => {
+const FilePreviewModalMainActions: React.FC<Props> = ({
+    showOnlyClose = false,
+    showClose = true,
+    showPublicLink = true,
+    filename,
+    fileURL,
+    fileInfo,
+    enablePublicLink,
+    canDownloadFiles,
+    canCopyContent,
+    handleModalClose,
+    content,
+    showMarkdownToggle = false,
+}: Props) => {
     const intl = useIntl();
+    const [markdownView, setMarkdownView] = useMarkdownView('file_preview');
 
-    const tooltipPlacement = props.usedInside === 'Header' ? 'bottom' : 'top';
     const selectedFilePublicLink = useSelector((state: GlobalState) => selectFilePublicLink(state)?.link);
     const dispatch = useDispatch();
     const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
     useEffect(() => {
-        if (isFileInfo(props.fileInfo) && props.enablePublicLink) {
-            dispatch(getFilePublicLink(props.fileInfo.id));
+        if (isFileInfo(fileInfo) && enablePublicLink) {
+            dispatch(getFilePublicLink(fileInfo.id));
         }
-    }, [props.fileInfo, props.enablePublicLink]);
+    }, [fileInfo, enablePublicLink]);
+
+    useEffect(() => {
+        if (publicLinkCopied) {
+            setTimeout(() => {
+                setPublicLinkCopied(false);
+            }, COPIED_TOOLTIP_DURATION);
+        }
+    }, [publicLinkCopied]);
+
     const copyPublicLink = () => {
         copyToClipboard(selectedFilePublicLink ?? '');
         setPublicLinkCopied(true);
@@ -63,24 +94,18 @@ const FilePreviewModalMainActions: React.FC<Props> = (props: Props) => {
         defaultMessage: 'Close',
     });
     const closeButton = (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            key='publicLink'
-            placement={tooltipPlacement}
-            overlay={
-                <Tooltip id='close-icon-tooltip'>
-                    {closeMessage}
-                </Tooltip>
-            }
+        <WithTooltip
+            title={closeMessage}
+            key='close'
         >
-            <button
-                className='file-preview-modal-main-actions__action-item'
-                onClick={props.handleModalClose}
+            <IconButton
+                {...FILE_PREVIEW_ICON_BUTTON_PROPS}
+                className={FILE_PREVIEW_ICON_BUTTON_CLASS}
+                icon={<Icon glyph={<CloseIcon/>}/>}
+                onClick={handleModalClose}
                 aria-label={closeMessage}
-            >
-                <i className='icon icon-close'/>
-            </button>
-        </OverlayTrigger>
+            />
+        </WithTooltip>
     );
 
     let publicTooltipMessage;
@@ -96,27 +121,18 @@ const FilePreviewModalMainActions: React.FC<Props> = (props: Props) => {
         });
     }
     const publicLink = (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
+        <WithTooltip
             key='filePreviewPublicLink'
-            placement={tooltipPlacement}
-            shouldUpdatePosition={true}
-            onExit={() => setPublicLinkCopied(false)}
-            overlay={
-                <Tooltip id='link-variant-icon-tooltip'>
-                    {publicTooltipMessage}
-                </Tooltip>
-            }
+            title={publicTooltipMessage}
         >
-            <a
-                href='#'
-                className='file-preview-modal-main-actions__action-item'
+            <IconButton
+                {...FILE_PREVIEW_ICON_BUTTON_PROPS}
+                className={FILE_PREVIEW_ICON_BUTTON_CLASS}
+                icon={<Icon glyph={<LinkVariantIcon/>}/>}
                 onClick={copyPublicLink}
                 aria-label={publicTooltipMessage}
-            >
-                <i className='icon icon-link-variant'/>
-            </a>
-        </OverlayTrigger>
+            />
+        </WithTooltip>
     );
 
     const downloadMessage = intl.formatMessage({
@@ -124,55 +140,54 @@ const FilePreviewModalMainActions: React.FC<Props> = (props: Props) => {
         defaultMessage: 'Download',
     });
     const download = (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
+        <WithTooltip
             key='download'
-            placement={tooltipPlacement}
-            overlay={
-                <Tooltip id='download-icon-tooltip'>
-                    {downloadMessage}
-                </Tooltip>
-            }
+            title={downloadMessage}
         >
-            <ExternalLink
-                href={props.fileURL}
-                className='file-preview-modal-main-actions__action-item'
-                location='file_preview_modal_main_actions'
-                download={props.filename}
+            <IconButton
+                {...FILE_PREVIEW_ICON_BUTTON_PROPS}
+                className={`${FILE_PREVIEW_ICON_BUTTON_CLASS} file-preview-modal-main-actions__download`}
+                asChild={true}
+                icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
                 aria-label={downloadMessage}
             >
-                <i className='icon icon-download-outline'/>
-            </ExternalLink>
-        </OverlayTrigger>
+                <ExternalLink
+                    href={fileURL}
+                    location='file_preview_modal_main_actions'
+                    download={filename}
+                />
+            </IconButton>
+        </WithTooltip>
     );
-    const getBeforeCopyText = () => {
-        const fileType = getFileType(props.fileInfo.extension);
-        return fileType === FileTypes.TEXT ? 'Copy text' : undefined;
-    };
 
     const copy = (
         <CopyButton
-            className='file-preview-modal-main-actions__action-item'
-            beforeCopyText={getBeforeCopyText()}
-            placement={tooltipPlacement}
-            content={props.content}
+            className={FILE_PREVIEW_ICON_BUTTON_CLASS}
+            iconButtonProps={FILE_PREVIEW_ICON_BUTTON_PROPS}
+            isForText={getFileType(fileInfo.extension) === FileTypes.TEXT}
+            content={content}
         />
     );
+
+    const markdownToggle = (
+        <MarkdownViewToggle
+            key='markdownToggle'
+            appearance='onDark'
+            size='large'
+            view={markdownView}
+            onChange={setMarkdownView}
+        />
+    );
+
     return (
-        <div className='file-preview-modal-main-actions__actions'>
-            {!props.showOnlyClose && props.canCopyContent && copy}
-            {!props.showOnlyClose && props.enablePublicLink && props.showPublicLink && publicLink}
-            {!props.showOnlyClose && props.canDownloadFiles && download}
-            {props.showClose && closeButton}
+        <div className='file-preview-modal-main-actions__actions icon-buttons-on-dark'>
+            {!showOnlyClose && showMarkdownToggle && markdownToggle}
+            {!showOnlyClose && canCopyContent && copy}
+            {!showOnlyClose && enablePublicLink && showPublicLink && publicLink}
+            {!showOnlyClose && canDownloadFiles && download}
+            {showClose && closeButton}
         </div>
     );
-};
-
-FilePreviewModalMainActions.defaultProps = {
-    showOnlyClose: false,
-    usedInside: 'Header',
-    showClose: true,
-    showPublicLink: true,
 };
 
 export default memo(FilePreviewModalMainActions);

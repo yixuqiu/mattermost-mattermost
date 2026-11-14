@@ -5,13 +5,12 @@ import React from 'react';
 import {FormattedMessage, injectIntl} from 'react-intl';
 import type {IntlShape} from 'react-intl';
 import ReactSelect from 'react-select';
-import type {ValueType} from 'react-select';
+import type {StylesConfig, OnChangeValue, AriaOnFocus, AriaOnChange} from 'react-select';
 
 import type {UserProfile} from '@mattermost/types/users';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
-import ExternalLink from 'components/external_link';
 import SettingItemMax from 'components/setting_item_max';
 
 import type {Language} from 'i18n/i18n';
@@ -20,6 +19,7 @@ import {isKeyPressed} from 'utils/keyboard';
 
 type Actions = {
     updateMe: (user: UserProfile) => Promise<ActionResult>;
+    patchUser: (user: UserProfile) => Promise<ActionResult>;
 };
 
 type Props = {
@@ -29,12 +29,13 @@ type Props = {
     locales: Record<string, Language>;
     updateSection: (section: string) => void;
     actions: Actions;
+    adminMode?: boolean;
 };
 
 type SelectedOption = {
     value: string;
     label: string;
-}
+};
 
 type State = {
     isSaving: boolean;
@@ -45,7 +46,7 @@ type State = {
 };
 
 export class ManageLanguage extends React.PureComponent<Props, State> {
-    reactSelectContainer: React.RefObject<HTMLDivElement>;
+    reactSelectContainer: React.RefObject<HTMLDivElement | null>;
     constructor(props: Props) {
         super(props);
         const userLocale = props.locale;
@@ -93,13 +94,18 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
 
     handleKeyDown = (e: React.KeyboardEvent) => {
         const modalBody = document.querySelector('.modal-body');
-        if (isKeyPressed(e, Constants.KeyCodes.ENTER)) {
-            modalBody?.classList.add('no-scroll');
-            this.setState({openMenu: true});
+
+        // Space/Enter open the controlled menu (react-select Space alone is unreliable
+        // when menuIsOpen is controlled and the control was not focused on mount).
+        if (isKeyPressed(e, Constants.KeyCodes.ENTER) || isKeyPressed(e, Constants.KeyCodes.SPACE)) {
+            if (!this.state.openMenu) {
+                modalBody?.classList.add('no-scroll');
+                this.setState({openMenu: true});
+            }
         }
     };
 
-    setLanguage = (selectedOption: ValueType<SelectedOption>) => {
+    setLanguage = (selectedOption: OnChangeValue<SelectedOption, boolean>) => {
         if (selectedOption && 'value' in selectedOption) {
             this.setState({
                 locale: selectedOption.value,
@@ -122,9 +128,10 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
     submitUser = (user: UserProfile) => {
         this.setState({isSaving: true});
 
-        this.props.actions.updateMe(user).then((res) => {
+        const action = this.props.adminMode ? this.props.actions.patchUser : this.props.actions.updateMe;
+        action(user).then((res) => {
             if ('data' in res) {
-                // Do nothing since changing the locale essentially refreshes the page
+                this.setState({isSaving: false});
             } else if ('error' in res) {
                 let serverError;
                 const {error} = res;
@@ -181,11 +188,20 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
         });
 
         const reactStyles = {
-            menuPortal: (provided: React.CSSProperties) => ({
+            menuPortal: (provided) => ({
                 ...provided,
                 zIndex: 9999,
             }),
+        } satisfies StylesConfig<SelectedOption, boolean>;
+
+        const onFocusMessage: AriaOnFocus<SelectedOption> = ({focused}) => {
+            return `option ${focused.label} focused`;
         };
+
+        const onChangeMessage: AriaOnChange<SelectedOption, boolean> = (option) => {
+            return `option ${option.label} selected`;
+        };
+
         const interfaceLanguageLabelAria = intl.formatMessage({id: 'user.settings.languages.dropdown.arialabel', defaultMessage: 'Dropdown selector to change the interface language'});
 
         const input = (
@@ -195,6 +211,7 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
                     aria-label={interfaceLanguageLabelAria}
                     className='control-label'
                     id='changeInterfaceLanguageLabel'
+                    htmlFor='displayLanguage'
                 >
                     <FormattedMessage
                         id='user.settings.languages.change'
@@ -208,18 +225,23 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
                     <ReactSelect
                         className='react-select react-select-top'
                         classNamePrefix='react-select'
+                        ariaLiveMessages={{
+                            onFocus: onFocusMessage,
+                            onChange: onChangeMessage,
+                        }}
                         id='displayLanguage'
                         menuIsOpen={this.state.openMenu}
                         menuPortalTarget={document.body}
                         styles={reactStyles}
                         options={options}
-                        clearable={false}
+                        isClearable={false}
                         onChange={this.setLanguage}
                         onKeyDown={this.handleKeyDown}
                         value={this.state.selectedOption}
                         onMenuClose={this.handleMenuClose}
                         onMenuOpen={this.handleMenuOpen}
                         aria-labelledby='changeInterfaceLanguageLabel'
+                        aria-live='assertive'
                     />
                     {serverError}
                 </div>
@@ -228,21 +250,6 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
                     <FormattedMessage
                         id='user.settings.languages.promote1'
                         defaultMessage='Select which language Mattermost displays in the user interface.'
-                    />
-                    <p/>
-                    <FormattedMessage
-                        id='user.settings.languages.promote2'
-                        defaultMessage='Would you like to help with translations? Join the <link>Mattermost Translation Server</link> to contribute.'
-                        values={{
-                            link: (msg: React.ReactNode) => (
-                                <ExternalLink
-                                    href='http://translate.mattermost.com'
-                                    location='manage_languages'
-                                >
-                                    {msg}
-                                </ExternalLink>
-                            ),
-                        }}
                     />
                 </div>
             </div>
@@ -260,6 +267,7 @@ export class ManageLanguage extends React.PureComponent<Props, State> {
                 saving={this.state.isSaving}
                 inputs={[input]}
                 updateSection={this.props.updateSection}
+                disableEnterSubmit={true}
             />
         );
     }

@@ -4,25 +4,82 @@
 package platform
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest/mock"
+	"github.com/mattermost/mattermost/server/v8/channels/store"
+	"github.com/mattermost/mattermost/server/v8/channels/store/storetest/mocks"
+	"github.com/mattermost/mattermost/server/v8/channels/utils"
+	mocks2 "github.com/mattermost/mattermost/server/v8/channels/utils/mocks"
+	"github.com/mattermost/mattermost/server/v8/channels/utils/testutils"
 )
 
 func TestLoadLicense(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	th.Service.LoadLicense()
 	require.Nil(t, th.Service.License(), "shouldn't have a valid license")
 }
 
+func TestLoadLicenseStoreFailure(t *testing.T) {
+	licenseID := model.NewId()
+
+	setup := func(t *testing.T, getErr error) (*TestHelper, *mocks.LicenseStore) {
+		t.Helper()
+		t.Setenv(LicenseEnv, "")
+
+		th := SetupWithStoreMock(t)
+		mockStore := th.Service.Store.(*mocks.Store)
+
+		systemMock := &mocks.SystemStore{}
+		systemMock.On("GetByNameWithContext", mock.Anything, model.SystemActiveLicenseId).
+			Return(&model.System{Name: model.SystemActiveLicenseId, Value: licenseID}, nil)
+		mockStore.On("System").Return(systemMock)
+
+		licenseMock := &mocks.LicenseStore{}
+		licenseMock.On("Get", mock.Anything, licenseID).Return(nil, getErr)
+		mockStore.On("License").Return(licenseMock)
+
+		return th, licenseMock
+	}
+
+	t.Run("keeps the current license when the read fails", func(t *testing.T) {
+		th, licenseMock := setup(t, errors.New("connection refused"))
+
+		current := model.NewTestLicense()
+		th.Service.SetLicense(current)
+
+		th.Service.LoadLicense()
+
+		// LoadLicense reruns on a 24h timer, so clearing here would drop every
+		// entitlement until the next successful read.
+		require.Equal(t, current, th.Service.License())
+		licenseMock.AssertExpectations(t)
+	})
+
+	t.Run("clears the license when the record is genuinely absent", func(t *testing.T) {
+		th, licenseMock := setup(t, store.NewErrNotFound("License", licenseID))
+
+		th.Service.SetLicense(model.NewTestLicense())
+
+		th.Service.LoadLicense()
+
+		require.Nil(t, th.Service.License())
+		licenseMock.AssertExpectations(t)
+	})
+}
+
 func TestSaveLicense(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	b1 := []byte("junk")
 
@@ -30,17 +87,65 @@ func TestSaveLicense(t *testing.T) {
 	require.NotNil(t, err, "shouldn't have saved license")
 }
 
-func TestRemoveLicense(t *testing.T) {
+func TestSaveLicenseWrongEnvironment(t *testing.T) {
+	// t.Setenv prevents t.Parallel — the service environment has no config equivalent.
 	th := Setup(t)
-	defer th.TearDown()
+
+	t.Setenv("MM_SERVICEENVIRONMENT", model.ServiceEnvironmentProduction)
+
+	// validTestLicense is signed with the test key, so uploading it to a server running
+	// in the production service environment must report an environment mismatch rather
+	// than the generic invalid-license error.
+	_, appErr := th.Service.SaveLicense(validTestLicense)
+	require.NotNil(t, appErr, "shouldn't have saved a license signed for another environment")
+	require.Equal(t, model.WrongEnvironmentTestLicenseError, appErr.Id)
+	require.Equal(t, http.StatusBadRequest, appErr.StatusCode)
+}
+
+func TestSaveEnterpriseAdvancedLicense(t *testing.T) {
+	th := Setup(t)
+
+	defer testutils.ResetLicenseValidator()
+	mockLicenseValidator := mocks2.LicenseValidatorIface{}
+
+	license := &model.License{
+		Id: model.NewId(),
+		Features: &model.Features{
+			Users: new(100),
+		},
+		Customer: &model.Customer{
+			Name:  "TestName",
+			Email: "test@example.com",
+		},
+		SkuName:      "SKU NAME",
+		SkuShortName: model.LicenseShortSkuEnterpriseAdvanced,
+		StartsAt:     model.GetMillis() - 1000,
+		ExpiresAt:    model.GetMillis() + 100000,
+	}
+
+	mockLicenseValidator.On("LicenseFromBytes", mock.Anything).Return(license, nil).Once()
+	licenseBytes, err := json.Marshal(license)
+	require.NoError(t, err)
+
+	mockLicenseValidator.On("ValidateLicense", mock.Anything).Return(string(licenseBytes), nil)
+	utils.LicenseValidator = &mockLicenseValidator
+
+	_, appErr := th.Service.SaveLicense(licenseBytes)
+
+	require.Nil(t, appErr, "should have saved license")
+}
+
+func TestRemoveLicense(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
 
 	err := th.Service.RemoveLicense()
 	require.Nil(t, err, "should have removed license")
 }
 
 func TestSetLicense(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	l1 := &model.License{}
 	l1.Features = &model.Features{}
@@ -60,8 +165,8 @@ func TestSetLicense(t *testing.T) {
 }
 
 func TestGetSanitizedClientLicense(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	setLicense(th, nil)
 

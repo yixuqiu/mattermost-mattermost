@@ -17,6 +17,7 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/mattermost/mattermost/server/v8/channels/app"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
 	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
 	"github.com/mattermost/mattermost/server/v8/platform/shared/templates"
@@ -31,23 +32,30 @@ func (w *Web) InitStatic() {
 		}
 
 		staticDir, _ := fileutils.FindDir(model.ClientDir)
-		mlog.Debug("Using client directory", mlog.String("clientDir", staticDir))
+		mlog.Debug("Using client directory", mlog.String("client_dir", staticDir))
 
 		subpath, _ := utils.GetSubpathFromConfig(w.srv.Config())
 
 		staticHandler := staticFilesHandler(http.StripPrefix(path.Join(subpath, "static"), http.FileServer(http.Dir(staticDir))))
 		pluginHandler := staticFilesHandler(http.StripPrefix(path.Join(subpath, "static", "plugins"), http.FileServer(http.Dir(*w.srv.Config().PluginSettings.ClientDirectory))))
+		docsHandler := NewDocsHandler(staticDir, subpath)
 
-		if *w.srv.Config().ServiceSettings.WebserverMode == "gzip" {
+		if w.srv.Config().ServiceSettings.CompressResponses() {
 			staticHandler = gzhttp.GzipHandler(staticHandler)
 			pluginHandler = gzhttp.GzipHandler(pluginHandler)
+			docsHandler = gzhttp.GzipHandler(docsHandler)
 		}
 
 		w.MainRouter.PathPrefix("/static/plugins/").Handler(pluginHandler)
 		w.MainRouter.PathPrefix("/static/").Handler(staticHandler)
+		w.MainRouter.PathPrefix("/" + DocsURLPrefix + "/").Handler(docsHandler)
+		w.MainRouter.Handle("/"+DocsURLPrefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path += "/"
+			http.Redirect(w, r, r.URL.String(), http.StatusFound)
+		}))
 		w.MainRouter.Handle("/robots.txt", http.HandlerFunc(robotsHandler))
 		w.MainRouter.Handle("/unsupported_browser.js", http.HandlerFunc(unsupportedBrowserScriptHandler))
-		w.MainRouter.Handle("/{anything:.*}", w.NewStaticHandler(root)).Methods("GET")
+		w.MainRouter.Handle("/{anything:.*}", w.NewStaticHandler(root)).Methods(http.MethodGet, http.MethodHead)
 
 		// When a subpath is defined, it's necessary to handle redirects without a
 		// trailing slash. We don't want to use StrictSlash on the w.MainRouter and affect
@@ -62,9 +70,35 @@ func (w *Web) InitStatic() {
 func root(c *Context, w http.ResponseWriter, r *http.Request) {
 	if !CheckClientCompatibility(r.UserAgent()) {
 		w.Header().Set("Cache-Control", "no-store")
-		data := renderUnsupportedBrowser(c.AppContext, r)
+		subpath, _ := utils.GetSubpathFromConfig(c.App.Srv().Config())
+		data := renderUnsupportedBrowser(c.AppContext, r, subpath)
 
-		c.App.Srv().TemplatesContainer().Render(w, "unsupported_browser", data)
+		err := c.App.Srv().TemplatesContainer().Render(w, "unsupported_browser", data)
+		if err != nil {
+			c.Logger.Error("Failed to render template", mlog.Err(err))
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		return
+	}
+
+	if !CheckDesktopAppCompatibility(r.UserAgent(), c.App.Srv().Config().ServiceSettings.MinimumDesktopAppVersion) {
+		w.Header().Set("Cache-Control", "no-store")
+
+		currentVersion, ok := app.GetDesktopAppVersion(r.UserAgent())
+		if !ok {
+			currentVersion = "unknown"
+		}
+		cfg := c.App.Srv().Config()
+		subpath, _ := utils.GetSubpathFromConfig(cfg)
+
+		data := renderUnsupportedDesktopApp(c.AppContext, cfg, currentVersion, subpath)
+		err := c.App.Srv().TemplatesContainer().Render(w, "unsupported_desktop_app", data)
+		if err != nil {
+			c.Logger.Error("Failed to render template", mlog.Err(err))
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		return
 	}
 
@@ -78,7 +112,10 @@ func root(c *Context, w http.ResponseWriter, r *http.Request) {
 	staticDir, _ := fileutils.FindDir(model.ClientDir)
 	contents, err := os.ReadFile(filepath.Join(staticDir, "root.html"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		c.Logger.Warn("Failed to read content from file",
+			mlog.String("file_path", filepath.Join(staticDir, "root.html")),
+			mlog.Err(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -90,7 +127,19 @@ func root(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write(contents)
+	if _, err = w.Write(contents); err != nil {
+		c.Logger.Warn("Failed to write content to HTTP reply", mlog.Err(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// setStaticSecurityHeaders applies defaults shared by static and docs handlers.
+func setStaticSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "max-age=31556926, public")
+	w.Header().Set("Permissions-Policy", "")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
 func staticFilesHandler(handler http.Handler) http.Handler {
@@ -98,16 +147,10 @@ func staticFilesHandler(handler http.Handler) http.Handler {
 		//wrap our ResponseWriter with our no-cache 404-handler
 		w = &notFoundNoCacheResponseWriter{ResponseWriter: w}
 
+		setStaticSecurityHeaders(w)
 		if path.Base(r.URL.Path) == "remote_entry.js" {
 			w.Header().Set("Cache-Control", "no-cache, max-age=31556926, public")
-		} else {
-			w.Header().Set("Cache-Control", "max-age=31556926, public")
 		}
-
-		// Hardcoded sensible default values for these security headers. Feel free to override in proxy or ingress
-		w.Header().Set("Permissions-Policy", "")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
 
 		if strings.HasSuffix(r.URL.Path, "/") {
 			http.NotFound(w, r)
@@ -135,7 +178,11 @@ func robotsHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Write(robotsTxt)
+	if _, err := w.Write(robotsTxt); err != nil {
+		mlog.Warn("Failed to write robots.txt", mlog.Err(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func unsupportedBrowserScriptHandler(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +193,16 @@ func unsupportedBrowserScriptHandler(w http.ResponseWriter, r *http.Request) {
 
 	templatesDir, _ := templates.GetTemplateDirectory()
 	http.ServeFile(w, r, filepath.Join(templatesDir, "unsupported_browser.js"))
+}
+
+func ensureTrailingSlash(s string) string {
+	if s == "" {
+		return "/"
+	}
+	if !strings.HasSuffix(s, "/") {
+		return s + "/"
+	}
+	return s
 }
 
 func getOpenGraphMetaTags(c *Context) string {

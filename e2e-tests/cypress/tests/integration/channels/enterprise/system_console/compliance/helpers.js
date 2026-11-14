@@ -3,7 +3,7 @@
 
 import path from 'path';
 
-import * as TIMEOUTS from '../../../../../fixtures/timeouts';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 export function downloadAndUnzipExportFile(targetFolder = '') {
     // # Get the download link
@@ -34,17 +34,14 @@ export function verifyPostsCSVFile(targetFolder, type, match) {
 }
 
 export function verifyActianceXMLFile(targetFolder, type, match) {
-    cy.shellFind(targetFolder, /actiance_export.xml/).
-        then((files) => {
-            cy.readFile(files[files.length - 1]).
-                should('exist').
-                and(type, match);
-        });
+    cy.readFile(`${targetFolder}/actiance_export.xml`).
+        should('exist').
+        and(type, match);
 }
 
 export function verifyExportedMessagesCount(expectedNumber) {
     // * Verifying number of exported messages
-    cy.get('@firstRow').find('td:eq(5)').should('have.text', `${expectedNumber} messages exported.`);
+    cy.get('@firstRow').find('td:eq(4)').should('have.text', `${expectedNumber} messages exported.`);
 }
 
 export function editLastPost(message) {
@@ -55,7 +52,8 @@ export function editLastPost(message) {
         cy.get('#edit_textbox').should('be.visible');
 
         // # Update the post message and type ENTER
-        cy.get('#edit_textbox').invoke('val', '').type(message).type('{enter}').wait(TIMEOUTS.HALF_SEC);
+        cy.get('#edit_textbox').invoke('val', '').type(message);
+        cy.get('#create_post').findByText('Save').should('be.visible').click();
 
         // * Edit modal should not be visible
         cy.get('#edit_textbox').should('not.exist');
@@ -89,10 +87,14 @@ export function gotoTeamAndPostImage() {
 }
 
 export function gotoGlobalPolicy() {
-    // # Click edit on global policy data table
-    cy.get('#global_policy_table .DataGrid .MenuWrapper').trigger('mouseover').click();
-    cy.findByRole('button', {name: /edit/i}).should('be.visible').click();
-    cy.get('.DataRetentionSettings .admin-console__header', {timeout: TIMEOUTS.TWO_MIN}).should('be.visible').invoke('text').should('include', 'Global Retention Policy');
+    // # Reveal CSS :hover IconButton, open menu, then Edit.
+    // Menu.Item defers onClick until close, so wait on URL before asserting header
+    // (invoke('text') is not retryable across navigation).
+    cy.get('#global_policy_table .DataGrid_row').first().realHover();
+    cy.get('#global-retention-policy-menu').should('be.visible').click();
+    cy.get('#global-retention-policy-menu-edit').should('be.visible').click();
+    cy.location('pathname', {timeout: TIMEOUTS.TWO_MIN}).should('include', '/data_retention_settings/global_policy');
+    cy.get('.DataRetentionSettings .admin-console__header').should('be.visible').and('include.text', 'Global Retention Policy');
 }
 
 export function editGlobalPolicyMessageRetention(input, result) {
@@ -164,7 +166,7 @@ export function runDataRetentionAndVerifyPostDeleted(testTeam, testChannel, post
     // # Waiting for Data Retention process to finish
     cy.get('.job-table__table').find('tbody > tr').eq(0).as('firstRow');
     cy.get('@firstRow').within(() => {
-        cy.get('td:eq(1)', {timeout: TIMEOUTS.FOUR_MIN}).should('have.text', 'Success');
+        cy.get('td:eq(0)', {timeout: TIMEOUTS.FOUR_MIN}).should('have.text', 'Success');
     });
 
     // * Verifying if post has been deleted

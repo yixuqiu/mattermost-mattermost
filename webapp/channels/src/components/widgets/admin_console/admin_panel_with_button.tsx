@@ -6,25 +6,32 @@ import React from 'react';
 import type {MessageDescriptor} from 'react-intl';
 import {FormattedMessage} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
 import AdminPanel from './admin_panel';
 
 type Props = {
     children?: React.ReactNode;
-    className: string;
+    className?: string;
     id?: string;
     title: MessageDescriptor;
     subtitle: MessageDescriptor;
     onButtonClick?: React.EventHandler<React.MouseEvent>;
     disabled?: boolean;
     buttonText?: MessageDescriptor;
-}
+
+    // Renders the panel action in the danger colour, for panels whose button
+    // removes something.
+    destructive?: boolean;
+};
 
 const AdminPanelWithButton = ({
-    className,
+    className = '',
     subtitle,
     title,
     buttonText,
     children,
+    destructive,
     disabled,
     id,
     onButtonClick,
@@ -33,21 +40,23 @@ const AdminPanelWithButton = ({
     if (onButtonClick && buttonText) {
         const buttonId = (buttonText.defaultMessage as string || '').split(' ').join('-').toLowerCase();
         button = (
-            <a
-                className={classNames('btn', 'btn-primary', {disabled})}
-                onClick={disabled ? (e) => e.preventDefault() : onButtonClick}
+            <Button
+                emphasis='primary'
+                destructive={destructive}
+                disabled={disabled}
+                onClick={onButtonClick}
                 data-testid={buttonId}
             >
                 <FormattedMessage
                     {...buttonText}
                 />
-            </a>
+            </Button>
         );
     }
 
     return (
         <AdminPanel
-            className={'AdminPanelWithButton ' + className}
+            className={classNames('AdminPanelWithButton', className)}
             id={id}
             title={title}
             subtitle={subtitle}
@@ -56,10 +65,6 @@ const AdminPanelWithButton = ({
             {children}
         </AdminPanel>
     );
-};
-
-AdminPanelWithButton.defaultProps = {
-    className: '',
 };
 
 export default AdminPanelWithButton;

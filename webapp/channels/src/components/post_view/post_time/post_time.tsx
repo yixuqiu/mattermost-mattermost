@@ -5,20 +5,17 @@ import React from 'react';
 import type {ComponentProps} from 'react';
 import {Link} from 'react-router-dom';
 
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
+import {isMobile} from '@mattermost/shared/utils/user_agent';
+
 import * as GlobalActions from 'actions/global_actions';
 
-import OverlayTrigger from 'components/overlay_trigger';
-import Timestamp, {RelativeRanges} from 'components/timestamp';
-import Tooltip from 'components/tooltip';
+import Timestamp from 'components/timestamp';
 
 import {Locations} from 'utils/constants';
-import {isMobile} from 'utils/user_agent';
 
-const POST_TOOLTIP_RANGES = [
-    RelativeRanges.TODAY_TITLE_CASE,
-    RelativeRanges.YESTERDAY_TITLE_CASE,
-];
 const getTimeFormat: ComponentProps<typeof Timestamp>['useTime'] = (_, {hour, minute, second}) => ({hour, minute, second});
+const getDateFormat: ComponentProps<typeof Timestamp>['useDate'] = {weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'};
 
 type Props = {
 
@@ -41,7 +38,7 @@ type Props = {
     postId: string;
     teamUrl: string;
     timestampProps?: ComponentProps<typeof Timestamp>;
-}
+};
 
 export default class PostTime extends React.PureComponent<Props> {
     static defaultProps: Partial<Props> = {
@@ -94,25 +91,18 @@ export default class PostTime extends React.PureComponent<Props> {
         );
 
         return (
-            <OverlayTrigger
-                delayShow={500}
-                placement='top'
-                overlay={
-                    <Tooltip
-                        id={eventTime.toString()}
-                        className='hidden-xs'
-                    >
-                        <Timestamp
-                            value={eventTime}
-                            ranges={POST_TOOLTIP_RANGES}
-                            useSemanticOutput={false}
-                            useTime={getTimeFormat}
-                        />
-                    </Tooltip>
+            <WithTooltip
+                title={
+                    <Timestamp
+                        value={eventTime}
+                        useSemanticOutput={false}
+                        useDate={getDateFormat}
+                        useTime={getTimeFormat}
+                    />
                 }
             >
                 {content}
-            </OverlayTrigger>
+            </WithTooltip>
         );
     }
 }

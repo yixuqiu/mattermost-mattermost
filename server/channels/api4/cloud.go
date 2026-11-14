@@ -4,50 +4,41 @@
 package api4
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
-	"github.com/mattermost/mattermost/server/v8/platform/shared/web"
 )
 
 func (api *API) InitCloud() {
 	// GET /api/v4/cloud/products
-	api.BaseRoutes.Cloud.Handle("/products", api.APISessionRequired(getCloudProducts)).Methods("GET")
+	api.BaseRoutes.Cloud.Handle("/products", api.APISessionRequired(getCloudProducts)).Methods(http.MethodGet)
 	// GET /api/v4/cloud/limits
-	api.BaseRoutes.Cloud.Handle("/limits", api.APISessionRequired(getCloudLimits)).Methods("GET")
-
-	api.BaseRoutes.Cloud.Handle("/products/selfhosted", api.APISessionRequired(getSelfHostedProducts)).Methods("GET")
+	api.BaseRoutes.Cloud.Handle("/limits", api.APISessionRequired(getCloudLimits)).Methods(http.MethodGet)
 
 	// GET /api/v4/cloud/customer
-	// PUT /api/v4/cloud/customer
-	// PUT /api/v4/cloud/customer/address
-	api.BaseRoutes.Cloud.Handle("/customer", api.APISessionRequired(getCloudCustomer)).Methods("GET")
-	api.BaseRoutes.Cloud.Handle("/customer", api.APISessionRequired(updateCloudCustomer)).Methods("PUT")
-	api.BaseRoutes.Cloud.Handle("/customer/address", api.APISessionRequired(updateCloudCustomerAddress)).Methods("PUT")
+	api.BaseRoutes.Cloud.Handle("/customer", api.APISessionRequired(getCloudCustomer)).Methods(http.MethodGet)
 
 	// GET /api/v4/cloud/subscription
-	api.BaseRoutes.Cloud.Handle("/subscription", api.APISessionRequired(getSubscription)).Methods("GET")
-	api.BaseRoutes.Cloud.Handle("/subscription/invoices", api.APISessionRequired(getInvoicesForSubscription)).Methods("GET")
-	api.BaseRoutes.Cloud.Handle("/subscription/invoices/{invoice_id:[_A-Za-z0-9]+}/pdf", api.APISessionRequired(getSubscriptionInvoicePDF)).Methods("GET")
+	api.BaseRoutes.Cloud.Handle("/subscription", api.APISessionRequired(getSubscription)).Methods(http.MethodGet)
 
 	// GET /api/v4/cloud/validate-business-email
-	api.BaseRoutes.Cloud.Handle("/validate-business-email", api.APISessionRequired(validateBusinessEmail)).Methods("POST")
-	api.BaseRoutes.Cloud.Handle("/validate-workspace-business-email", api.APISessionRequired(validateWorkspaceBusinessEmail)).Methods("POST")
+	api.BaseRoutes.Cloud.Handle("/validate-business-email", api.APISessionRequired(validateBusinessEmail)).Methods(http.MethodPost)
+	api.BaseRoutes.Cloud.Handle("/validate-workspace-business-email", api.APISessionRequired(validateWorkspaceBusinessEmail)).Methods(http.MethodPost)
 
 	// POST /api/v4/cloud/webhook
-	api.BaseRoutes.Cloud.Handle("/webhook", api.CloudAPIKeyRequired(handleCWSWebhook)).Methods("POST")
+	api.BaseRoutes.Cloud.Handle("/webhook", api.CloudAPIKeyRequired(handleCWSWebhook)).Methods(http.MethodPost)
 
 	// GET /api/v4/cloud/installation
-	api.BaseRoutes.Cloud.Handle("/installation", api.APISessionRequired(getInstallation)).Methods("GET")
+	api.BaseRoutes.Cloud.Handle("/installation", api.APISessionRequired(getInstallation)).Methods(http.MethodGet)
 
-	// GET /api/v4/cloud/cws-health-check
-	api.BaseRoutes.Cloud.Handle("/check-cws-connection", api.APIHandler(handleCheckCWSConnection)).Methods("GET")
+	// GET /api/v4/cloud/check-cws-connection
+	api.BaseRoutes.Cloud.Handle("/check-cws-connection", api.APIHandler(handleCheckCWSConnection)).Methods(http.MethodGet)
+
+	// GET /api/v4/cloud/preview/modal_data
+	api.BaseRoutes.Cloud.Handle("/preview/modal_data", api.APISessionRequired(getPreviewModalData)).Methods(http.MethodGet)
 }
 
 func ensureCloudInterface(c *Context, where string) bool {
@@ -64,7 +55,36 @@ func ensureCloudInterface(c *Context, where string) bool {
 	return true
 }
 
+func getPreviewSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
+	license := c.App.Channels().License()
+	subscription := &model.Subscription{
+		ID:             "cloud-preview",
+		ProductID:      license.SkuName,
+		StartAt:        license.StartsAt,
+		TrialEndAt:     license.ExpiresAt,
+		EndAt:          license.ExpiresAt,
+		IsFreeTrial:    "true",
+		IsCloudPreview: true,
+	}
+
+	json, err := json.Marshal(subscription)
+	if err != nil {
+		c.Err = model.NewAppError("Api4.getSubscription", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+
+	if _, err := w.Write(json); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
+}
+
 func getSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
+	// Preview subscription is a special case for cloud preview licenses.
+	if c.App.Channels().License().IsCloudPreview() {
+		getPreviewSubscription(c, w, r)
+		return
+	}
+
 	ensured := ensureCloudInterface(c, "Api4.getSubscription")
 	if !ensured {
 		return
@@ -89,7 +109,6 @@ func getSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
 			IsFreeTrial:     subscription.IsFreeTrial,
 			TrialEndAt:      subscription.TrialEndAt,
 			EndAt:           subscription.EndAt,
-			CancelAt:        subscription.CancelAt,
 			DelinquentSince: subscription.DelinquentSince,
 			CustomerID:      "",
 			AddOns:          []string{},
@@ -107,10 +126,9 @@ func getSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
 		subscription.SimulatedCurrentTimeMs = nil
 	}
 
-	if !c.App.Config().FeatureFlags.CloudAnnualRenewals {
-		subscription.WillRenew = ""
-		subscription.CancelAt = nil
-	}
+	// The annual renewals feature is deprecated; renewal and cancellation timing are not exposed to clients.
+	subscription.WillRenew = ""
+	subscription.CancelAt = nil
 
 	json, err := json.Marshal(subscription)
 	if err != nil {
@@ -118,7 +136,9 @@ func getSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write(json)
+	if _, err := w.Write(json); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func validateBusinessEmail(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -127,7 +147,7 @@ func validateBusinessEmail(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, appErr := c.App.GetUser(c.AppContext.Session().UserId)
+	user, appErr := c.App.GetUser(c.AppContext, c.AppContext.Session().UserId)
 	if appErr != nil {
 		c.Err = model.NewAppError("Api4.validateBusinessEmail", "api.cloud.request_error", nil, "", http.StatusForbidden).Wrap(appErr)
 		return
@@ -177,7 +197,7 @@ func validateWorkspaceBusinessEmail(c *Context, w http.ResponseWriter, r *http.R
 		return
 	}
 
-	user, userErr := c.App.GetUser(c.AppContext.Session().UserId)
+	user, userErr := c.App.GetUser(c.AppContext, c.AppContext.Session().UserId)
 	if userErr != nil {
 		c.Err = userErr
 		return
@@ -210,45 +230,6 @@ func validateWorkspaceBusinessEmail(c *Context, w http.ResponseWriter, r *http.R
 	if err := json.NewEncoder(w).Encode(emailResp); err != nil {
 		c.Logger.Warn("Error while writing response", mlog.Err(err))
 	}
-}
-
-func getSelfHostedProducts(c *Context, w http.ResponseWriter, r *http.Request) {
-	ensured := ensureCloudInterface(c, "Api4.getSelfHostedProducts")
-	if !ensured {
-		return
-	}
-
-	products, err := c.App.Cloud().GetSelfHostedProducts(c.AppContext.Session().UserId)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.getSelfHostedProducts", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	byteProductsData, err := json.Marshal(products)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.getSelfHostedProducts", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleReadBilling) {
-		sanitizedProducts := []model.UserFacingProduct{}
-		err = json.Unmarshal(byteProductsData, &sanitizedProducts)
-		if err != nil || sanitizedProducts == nil {
-			c.Err = model.NewAppError("Api4.getSelfHostedProducts", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-			return
-		}
-
-		byteSanitizedProductsData, err := json.Marshal(sanitizedProducts)
-		if err != nil {
-			c.Err = model.NewAppError("Api4.getSelfHostedProducts", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-			return
-		}
-
-		w.Write(byteSanitizedProductsData)
-		return
-	}
-
-	w.Write(byteProductsData)
 }
 
 func getCloudProducts(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -290,11 +271,15 @@ func getCloudProducts(c *Context, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		w.Write(byteSanitizedProductsData)
+		if _, err := w.Write(byteSanitizedProductsData); err != nil {
+			c.Logger.Warn("Error while writing response", mlog.Err(err))
+		}
 		return
 	}
 
-	w.Write(byteProductsData)
+	if _, err := w.Write(byteProductsData); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getCloudLimits(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -320,7 +305,9 @@ func getCloudLimits(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write(json)
+	if _, err := w.Write(json); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getCloudCustomer(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -351,7 +338,9 @@ func getCloudCustomer(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write(json)
+	if _, err := w.Write(json); err != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(err))
+	}
 }
 
 func getInstallation(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -375,163 +364,6 @@ func getInstallation(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = model.NewAppError("Api4.getInstallation", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		return
 	}
-}
-
-func updateCloudCustomer(c *Context, w http.ResponseWriter, r *http.Request) {
-	ensured := ensureCloudInterface(c, "Api4.updateCloudCustomer")
-	if !ensured {
-		return
-	}
-
-	if !c.App.Channels().License().IsCloud() {
-		c.Err = model.NewAppError("Api4.updateCloudCustomer", "api.cloud.license_error", nil, "", http.StatusForbidden)
-		return
-	}
-
-	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWriteBilling) {
-		c.SetPermissionError(model.PermissionSysconsoleWriteBilling)
-		return
-	}
-
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomer", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	var customerInfo *model.CloudCustomerInfo
-	if err = json.Unmarshal(bodyBytes, &customerInfo); err != nil || customerInfo == nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomer", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	customer, appErr := c.App.Cloud().UpdateCloudCustomer(c.AppContext.Session().UserId, customerInfo)
-	if appErr != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomer", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(appErr)
-		return
-	}
-
-	json, err := json.Marshal(customer)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomer", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	w.Write(json)
-}
-
-func updateCloudCustomerAddress(c *Context, w http.ResponseWriter, r *http.Request) {
-	ensured := ensureCloudInterface(c, "Api4.updateCloudCustomerAddress")
-	if !ensured {
-		return
-	}
-
-	if !c.App.Channels().License().IsCloud() {
-		c.Err = model.NewAppError("Api4.updateCloudCustomerAddress", "api.cloud.license_error", nil, "", http.StatusForbidden)
-		return
-	}
-
-	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleWriteBilling) {
-		c.SetPermissionError(model.PermissionSysconsoleWriteBilling)
-		return
-	}
-
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomerAddress", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	var address *model.Address
-	if err = json.Unmarshal(bodyBytes, &address); err != nil || address == nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomerAddress", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	customer, appErr := c.App.Cloud().UpdateCloudCustomerAddress(c.AppContext.Session().UserId, address)
-	if appErr != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomerAddress", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(appErr)
-		return
-	}
-
-	json, err := json.Marshal(customer)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.updateCloudCustomerAddress", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	w.Write(json)
-}
-
-func getInvoicesForSubscription(c *Context, w http.ResponseWriter, r *http.Request) {
-	ensured := ensureCloudInterface(c, "Api4.getInvoicesForSubscription")
-	if !ensured {
-		return
-	}
-
-	if !c.App.Channels().License().IsCloud() {
-		c.Err = model.NewAppError("Api4.getInvoicesForSubscription", "api.cloud.license_error", nil, "", http.StatusForbidden)
-		return
-	}
-
-	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleReadBilling) {
-		c.SetPermissionError(model.PermissionSysconsoleReadBilling)
-		return
-	}
-
-	invoices, appErr := c.App.Cloud().GetInvoicesForSubscription(c.AppContext.Session().UserId)
-	if appErr != nil {
-		c.Err = model.NewAppError("Api4.getInvoicesForSubscription", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(appErr)
-		return
-	}
-
-	json, err := json.Marshal(invoices)
-	if err != nil {
-		c.Err = model.NewAppError("Api4.getInvoicesForSubscription", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
-		return
-	}
-
-	w.Write(json)
-}
-
-func getSubscriptionInvoicePDF(c *Context, w http.ResponseWriter, r *http.Request) {
-	ensured := ensureCloudInterface(c, "Api4.getSubscriptionInvoicePDF")
-	if !ensured {
-		return
-	}
-
-	if !c.App.Channels().License().IsCloud() {
-		c.Err = model.NewAppError("Api4.getSubscriptionInvoicePDF", "api.cloud.license_error", nil, "", http.StatusForbidden)
-		return
-	}
-
-	c.RequireInvoiceId()
-	if c.Err != nil {
-		return
-	}
-
-	if !c.App.SessionHasPermissionTo(*c.AppContext.Session(), model.PermissionSysconsoleReadBilling) {
-		c.SetPermissionError(model.PermissionSysconsoleReadBilling)
-		return
-	}
-
-	pdfData, filename, appErr := c.App.Cloud().GetInvoicePDF(c.AppContext.Session().UserId, c.Params.InvoiceId)
-	if appErr != nil {
-		c.Err = model.NewAppError("Api4.getSubscriptionInvoicePDF", "api.cloud.request_error", nil, "", http.StatusInternalServerError).Wrap(appErr)
-		return
-	}
-
-	web.WriteFileResponse(
-		filename,
-		"application/pdf",
-		int64(binary.Size(pdfData)),
-		time.Now(),
-		*c.App.Config().ServiceSettings.WebserverMode,
-		bytes.NewReader(pdfData),
-		false,
-		w,
-		r,
-	)
 }
 
 func handleCWSWebhook(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -598,10 +430,32 @@ func handleCheckCWSConnection(c *Context, w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	status := "available"
 	if err := c.App.Cloud().CheckCWSConnection(c.AppContext.Session().UserId); err != nil {
-		c.Err = model.NewAppError("Api4.handleCWSHealthCheck", "api.server.cws.health_check.app_error", nil, "CWS Server is not available.", http.StatusInternalServerError)
+		status = "unavailable"
+	}
+
+	response := map[string]string{"status": status}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.Err = model.NewAppError("Api4.handleCheckCWSConnection", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		return
+	}
+}
+
+func getPreviewModalData(c *Context, w http.ResponseWriter, r *http.Request) {
+	modalData, err := c.App.GetPreviewModalData()
+	if err != nil {
+		c.Err = err
 		return
 	}
 
-	ReturnStatusOK(w)
+	responseData, jsonErr := json.Marshal(modalData)
+	if jsonErr != nil {
+		c.Err = model.NewAppError("Api4.getPreviewModalData", "api.cloud.app_error", nil, "", http.StatusInternalServerError).Wrap(jsonErr)
+		return
+	}
+
+	if _, writeErr := w.Write(responseData); writeErr != nil {
+		c.Logger.Warn("Error while writing response", mlog.Err(writeErr))
+	}
 }

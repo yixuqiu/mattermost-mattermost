@@ -5,29 +5,21 @@ package app
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
-)
-
-const (
-	JWTDefaultTokenExpiration = 7 * 24 * time.Hour // 7 days of expiration
 )
 
 func (ch *Channels) License() *model.License {
 	return ch.srv.License()
 }
 
-func (ch *Channels) RequestTrialLicenseWithExtraFields(requesterID string, trialRequest *model.TrialLicenseRequest) *model.AppError {
-	if *ch.srv.platform.Config().ExperimentalSettings.RestrictSystemAdmin {
-		return model.NewAppError("RequestTrialLicense", "api.restricted_system_admin", nil, "", http.StatusForbidden)
-	}
-
-	requester, err := ch.srv.userService.GetUser(requesterID)
+func (ch *Channels) RequestTrialLicenseWithExtraFields(rctx request.CTX, requesterID string, trialRequest *model.TrialLicenseRequest) *model.AppError {
+	requester, err := ch.srv.userService.GetUser(rctx, requesterID)
 	if err != nil {
 		var nfErr *store.ErrNotFound
 		switch {
@@ -44,7 +36,7 @@ func (ch *Channels) RequestTrialLicenseWithExtraFields(requesterID string, trial
 
 	// Create a new struct only using the fields from the request that are allowed to be set by the client
 	sanitizedRequest := &model.TrialLicenseRequest{
-		ServerID:              ch.srv.TelemetryId(),
+		ServerID:              ch.srv.ServerId(),
 		Name:                  requester.GetDisplayName(model.ShowFullName),
 		Email:                 requester.Email,
 		SiteName:              *ch.srv.platform.Config().TeamSettings.SiteName,
@@ -57,6 +49,7 @@ func (ch *Channels) RequestTrialLicenseWithExtraFields(requesterID string, trial
 		CompanyName:           trialRequest.CompanyName,
 		CompanySize:           trialRequest.CompanySize,
 		CompanyCountry:        trialRequest.CompanyCountry,
+		ServerVersion:         model.CurrentVersion,
 	}
 
 	if !sanitizedRequest.IsValid() {
@@ -67,11 +60,7 @@ func (ch *Channels) RequestTrialLicenseWithExtraFields(requesterID string, trial
 }
 
 // Deprecated: Use RequestTrialLicenseWithExtraFields instead. This function remains to support the Plugin API.
-func (ch *Channels) RequestTrialLicense(requesterID string, users int, termsAccepted bool, receiveEmailsAccepted bool) *model.AppError {
-	if *ch.srv.platform.Config().ExperimentalSettings.RestrictSystemAdmin {
-		return model.NewAppError("RequestTrialLicense", "api.restricted_system_admin", nil, "", http.StatusForbidden)
-	}
-
+func (ch *Channels) RequestTrialLicense(rctx request.CTX, requesterID string, users int, termsAccepted bool, receiveEmailsAccepted bool) *model.AppError {
 	if !termsAccepted {
 		return model.NewAppError("RequestTrialLicense", "api.license.request-trial.bad-request.terms-not-accepted", nil, "", http.StatusBadRequest)
 	}
@@ -80,7 +69,7 @@ func (ch *Channels) RequestTrialLicense(requesterID string, users int, termsAcce
 		return model.NewAppError("RequestTrialLicense", "api.license.request-trial.bad-request", nil, "", http.StatusBadRequest)
 	}
 
-	requester, err := ch.srv.userService.GetUser(requesterID)
+	requester, err := ch.srv.userService.GetUser(rctx, requesterID)
 	if err != nil {
 		var nfErr *store.ErrNotFound
 		switch {
@@ -92,7 +81,7 @@ func (ch *Channels) RequestTrialLicense(requesterID string, users int, termsAcce
 	}
 
 	trialLicenseRequest := &model.TrialLicenseRequest{
-		ServerID:              ch.srv.TelemetryId(),
+		ServerID:              ch.srv.ServerId(),
 		Name:                  requester.GetDisplayName(model.ShowFullName),
 		Email:                 requester.Email,
 		SiteName:              *ch.srv.platform.Config().TeamSettings.SiteName,

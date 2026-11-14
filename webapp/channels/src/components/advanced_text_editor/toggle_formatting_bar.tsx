@@ -1,18 +1,15 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {memo} from 'react';
+import React, {memo, type JSX} from 'react';
 import {useIntl} from 'react-intl';
 
 import {ChevronDownIcon, ChevronUpIcon, FormatLetterCaseIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import KeyboardShortcutSequence, {KEYBOARD_SHORTCUTS} from 'components/keyboard_shortcuts/keyboard_shortcuts_sequence';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
-
-import Constants from 'utils/constants';
-
-import {IconContainer} from './formatting_bar/formatting_icon';
 
 interface ToggleFormattingBarProps {
     onClick: React.MouseEventHandler;
@@ -26,52 +23,52 @@ const ToggleFormattingBar = (props: ToggleFormattingBarProps): JSX.Element => {
     const buttonAriaLabel = formatMessage({id: 'accessibility.button.formatting', defaultMessage: 'formatting'});
     const iconAriaLabel = formatMessage({id: 'generic_icons.format_letter_case', defaultMessage: 'Format letter Case Icon'});
 
-    const tooltip = active ? (
-        <Tooltip id='toggleFormattingBarButtonTooltip_active'>
-            <KeyboardShortcutSequence
-                shortcut={KEYBOARD_SHORTCUTS.msgHideFormatting}
-                hoistDescription={true}
-                isInsideTooltip={true}
-            />
-        </Tooltip>
+    const title = active ? (
+        <KeyboardShortcutSequence
+            shortcut={KEYBOARD_SHORTCUTS.msgHideFormatting}
+            hoistDescription={true}
+            isInsideTooltip={true}
+        />
     ) : (
-        <Tooltip id='toggleFormattingBarButtonTooltip_inactive'>
-            <KeyboardShortcutSequence
-                shortcut={KEYBOARD_SHORTCUTS.msgShowFormatting}
-                hoistDescription={true}
-                isInsideTooltip={true}
-            />
-        </Tooltip>
+        <KeyboardShortcutSequence
+            shortcut={KEYBOARD_SHORTCUTS.msgShowFormatting}
+            hoistDescription={true}
+            isInsideTooltip={true}
+        />
     );
 
     const ChevronIcon = active ? ChevronUpIcon : ChevronDownIcon;
 
     return (
-        <OverlayTrigger
-            placement='top'
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            trigger={Constants.OVERLAY_DEFAULT_TRIGGER}
-            overlay={tooltip}
+        <WithTooltip
+            title={title}
         >
-            <IconContainer
-                type='button'
+            <IconButton
                 id='toggleFormattingBarButton'
+                className='ToggleFormattingBarButton'
+                size='small'
                 onClick={onClick}
                 disabled={disabled}
                 aria-label={buttonAriaLabel}
-            >
-                <FormatLetterCaseIcon
-                    size={18}
-                    color={'currentColor'}
-                    aria-label={iconAriaLabel}
-                />
-                <ChevronIcon
-                    size={12}
-                    color={'currentColor'}
-                    aria-label={iconAriaLabel}
-                />
-            </IconContainer>
-        </OverlayTrigger>
+                icon={
+                    <>
+                        <Icon
+                            glyph={
+                                <FormatLetterCaseIcon
+                                    color='currentColor'
+                                    aria-label={iconAriaLabel}
+                                />
+                            }
+                        />
+                        <ChevronIcon
+                            size={12}
+                            color='currentColor'
+                            aria-hidden={true}
+                        />
+                    </>
+                }
+            />
+        </WithTooltip>
     );
 };
 

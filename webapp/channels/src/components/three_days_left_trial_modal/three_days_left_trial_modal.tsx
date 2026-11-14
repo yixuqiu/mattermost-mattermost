@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useMemo} from 'react';
+import React, {useMemo, type JSX} from 'react';
 import {useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
@@ -11,9 +11,6 @@ import {closeModal} from 'actions/views/modals';
 import {isModalOpen} from 'selectors/views/modals';
 
 import SystemRolesSVG from 'components/admin_console/feature_discovery/features/images/system_roles_svg';
-import WorkspaceLimitsPanel from 'components/cloud_usage_modal/workspace_limits_panel';
-import useGetLimits from 'components/common/hooks/useGetLimits';
-import useGetUsage from 'components/common/hooks/useGetUsage';
 import useOpenPricingModal from 'components/common/hooks/useOpenPricingModal';
 import GuestAccessSvg from 'components/common/svg_images_components/guest_access_svg';
 import MonitorImacLikeSVG from 'components/common/svg_images_components/monitor_imaclike_svg';
@@ -29,16 +26,13 @@ import './three_days_left_trial_modal.scss';
 
 type Props = {
     onExited?: () => void;
-    limitsOverpassed: boolean;
-}
+};
 
 function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
     const dispatch = useDispatch();
     const {formatMessage} = useIntl();
-    const openPricingModal = useOpenPricingModal();
+    const {openPricingModal, isAirGapped} = useOpenPricingModal();
     const show = useSelector((state: GlobalState) => isModalOpen(state, ModalIdentifiers.THREE_DAYS_LEFT_TRIAL_MODAL));
-    const usage = useGetUsage();
-    const [limits] = useGetLimits();
 
     // move this to the show three days left so it is easier to test
     const handleOnClose = async () => {
@@ -50,7 +44,7 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
 
     const handleOpenPricingModal = async () => {
         await dispatch(closeModal(ModalIdentifiers.THREE_DAYS_LEFT_TRIAL_MODAL));
-        openPricingModal({trackingLocation: 'three_days_left_trial_modal'});
+        openPricingModal();
     };
 
     const buttonLabel = formatMessage({id: 'three_days_left_trial_modal.learnMore', defaultMessage: 'Learn more'});
@@ -58,8 +52,8 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
     const steps: ThreeDaysLeftTrialCardProps[] = useMemo(() => [
         {
             id: 'useSso',
-            title: formatMessage({id: 'three_days_left_trial.modal.useSsoTitle', defaultMessage: 'Single Sign on (with OpenID, SAML, Google, 0365)'}),
-            description: formatMessage({id: 'three_days_left_trial.modal.useSsoDescription', defaultMessage: 'Collaborate with users outside of your organization while tightly controlling their access to channels and team members.'}),
+            title: formatMessage({id: 'three_days_left_trial.modal.useSsoTitle', defaultMessage: 'Use SSO (with OpenID, SAML, Google, O365)'}),
+            description: formatMessage({id: 'three_days_left_trial.modal.useSsoDescription', defaultMessage: 'Sign on quickly and easily with our SSO feature that works with OpenID, SAML, Google, and O365.'}),
             svgWrapperClassName: 'guestAccessSvg',
             svgElement: (
                 <GuestAccessSvg
@@ -87,7 +81,7 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
         {
             id: 'systemConsole',
             title: formatMessage({id: 'three_days_left_trial.modal.systemConsoleTitle', defaultMessage: 'Provide controlled access to the System Console'}),
-            description: formatMessage({id: 'three_days_left_trial.modal.systemConsoleDescription', defaultMessage: 'Use System Roles to give designated users read and/or write access to select sections of System Console.'}),
+            description: formatMessage({id: 'three_days_left_trial.modal.systemConsoleDescription', defaultMessage: 'Assign customizable admin roles to give designated users read and/or write access to select sections of System Console.'}),
             svgWrapperClassName: 'personBoxSvg',
             svgElement: (
                 <SystemRolesSVG
@@ -100,10 +94,10 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
         },
     ], []);
 
-    let headerText = formatMessage({id: 'three_days_left_trial.modal.title', defaultMessage: 'Your trial ends soon'});
-    let headerSubtitleText = formatMessage({id: 'three_days_left_trial.modal.subtitle', defaultMessage: 'There is still time to explore what our paid plans can help you accomplish.'});
+    const headerText = formatMessage({id: 'three_days_left_trial.modal.title', defaultMessage: 'Your trial ends soon'});
+    const headerSubtitleText = formatMessage({id: 'three_days_left_trial.modal.subtitle', defaultMessage: 'There is still time to explore what our paid plans can help you accomplish.'});
 
-    let content: React.ReactNode = useMemo(
+    const content: React.ReactNode = useMemo(
         () =>
             steps.map(({id, ...rest}) => (
                 <ThreeDaysLeftTrialCard
@@ -115,30 +109,13 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
         [],
     );
 
-    if (props.limitsOverpassed) {
-        headerText = formatMessage({id: 'three_days_left_trial.modal.titleLimitsOverpassed', defaultMessage: 'Upgrade before the trial ends'});
-        headerSubtitleText = formatMessage({id: 'three_days_left_trial.modal.subtitleLimitsOverpassed', defaultMessage: 'There are 3 days left on your trial. Upgrade to our Professional or Enterprise plan to avoid exceeding your data limits on the Free plan.'});
-        content = (
-            <div className='workspace-limits-panel'>
-                <p className='limits-title'>
-                    {formatMessage({id: 'three_days_left_trial.modal.limitsTitle', defaultMessage: 'Limits'})}
-                </p>
-                <WorkspaceLimitsPanel
-                    showIcons={true}
-                    limits={limits}
-                    usage={usage}
-                />
-            </div>
-        );
-    }
-
     if (!show) {
         return null;
     }
 
     return (
         <GenericModal
-            className='ThreeDaysLeftTrialModal'
+            className='ThreeDaysLeftTrialModal three-days-left-generic-modal'
             id='threeDaysLeftTrialModal'
             onExited={handleOnClose}
             modalHeaderText={headerText}
@@ -151,14 +128,16 @@ function ThreeDaysLeftTrialModal(props: Props): JSX.Element | null {
                 {content}
             </div>
             <div className='divisory-line'/>
-            <div className='footer-content'>
-                <button
-                    onClick={handleOpenPricingModal}
-                    className='open-view-plans-modal-btn'
-                >
-                    {formatMessage({id: 'three_days_left_trial.modal.viewPlans', defaultMessage: 'View plan options'})}
-                </button>
-            </div>
+            {!isAirGapped && (
+                <div className='footer-content'>
+                    <button
+                        onClick={handleOpenPricingModal}
+                        className='open-view-plans-modal-btn'
+                    >
+                        {formatMessage({id: 'three_days_left_trial.modal.viewPlans', defaultMessage: 'View plan options'})}
+                    </button>
+                </div>
+            )}
         </GenericModal>
     );
 }

@@ -1,14 +1,16 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {GiphyFetch} from '@giphy/js-fetch-api';
-
 import type {ClientConfig, FeatureFlags, ClientLicense} from '@mattermost/types/config';
+import {POST_ATTRIBUTES_PROPERTY_GROUP_NAME} from '@mattermost/types/properties_post';
+import type {UserPropertyField} from '@mattermost/types/properties_user';
 import type {GlobalState} from '@mattermost/types/store';
 
 import {General} from 'mattermost-redux/constants';
 import {createSelector} from 'mattermost-redux/selectors/create_selector';
 import {isMinimumServerVersion} from 'mattermost-redux/utils/helpers';
+
+import type {CWSAvailabilityState} from '../../reducers/entities/general';
 
 export function getConfig(state: GlobalState): Partial<ClientConfig> {
     return state.entities.general.config;
@@ -21,8 +23,114 @@ export function getFeatureFlagValue(state: GlobalState, key: keyof FeatureFlags)
     return getConfig(state)?.[`FeatureFlag${key}` as keyof Partial<ClientConfig>];
 }
 
+export function isPostAttributesEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagPostAttributes === 'true';
+}
+
+export function isProductRailEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagProductRail === 'true';
+}
+
+export function isPostDeliveryTrackingEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagPostDeliveryTracking === 'true';
+}
+
+export function getPostPropertyGroups(state: GlobalState): string | undefined {
+    return isPostAttributesEnabled(state) ? POST_ATTRIBUTES_PROPERTY_GROUP_NAME : undefined;
+}
+
+// Discoverable Private Channels is gated by the FeatureFlagDiscoverableChannels
+// server flag. When the flag is off the toggle UI, request endpoints, and
+// admin queue routes are all hidden — old clients see today's behavior.
+export function isDiscoverableChannelsEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagDiscoverableChannels === 'true';
+}
+
+export function isChannelAttributesEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagChannelAttributes === 'true';
+}
+
+/**
+ * Whether required-attribute enforcement is active: hard-blocking channel
+ * creation without a value, and hiding required attribute inputs from the
+ * create-channel modal. Classification gets one courtesy exception to the
+ * latter — see new_channel_modal.tsx — but is not otherwise special-cased.
+ *
+ * Both the `ChannelAttributes` umbrella and the `ChannelAttributesRequired`
+ * sub-flag must be true. Mirrors the server-side
+ * `FeatureFlags.IsChannelAttributesRequiredEnabled()` helper.
+ */
+export function isChannelAttributesRequiredEnabled(state: GlobalState): boolean {
+    return isChannelAttributesEnabled(state) &&
+        getConfig(state).FeatureFlagChannelAttributesRequired === 'true';
+}
+
+export function isPermissionPoliciesEnabled(state: GlobalState): boolean {
+    return getConfig(state).FeatureFlagPermissionPolicies === 'true';
+}
+
+/**
+ * Whether channel-scope policies may carry permission-rule actions
+ * (file upload/download) — i.e. whether the Channel Settings →
+ * Permissions Policy tab should be exposed.
+ *
+ * The sub-flag `ChannelPermissionPolicies` AND the umbrella
+ * `PermissionPolicies` must BOTH be on. Mirrors the server-side
+ * `FeatureFlags.IsChannelPermissionPoliciesEnabled()` helper so the
+ * dependency direction is consistent across the wire. Centralizing
+ * the check here means every consumer (settings tab, save buttons,
+ * etc.) automatically picks up future changes to the dependency.
+ */
+export function isChannelPermissionPoliciesEnabled(state: GlobalState): boolean {
+    return isPermissionPoliciesEnabled(state) &&
+        getConfig(state).FeatureFlagChannelPermissionPolicies === 'true';
+}
+
+/**
+ * Whether the "Simulate access" preview UX should be exposed
+ * (System Console policy editor + Channel Settings tab).
+ *
+ * The sub-flag `PolicySimulation` AND the umbrella
+ * `PermissionPolicies` must BOTH be on. Mirrors the server-side
+ * `FeatureFlags.IsPolicySimulationEnabled()` helper. The backing
+ * `/cel/simulate_users` endpoint returns 501 when this is off, so
+ * hiding the entry points here also prevents users from seeing an
+ * "Evaluating…" button that can never resolve.
+ */
+export function isPolicySimulationEnabled(state: GlobalState): boolean {
+    return isPermissionPoliciesEnabled(state) &&
+        getConfig(state).FeatureFlagPolicySimulation === 'true';
+}
+
+export type PasswordConfig = {
+    minimumLength: number;
+    requireLowercase: boolean;
+    requireUppercase: boolean;
+    requireNumber: boolean;
+    requireSymbol: boolean;
+};
+
+export const getPasswordConfig: (state: GlobalState) => PasswordConfig = createSelector(
+    'getPasswordConfig',
+    getConfig,
+    (config) => {
+        return {
+            minimumLength: parseInt(config.PasswordMinimumLength!, 10),
+            requireLowercase: config.PasswordRequireLowercase === 'true',
+            requireUppercase: config.PasswordRequireUppercase === 'true',
+            requireNumber: config.PasswordRequireNumber === 'true',
+            requireSymbol: config.PasswordRequireSymbol === 'true',
+        };
+    },
+);
+
 export function getLicense(state: GlobalState): ClientLicense {
     return state.entities.general.license;
+}
+
+export function isFreeEdition(state: GlobalState): boolean {
+    const license = getLicense(state);
+    return license.IsLicensed !== 'true' || license.SkuShortName === General.SKUEntry;
 }
 
 export const isCloudLicense: (state: GlobalState) => boolean = createSelector(
@@ -110,15 +218,39 @@ export const isMarketplaceEnabled: (state: GlobalState) => boolean = createSelec
     },
 );
 
-export const getGiphyFetchInstance: (state: GlobalState) => GiphyFetch | null = createSelector(
-    'getGiphyFetchInstance',
-    (state) => getConfig(state).GiphySdkKey,
-    (giphySdkKey) => {
-        if (giphySdkKey) {
-            const giphyFetch = new GiphyFetch(giphySdkKey);
-            return giphyFetch;
+export const getUsersStatusAndProfileFetchingPollInterval: (state: GlobalState) => number | null = createSelector(
+    'getUsersStatusAndProfileFetchingPollInterval',
+    getConfig,
+    (config) => {
+        const usersStatusAndProfileFetchingPollInterval = config.UsersStatusAndProfileFetchingPollIntervalMilliseconds;
+        if (usersStatusAndProfileFetchingPollInterval) {
+            return parseInt(usersStatusAndProfileFetchingPollInterval, 10);
         }
 
         return null;
     },
 );
+
+export function developerModeEnabled(state: GlobalState): boolean {
+    return state.entities.general.config.EnableDeveloper === 'true';
+}
+
+export function testingEnabled(state: GlobalState): boolean {
+    return state.entities.general.config.EnableTesting === 'true';
+}
+
+export const getCustomProfileAttributes: (state: GlobalState) => UserPropertyField[] = createSelector(
+    'getCustomProfileAttributes',
+    (state) => state.entities.general.customProfileAttributes,
+    (fields) => {
+        return Object.values(fields).sort((a, b) => (a.attrs?.sort_order ?? 0) - (b.attrs?.sort_order ?? 0));
+    },
+);
+
+export function getIsCrossTeamSearchEnabled(state: GlobalState): boolean {
+    return state.entities.general.config.EnableCrossTeamSearch === 'true';
+}
+
+export function getCWSAvailability(state: GlobalState): CWSAvailabilityState {
+    return state.entities.general.cwsAvailability;
+}

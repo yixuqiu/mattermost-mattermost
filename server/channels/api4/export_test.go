@@ -7,19 +7,23 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
+	"github.com/mattermost/mattermost/server/v8/platform/shared/filestore"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestListExports(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	t.Run("no permissions", func(t *testing.T) {
 		exports, _, err := th.Client.ListExports(context.Background())
@@ -34,18 +38,21 @@ func TestListExports(t *testing.T) {
 		require.Empty(t, exports)
 	}, "no exports")
 
-	dataDir, found := fileutils.FindDir("data")
-	require.True(t, found)
+	dataDir := *th.App.Config().FileSettings.Directory
 
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
 		exportDir := filepath.Join(dataDir, *th.App.Config().ExportSettings.Directory)
 		err := os.Mkdir(exportDir, 0700)
 		require.NoError(t, err)
-		defer os.RemoveAll(exportDir)
+		defer func() {
+			err = os.RemoveAll(exportDir)
+			require.NoError(t, err)
+		}()
 
 		f, err := os.Create(filepath.Join(exportDir, "export.zip"))
 		require.NoError(t, err)
-		f.Close()
+		err = f.Close()
+		require.NoError(t, err)
 
 		exports, _, err := c.ListExports(context.Background())
 		require.NoError(t, err)
@@ -54,14 +61,19 @@ func TestListExports(t *testing.T) {
 	}, "expected exports")
 
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
-		value := *th.App.Config().ExportSettings.Directory
-		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ExportSettings.Directory = value + "new" })
-		defer th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ExportSettings.Directory = value })
+		originalExportDir := *th.App.Config().ExportSettings.Directory
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ExportSettings.Directory = "new" })
+		defer th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ExportSettings.Directory = originalExportDir
+		})
 
-		exportDir := filepath.Join(dataDir, value+"new")
+		exportDir := filepath.Join(dataDir, *th.App.Config().ExportSettings.Directory)
 		err := os.Mkdir(exportDir, 0700)
 		require.NoError(t, err)
-		defer os.RemoveAll(exportDir)
+		defer func() {
+			err = os.RemoveAll(exportDir)
+			require.NoError(t, err)
+		}()
 
 		exports, _, err := c.ListExports(context.Background())
 		require.NoError(t, err)
@@ -69,7 +81,8 @@ func TestListExports(t *testing.T) {
 
 		f, err := os.Create(filepath.Join(exportDir, "export.zip"))
 		require.NoError(t, err)
-		f.Close()
+		err = f.Close()
+		require.NoError(t, err)
 
 		exports, _, err = c.ListExports(context.Background())
 		require.NoError(t, err)
@@ -79,8 +92,8 @@ func TestListExports(t *testing.T) {
 }
 
 func TestDeleteExport(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	t.Run("no permissions", func(t *testing.T) {
 		_, err := th.Client.DeleteExport(context.Background(), "export.zip")
@@ -88,18 +101,21 @@ func TestDeleteExport(t *testing.T) {
 		CheckErrorID(t, err, "api.context.permissions.app_error")
 	})
 
-	dataDir, found := fileutils.FindDir("data")
-	require.True(t, found)
+	dataDir := *th.App.Config().FileSettings.Directory
 	exportDir := filepath.Join(dataDir, *th.App.Config().ExportSettings.Directory)
 
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
 		err := os.Mkdir(exportDir, 0700)
 		require.NoError(t, err)
-		defer os.RemoveAll(exportDir)
+		defer func() {
+			err = os.RemoveAll(exportDir)
+			require.NoError(t, err)
+		}()
 		exportName := "export.zip"
 		f, err := os.Create(filepath.Join(exportDir, exportName))
 		require.NoError(t, err)
-		f.Close()
+		err = f.Close()
+		require.NoError(t, err)
 
 		exports, _, err := c.ListExports(context.Background())
 		require.NoError(t, err)
@@ -120,8 +136,8 @@ func TestDeleteExport(t *testing.T) {
 }
 
 func TestDownloadExport(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	t.Run("no permissions", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -131,8 +147,7 @@ func TestDownloadExport(t *testing.T) {
 		require.Zero(t, n)
 	})
 
-	dataDir, found := fileutils.FindDir("data")
-	require.True(t, found)
+	dataDir := *th.App.Config().FileSettings.Directory
 	exportDir := filepath.Join(dataDir, *th.App.Config().ExportSettings.Directory)
 
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
@@ -146,7 +161,10 @@ func TestDownloadExport(t *testing.T) {
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
 		err := os.Mkdir(exportDir, 0700)
 		require.NoError(t, err)
-		defer os.RemoveAll(exportDir)
+		defer func() {
+			err = os.RemoveAll(exportDir)
+			require.NoError(t, err)
+		}()
 
 		data := randomBytes(t, 1024*1024)
 		var buf bytes.Buffer
@@ -163,7 +181,10 @@ func TestDownloadExport(t *testing.T) {
 	th.TestForSystemAdminAndLocal(t, func(t *testing.T, c *model.Client4) {
 		err := os.Mkdir(exportDir, 0700)
 		require.NoError(t, err)
-		defer os.RemoveAll(exportDir)
+		defer func() {
+			err = os.RemoveAll(exportDir)
+			require.NoError(t, err)
+		}()
 
 		data := randomBytes(t, 1024*1024)
 		var buf bytes.Buffer
@@ -181,30 +202,139 @@ func TestDownloadExport(t *testing.T) {
 
 func BenchmarkDownloadExport(b *testing.B) {
 	th := Setup(b)
-	defer th.TearDown()
 
-	dataDir, found := fileutils.FindDir("data")
-	require.True(b, found)
+	dataDir := *th.App.Config().FileSettings.Directory
 	exportDir := filepath.Join(dataDir, *th.App.Config().ExportSettings.Directory)
 
 	err := os.Mkdir(exportDir, 0700)
 	require.NoError(b, err)
-	defer os.RemoveAll(exportDir)
+	defer func() {
+		err = os.RemoveAll(exportDir)
+		require.NoError(b, err)
+	}()
 
 	exportName := "export.zip"
 	f, err := os.Create(filepath.Join(exportDir, exportName))
 	require.NoError(b, err)
-	f.Close()
+	err = f.Close()
+	require.NoError(b, err)
 
 	err = os.Truncate(filepath.Join(exportDir, exportName), 1024*1024*1024)
 	require.NoError(b, err)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		outFilePath := filepath.Join(dataDir, fmt.Sprintf("export%d.zip", i))
-		outFile, _ := os.Create(outFilePath)
-		th.SystemAdminClient.DownloadExport(context.Background(), exportName, outFile, 0)
-		outFile.Close()
-		os.Remove(outFilePath)
+		outFile, err := os.Create(outFilePath)
+		require.NoError(b, err)
+		_, _, err = th.SystemAdminClient.DownloadExport(context.Background(), exportName, outFile, 0)
+		require.NoError(b, err)
+		err = outFile.Close()
+		require.NoError(b, err)
+		err = os.Remove(outFilePath)
+		require.NoError(b, err)
 	}
+}
+
+func TestGeneratePresignedURL(t *testing.T) {
+	mainHelper.Parallel(t)
+
+	t.Run("no permissions", func(t *testing.T) {
+		th := Setup(t)
+		_, _, err := th.Client.GeneratePresignedURL(context.Background(), "export.zip")
+		require.Error(t, err)
+		CheckErrorID(t, err, "api.context.permissions.app_error")
+	})
+
+	t.Run("blocked when not running in Cloud", func(t *testing.T) {
+		th := Setup(t)
+		th.App.Srv().SetLicense(model.NewTestLicense())
+
+		_, resp, err := th.SystemAdminClient.GeneratePresignedURL(context.Background(), "export.zip")
+		require.Error(t, err)
+		CheckForbiddenStatus(t, resp)
+		CheckErrorID(t, err, "app.export.generate_presigned_url.direct_download.app_error")
+	})
+
+	t.Run("blocked without a license", func(t *testing.T) {
+		th := Setup(t)
+		th.App.Srv().SetLicense(nil)
+
+		_, resp, err := th.SystemAdminClient.GeneratePresignedURL(context.Background(), "export.zip")
+		require.Error(t, err)
+		CheckForbiddenStatus(t, resp)
+		CheckErrorID(t, err, "app.export.generate_presigned_url.direct_download.app_error")
+	})
+
+	t.Run("passes gate when Cloud, then requires a dedicated export store", func(t *testing.T) {
+		th := Setup(t)
+		th.App.Srv().SetLicense(model.NewTestLicense("cloud"))
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.FileSettings.DedicatedExportStore = false
+		})
+
+		_, _, err := th.SystemAdminClient.GeneratePresignedURL(context.Background(), "export.zip")
+		require.Error(t, err)
+		CheckErrorID(t, err, "app.export.generate_presigned_url.config.app_error")
+	})
+
+	// The full happy path against a real presign-capable (S3/minio) export store: a
+	// Cloud server with a dedicated export store returns a working presigned URL over
+	// the API. Skipped when minio isn't reachable.
+	t.Run("succeeds against a presign-capable export store", func(t *testing.T) {
+		s3Host := os.Getenv("CI_MINIO_HOST")
+		if s3Host == "" {
+			s3Host = "localhost"
+		}
+		s3Port := os.Getenv("CI_MINIO_PORT")
+		if s3Port == "" {
+			s3Port = "9000"
+		}
+		s3Endpoint := net.JoinHostPort(s3Host, s3Port)
+
+		conn, err := net.DialTimeout("tcp", s3Endpoint, 2*time.Second)
+		if err != nil {
+			t.Skipf("minio not available at %s: %v", s3Endpoint, err)
+		}
+		conn.Close()
+
+		// Use a fresh bucket per run so MakeBucket is unambiguous.
+		bucket := model.NewId()
+
+		// The dedicated export filestore is built once at startup, so the export-store
+		// configuration must be applied before the server starts, not via UpdateConfig.
+		th := SetupConfig(t, func(cfg *model.Config) {
+			*cfg.FileSettings.DedicatedExportStore = true
+			*cfg.FileSettings.ExportDriverName = model.ImageDriverS3
+			*cfg.FileSettings.ExportAmazonS3AccessKeyId = model.MinioAccessKey
+			*cfg.FileSettings.ExportAmazonS3SecretAccessKey = model.MinioSecretKey
+			*cfg.FileSettings.ExportAmazonS3Bucket = bucket
+			*cfg.FileSettings.ExportAmazonS3Endpoint = s3Endpoint
+			*cfg.FileSettings.ExportAmazonS3Region = ""
+			*cfg.FileSettings.ExportAmazonS3SSL = false
+		})
+		th.App.Srv().SetLicense(model.NewTestLicense("cloud"))
+
+		backend, ok := th.App.ExportFileBackend().(*filestore.S3FileBackend)
+		require.True(t, ok, "expected a dedicated S3 export backend")
+		require.NoError(t, backend.MakeBucket())
+
+		exportName := "job_export.zip"
+		payload := []byte("export-payload")
+		_, appErr := th.App.WriteExportFile(bytes.NewReader(payload), filepath.Join(*th.App.Config().ExportSettings.Directory, exportName))
+		require.Nil(t, appErr)
+
+		resp, _, err := th.SystemAdminClient.GeneratePresignedURL(context.Background(), exportName)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.NotEmpty(t, resp.URL)
+
+		// The presigned URL should serve the exported file directly.
+		httpResp, err := (&http.Client{Timeout: 30 * time.Second}).Get(resp.URL)
+		require.NoError(t, err)
+		defer httpResp.Body.Close()
+		require.Equal(t, http.StatusOK, httpResp.StatusCode)
+		body, err := io.ReadAll(httpResp.Body)
+		require.NoError(t, err)
+		require.Equal(t, payload, body)
+	})
 }

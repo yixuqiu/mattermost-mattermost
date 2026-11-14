@@ -3,19 +3,25 @@
 
 import React from 'react';
 import {Modal} from 'react-bootstrap';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, defineMessage} from 'react-intl';
+
+import {Button} from '@mattermost/compass-ui/components/button';
 
 import {General} from 'mattermost-redux/constants';
 
-import {trackEvent} from 'actions/telemetry_actions.jsx';
-
-import FormattedMarkdownMessage from 'components/formatted_markdown_message';
-
+import type {KindMessages} from 'utils/channel_kind';
 import Constants from 'utils/constants';
+
+import type {ChannelKind} from 'types/store/plugins';
 
 type Props = {
     channelDisplayName: string;
     channelId: string;
+
+    /**
+     * The kind of channel, so the modal says "board" rather than "channel" for a board
+     */
+    channelKind?: ChannelKind;
 
     /**
      * Function injected by ModalController to be called when the modal can be unmounted
@@ -25,11 +31,11 @@ type Props = {
     actions: {
         updateChannelPrivacy: (channelId: string, privacy: string) => void;
     };
-}
+};
 
 type State = {
     show: boolean;
-}
+};
 
 export default class ConvertChannelModal extends React.PureComponent<Props, State> {
     constructor(props: Props) {
@@ -45,7 +51,6 @@ export default class ConvertChannelModal extends React.PureComponent<Props, Stat
         }
 
         actions.updateChannelPrivacy(channelId, General.PRIVATE_CHANNEL);
-        trackEvent('actions', 'convert_to_private_channel', {channel_id: channelId});
         this.onHide();
     };
 
@@ -56,6 +61,7 @@ export default class ConvertChannelModal extends React.PureComponent<Props, Stat
     render() {
         const {
             channelDisplayName,
+            channelKind = 'channel',
             onExited,
         } = this.props;
 
@@ -65,7 +71,7 @@ export default class ConvertChannelModal extends React.PureComponent<Props, Stat
                 show={this.state.show}
                 onHide={this.onHide}
                 onExited={onExited}
-                role='dialog'
+                role='none'
                 aria-labelledby='convertChannelModalLabel'
             >
                 <Modal.Header closeButton={true}>
@@ -74,8 +80,7 @@ export default class ConvertChannelModal extends React.PureComponent<Props, Stat
                         id='convertChannelModalLabel'
                     >
                         <FormattedMessage
-                            id='convert_channel.title'
-                            defaultMessage='Convert {display_name} to a Private Channel?'
+                            {...messages.title[channelKind]}
                             values={{
                                 display_name: channelDisplayName,
                             }}
@@ -84,56 +89,93 @@ export default class ConvertChannelModal extends React.PureComponent<Props, Stat
                 </Modal.Header>
                 <Modal.Body>
                     <p>
-                        <FormattedMarkdownMessage
-                            id='convert_channel.question1'
-                            defaultMessage='When you convert **{display_name}** to a private channel, history and membership are preserved. Publicly shared files remain accessible to anyone with the link. Membership in a private channel is by invitation only.'
+                        <FormattedMessage
+                            {...messages.question1[channelKind]}
                             values={{
                                 display_name: channelDisplayName,
+                                b: (chunks) => <b>{chunks}</b>,
                             }}
                         />
                     </p>
                     <p>
                         <FormattedMessage
-                            id='convert_channel.question2'
-                            defaultMessage='The change is permanent and cannot be undone.'
-                        />
-                    </p>
-                    <p>
-                        <FormattedMarkdownMessage
-                            id='convert_channel.question3'
-                            defaultMessage='Are you sure you want to convert **{display_name}** to a private channel?'
+                            {...messages.question3[channelKind]}
                             values={{
                                 display_name: channelDisplayName,
+                                b: (chunks) => <b>{chunks}</b>,
                             }}
                         />
                     </p>
                 </Modal.Body>
                 <Modal.Footer>
-                    <button
+                    <Button
                         type='button'
-                        className='btn btn-tertiary'
+                        emphasis='tertiary'
                         onClick={this.onHide}
+                        data-testid='convertChannelCancel'
                     >
                         <FormattedMessage
                             id='convert_channel.cancel'
                             defaultMessage='No, cancel'
                         />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type='button'
-                        className='btn btn-primary'
+                        emphasis='primary'
                         data-dismiss='modal'
                         onClick={this.handleConvert}
                         autoFocus={true}
                         data-testid='convertChannelConfirm'
                     >
-                        <FormattedMessage
-                            id='convert_channel.confirm'
-                            defaultMessage='Yes, convert to private channel'
-                        />
-                    </button>
+                        <FormattedMessage {...messages.confirm[channelKind]}/>
+                    </Button>
                 </Modal.Footer>
             </Modal>
         );
     }
 }
+
+/* eslint-disable formatjs/enforce-placeholders -- values are passed where each message is rendered */
+const messages = {
+    title: {
+        channel: defineMessage({
+            id: 'convert_channel.title',
+            defaultMessage: 'Convert {display_name} to a Private Channel?',
+        }),
+        board: defineMessage({
+            id: 'convert_channel.title.board',
+            defaultMessage: 'Convert {display_name} to a Private Board?',
+        }),
+    },
+    question1: {
+        channel: defineMessage({
+            id: 'convertChannel.question1',
+            defaultMessage: 'When you convert <b>{display_name}</b> to a private channel, history and membership are preserved. Publicly shared files remain accessible to anyone with the link. Membership in a private channel is by invitation only.',
+        }),
+        board: defineMessage({
+            id: 'convertChannel.question1.board',
+            defaultMessage: 'When you convert <b>{display_name}</b> to a private board, history and membership are preserved. Publicly shared files remain accessible to anyone with the link. Membership in a private board is by invitation only.',
+        }),
+    },
+    question3: {
+        channel: defineMessage({
+            id: 'convertChannel.question3',
+            defaultMessage: 'Are you sure you want to convert <b>{display_name}</b> to a private channel?',
+        }),
+        board: defineMessage({
+            id: 'convertChannel.question3.board',
+            defaultMessage: 'Are you sure you want to convert <b>{display_name}</b> to a private board?',
+        }),
+    },
+    confirm: {
+        channel: defineMessage({
+            id: 'convert_channel.confirm',
+            defaultMessage: 'Yes, convert to private channel',
+        }),
+        board: defineMessage({
+            id: 'convert_channel.confirm.board',
+            defaultMessage: 'Yes, convert to private board',
+        }),
+    },
+} satisfies Record<string, KindMessages>;
+/* eslint-enable formatjs/enforce-placeholders */

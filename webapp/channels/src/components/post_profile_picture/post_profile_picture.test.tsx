@@ -35,28 +35,27 @@ describe('components/PostProfilePicture', () => {
             <PostProfilePicture {...props}/>,
         );
 
-        expect(screen.queryByLabelText('Online Icon')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Online')).not.toBeInTheDocument();
 
-        // no status is given, 'Offline Icon' should be in the dom as a fallback
-        expect(screen.getByLabelText('Offline Icon')).toBeInTheDocument();
+        // no status is given, 'Offline' should be in the dom as a fallback
+        expect(screen.getByLabelText('Offline')).toBeInTheDocument();
     });
 
-    test('status and post icon override specified, default props', () => {
+    test('status is specified, default props', () => {
         const props: Props = {
             ...baseProps,
             status: 'away',
-            postIconOverrideURL: 'http://example.com/image.png',
         };
         renderWithContext(
             <PostProfilePicture {...props}/>,
         );
 
-        // status is given, 'Away Icon' should be in the dom
-        expect(screen.getByLabelText('Away Icon')).toBeInTheDocument();
+        // status is given, 'Away' should be in the dom
+        expect(screen.getByLabelText('Away')).toBeInTheDocument();
 
-        expect(screen.queryByLabelText('Online Icon')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Online')).not.toBeInTheDocument();
 
-        expect(screen.queryByLabelText('Offline Icon')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Offline')).not.toBeInTheDocument();
 
         expect(screen.getAllByRole('img')).toHaveLength(2);
     });

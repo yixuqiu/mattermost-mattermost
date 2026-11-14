@@ -2,16 +2,20 @@
 // See LICENSE.txt for license information.
 
 import React, {useState} from 'react';
-import type {ChangeEvent, ReactNode} from 'react';
+import type {ChangeEvent, JSX, ReactNode} from 'react';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {Link} from 'react-router-dom';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
+import PaginationButtons from 'components/common/pagination_buttons';
 import LoadingScreen from 'components/loading_screen';
 import SearchIcon from 'components/widgets/icons/fa_search_icon';
 
-import {localizeMessage} from 'utils/utils';
+import './backstage_list.scss';
 
 type Props = {
-    children?: ReactNode | ((filter: string) => void);
+    children?: JSX.Element[] | ((filter: string) => [JSX.Element[], boolean]);
     header: ReactNode;
     addLink?: string;
     addText?: ReactNode;
@@ -19,25 +23,62 @@ type Props = {
     emptyText?: ReactNode;
     emptyTextSearch?: JSX.Element;
     helpText?: ReactNode;
+    error?: ReactNode;
     loading: boolean;
     searchPlaceholder?: string;
+    nextPage?: () => void;
+    previousPage?: () => void;
+    page?: number;
+    pageSize?: number;
+    total?: number;
 };
 
-const BackstageList = ({searchPlaceholder = localizeMessage('backstage_list.search', 'Search'), ...remainingProps}: Props) => {
+const getPaging = (remainingProps: Props, childCount: number, hasFilter: boolean) => {
+    const page = (hasFilter || !remainingProps.page) ? 0 : remainingProps.page;
+    const pageSize = (hasFilter || !remainingProps.pageSize) ? childCount : remainingProps.pageSize;
+    const total = (hasFilter || !remainingProps.total) ? childCount : remainingProps.total;
+
+    let startCount = (page * pageSize) + 1;
+    let endCount = (page + 1) * pageSize;
+    endCount = endCount > total ? total : endCount;
+    if (endCount === 0) {
+        startCount = 0;
+    }
+
+    const isFirstPage = startCount <= 1;
+    const isLastPage = endCount >= total;
+
+    return {startCount, endCount, total, isFirstPage, isLastPage};
+};
+
+const BackstageList = (remainingProps: Props) => {
+    const {formatMessage} = useIntl();
+
     const [filter, setFilter] = useState('');
-
     const updateFilter = (e: ChangeEvent<HTMLInputElement>) => setFilter(e.target.value);
-
     const filterLowered = filter.toLowerCase();
 
-    let children;
-    if (remainingProps.loading) {
-        children = <LoadingScreen/>;
+    let searchPlaceholder;
+    if (remainingProps.searchPlaceholder) {
+        searchPlaceholder = remainingProps.searchPlaceholder;
     } else {
-        children = remainingProps.children;
+        searchPlaceholder = formatMessage({id: 'backstage_list.search', defaultMessage: 'Search'});
+    }
+
+    let children = [];
+    let childCount = 0;
+    if (remainingProps.loading) {
+        children = [
+            <LoadingScreen
+                key='loading'
+            />,
+        ];
+    } else {
         let hasChildren = true;
-        if (typeof children === 'function') {
-            [children, hasChildren] = children(filterLowered);
+        if (typeof remainingProps.children === 'function') {
+            [children, hasChildren] = remainingProps.children(filterLowered);
+        } else {
+            children = remainingProps.children as JSX.Element[];
         }
         children = React.Children.map(children, (child) => {
             return React.cloneElement(child, {filterLowered});
@@ -45,44 +86,61 @@ const BackstageList = ({searchPlaceholder = localizeMessage('backstage_list.sear
         if (children.length === 0 || !hasChildren) {
             if (!filterLowered) {
                 if (remainingProps.emptyText) {
-                    children = (
-                        <div className='backstage-list__item backstage-list__empty'>
+                    children = [(
+                        <div
+                            className='backstage-list__item backstage-list__empty'
+                            key='emptyText'
+                        >
                             {remainingProps.emptyText}
                         </div>
-                    );
+                    )];
                 }
             } else if (remainingProps.emptyTextSearch) {
-                children = (
+                children = [(
                     <div
                         className='backstage-list__item backstage-list__empty'
                         id='emptySearchResultsMessage'
+                        key='emptyTextSearch'
                     >
-                        {React.cloneElement(remainingProps.emptyTextSearch, {values: {searchTerm: filterLowered}})}
+                        {React.cloneElement(remainingProps.emptyTextSearch, {values: {...remainingProps.emptyTextSearch.props.values, searchTerm: filterLowered}})}
                     </div>
-                );
+                )];
             }
+        } else {
+            childCount = children.length;
         }
     }
 
     let addLink = null;
 
-    if (remainingProps.addLink && remainingProps.addText) {
+    const addLinkPath = remainingProps.addLink;
+    if (addLinkPath && remainingProps.addText) {
         addLink = (
-            <Link
-                className='add-link'
-                to={remainingProps.addLink}
+            <Button
+                asChild={true}
+                emphasis='primary'
+                id={remainingProps.addButtonId}
             >
-                <button
-                    type='button'
-                    className='btn btn-primary'
-                    id={remainingProps.addButtonId}
-                >
+                <Link to={addLinkPath}>
                     <span>
                         {remainingProps.addText}
                     </span>
-                </button>
-            </Link>
+                </Link>
+            </Button>
         );
+    }
+
+    const hasFilter = filter.length > 0;
+    const {startCount, endCount, total, isFirstPage, isLastPage} = getPaging(remainingProps, childCount, hasFilter);
+    const childrenToDisplay = childCount > 0 ? children.slice(startCount - 1, endCount) : children;
+
+    let previousPageFn = remainingProps.previousPage;
+    let nextPageFn = remainingProps.nextPage;
+    if (isFirstPage) {
+        previousPageFn = () => {};
+    }
+    if (isLastPage) {
+        nextPageFn = () => {};
     }
 
     return (
@@ -93,6 +151,7 @@ const BackstageList = ({searchPlaceholder = localizeMessage('backstage_list.sear
                 </h1>
                 {addLink}
             </div>
+            {remainingProps.error}
             <div className='backstage-filters'>
                 <div className='backstage-filter__search'>
                     <SearchIcon/>
@@ -102,7 +161,6 @@ const BackstageList = ({searchPlaceholder = localizeMessage('backstage_list.sear
                         placeholder={searchPlaceholder}
                         value={filter}
                         onChange={updateFilter}
-                        style={style.search}
                         id='searchInput'
                     />
                 </div>
@@ -111,14 +169,31 @@ const BackstageList = ({searchPlaceholder = localizeMessage('backstage_list.sear
                 {remainingProps.helpText}
             </span>
             <div className='backstage-list'>
-                {children}
+                {childrenToDisplay}
+            </div>
+            <div className='backstage-footer'>
+                <div className='backstage-footer__cell'>
+                    <FormattedMessage
+                        id='backstage_list.paginatorCount'
+                        defaultMessage='{startCount, number} - {endCount, number} of {total, number}'
+                        values={{
+                            startCount,
+                            endCount,
+                            total,
+                        }}
+                    />
+                    <PaginationButtons
+                        onPrevious={previousPageFn}
+                        onNext={nextPageFn}
+                        disablePrevious={isFirstPage}
+                        disableNext={isLastPage}
+                        previousButtonClassName='ml-2 prev'
+                        nextButtonClassName='next'
+                    />
+                </div>
             </div>
         </div>
     );
-};
-
-const style = {
-    search: {flexGrow: 0, flexShrink: 0},
 };
 
 export default BackstageList;

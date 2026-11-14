@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-const SYSTEM_CONSOLE_MAIN_MENU = 'Menu Icon';
+const SYSTEM_CONSOLE_MAIN_MENU = 'System Console Menu';
 
 function openMenu(name, item) {
     const menu = () => cy.findByRole('button', {name}).should('be.visible');
@@ -14,7 +14,7 @@ function openMenu(name, item) {
     }
 
     // # Click on a particular item
-    return cy.findByRole('menu').findByText(item).scrollIntoView().should('be.visible').click();
+    return cy.findByRole('menu', {name}).findByText(item).scrollIntoView().should('be.visible').click();
 }
 
 function getMenu(name) {
@@ -33,14 +33,8 @@ Cypress.Commands.add('uiGetSystemConsoleMainMenu', () => {
     return getMenu(SYSTEM_CONSOLE_MAIN_MENU);
 });
 
-Cypress.Commands.add('uiOpenDndStatusSubMenu', () => {
-    cy.uiOpenUserMenu();
+Cypress.Commands.add('uiOpenDndStatusSubMenuAndClick30Mins', () => {
+    cy.uiOpenUserMenu().findByText('Do not disturb').should('be.visible').trigger('mouseover');
 
-    // # Wait for status menu to transition in
-    cy.get('.MenuWrapper.status-dropdown-menu .Menu__content.dropdown-menu').should('be.visible');
-
-    // # Hover over Do Not Disturb option
-    cy.get('.MenuWrapper.status-dropdown-menu .Menu__content.dropdown-menu li#status-menu-dnd_menuitem').trigger('mouseover');
-
-    return cy.get('#status-menu-dnd');
+    cy.findByText('30 mins').should('be.visible').click({force: true});
 });

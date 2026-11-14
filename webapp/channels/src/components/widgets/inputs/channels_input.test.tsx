@@ -1,82 +1,48 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {Channel} from '@mattermost/types/channels';
 
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
+
 import ChannelsInput from './channels_input';
 
+const publicChannel = {
+    id: 'test-channel-1',
+    type: 'O',
+    name: 'test-channel-1',
+    display_name: 'test channel 1',
+} as Channel;
+
+const privateChannel = {
+    id: 'test-channel-2',
+    type: 'P',
+    name: 'test-channel-2',
+    display_name: 'test channel 2',
+} as Channel;
+
 describe('components/widgets/inputs/ChannelsInput', () => {
-    test('should match snapshot', () => {
-        const wrapper = shallow(
+    test('should render each suggested channel with its display name and tilde-prefixed slug', async () => {
+        renderWithContext(
             <ChannelsInput
                 placeholder='test'
-                ariaLabel='test'
+                ariaLabel='Search and Add Channels'
                 onChange={jest.fn()}
-                channelsLoader={jest.fn()}
+                channelsLoader={() => Promise.resolve([publicChannel, privateChannel])}
                 onInputChange={jest.fn()}
-                inputValue=''
-                value={[
-                    {
-                        id: 'test-channel-1',
-                        type: 'O',
-                        display_name: 'test channel 1',
-                    } as Channel,
-                    {
-                        id: 'test-channel-2',
-                        type: 'P',
-                        display_name: 'test channel 2',
-                    } as Channel,
-                ]}
+                inputValue='test'
+                value={[]}
             />,
         );
-        expect(wrapper).toMatchInlineSnapshot(`
-            <Async
-              aria-label="test"
-              cacheOptions={false}
-              className="ChannelsInput empty"
-              classNamePrefix="channels-input"
-              components={
-                Object {
-                  "IndicatorsContainer": [Function],
-                  "MultiValueRemove": [Function],
-                  "NoOptionsMessage": [Function],
-                }
-              }
-              defaultMenuIsOpen={false}
-              defaultOptions={false}
-              filterOption={null}
-              formatOptionLabel={[Function]}
-              getOptionValue={[Function]}
-              inputValue=""
-              isClearable={false}
-              isMulti={true}
-              loadOptions={[Function]}
-              loadingMessage={[Function]}
-              onChange={[Function]}
-              onFocus={[Function]}
-              onInputChange={[Function]}
-              openMenuOnClick={false}
-              openMenuOnFocus={true}
-              placeholder="test"
-              tabSelectsValue={true}
-              value={
-                Array [
-                  Object {
-                    "display_name": "test channel 1",
-                    "id": "test-channel-1",
-                    "type": "O",
-                  },
-                  Object {
-                    "display_name": "test channel 2",
-                    "id": "test-channel-2",
-                    "type": "P",
-                  },
-                ]
-              }
-            />
-        `);
+
+        await userEvent.click(screen.getByLabelText('Search and Add Channels'));
+
+        const options = await screen.findAllByRole('option');
+        expect(options).toHaveLength(2);
+
+        expect(options[0]).toHaveTextContent('test channel 1~test-channel-1');
+        expect(options[1]).toHaveTextContent('test channel 2~test-channel-2');
     });
 });

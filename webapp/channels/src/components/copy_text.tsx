@@ -2,26 +2,29 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback} from 'react';
-import {FormattedMessage} from 'react-intl';
+import type {MessageDescriptor} from 'react-intl';
+import {useIntl} from 'react-intl';
 
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
+import {ContentCopyIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import Constants from 'utils/constants';
 import {copyToClipboard} from 'utils/utils';
 
 type Props = {
+    label: MessageDescriptor;
     value: string;
-    defaultMessage?: string;
-    idMessage?: string;
 };
 
 const CopyText = ({
+    label,
     value,
-    defaultMessage = 'Copy',
-    idMessage = 'integrations.copy',
 }: Props) => {
-    const copyText = useCallback((e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
+    const intl = useIntl();
+    const ariaLabel = intl.formatMessage(label);
+
+    const copyText = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         copyToClipboard(value);
     }, [value]);
@@ -30,28 +33,17 @@ const CopyText = ({
         return null;
     }
 
-    const tooltip = (
-        <Tooltip id='copy'>
-            <FormattedMessage
-                id={idMessage}
-                defaultMessage={defaultMessage}
-            />
-        </Tooltip>
-    );
-
     return (
-        <OverlayTrigger
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            placement='top'
-            overlay={tooltip}
-        >
-            <a
-                href='#'
+        <WithTooltip title={label}>
+            <IconButton
                 data-testid='copyText'
-                className='fa fa-copy ml-2'
+                size='x-small'
+                className='ml-2'
+                icon={<Icon glyph={<ContentCopyIcon/>}/>}
+                aria-label={ariaLabel}
                 onClick={copyText}
             />
-        </OverlayTrigger>
+        </WithTooltip>
     );
 };
 

@@ -1,25 +1,25 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-Cypress.Commands.add('uiGetProductMenuButton', () => {
-    return cy.findByRole('button', {name: 'Product switch menu'}).should('be.visible');
+Cypress.Commands.add('uiGetSwitchProductMenuButton', () => {
+    return cy.findByRole('button', {name: 'Open product menu'}).should('be.visible');
 });
 
-Cypress.Commands.add('uiGetProductMenu', () => {
-    return cy.get('.product-switcher-menu').should('be.visible');
+Cypress.Commands.add('uiGetSwitchProductMenu', () => {
+    return cy.findByRole('menu', {name: 'Product menu'}).should('be.visible');
 });
 
-Cypress.Commands.add('uiOpenProductMenu', (item = '') => {
+Cypress.Commands.add('uiOpenSwitchProductMenu', (item = '') => {
     // # Click on product switch button
-    cy.uiGetProductMenuButton().click();
+    cy.uiGetSwitchProductMenuButton().click();
 
     if (!item) {
         // # Return the menu if no item is passed
-        return cy.uiGetProductMenu();
+        return cy.uiGetSwitchProductMenu();
     }
 
     // # Click on a particular item
-    return cy.uiGetProductMenu().
+    return cy.uiGetSwitchProductMenu().
         findByText(item).
         scrollIntoView().
         should('be.visible').
@@ -27,7 +27,8 @@ Cypress.Commands.add('uiOpenProductMenu', (item = '') => {
 });
 
 Cypress.Commands.add('uiGetSetStatusButton', () => {
-    return cy.findByRole('button', {name: /Select to open profile and status menu\./i}).should('be.visible');
+    // # Get set status button
+    return cy.get('#userAccountMenuButton').should('be.visible');
 });
 
 Cypress.Commands.add('uiGetProfileHeader', () => {
@@ -36,22 +37,18 @@ Cypress.Commands.add('uiGetProfileHeader', () => {
 
 Cypress.Commands.add('uiGetStatusMenuContainer', (options = {exist: true}) => {
     if (options.exist) {
-        return cy.findByRole('menu').should('exist');
+        return cy.get('#userAccountMenu').should('exist').and('be.visible');
     }
 
-    return cy.findByRole('menu').should('not.exist');
+    return cy.get('#userAccountMenu').should('not.exist');
 });
 
 Cypress.Commands.add('uiGetStatusMenu', (options = {visible: true}) => {
     if (options.visible) {
-        return cy.uiGetStatusMenuContainer().
-            find('ul').
-            should('be.visible');
+        return cy.get('#userAccountMenu').should('exist').and('be.visible');
     }
 
-    return cy.uiGetStatusMenuContainer().
-        find('ul').
-        should('not.be.visible');
+    return cy.get('#userAccountMenu').should('not.exist');
 });
 
 Cypress.Commands.add('uiOpenHelpMenu', (item = '') => {
@@ -107,7 +104,7 @@ Cypress.Commands.add('uiGetSearchContainer', () => {
 });
 
 Cypress.Commands.add('uiGetSearchBox', () => {
-    return cy.get('#searchBox').should('be.visible');
+    return cy.findByRole('searchbox').should('be.visible');
 });
 
 Cypress.Commands.add('uiGetRecentMentionButton', () => {
@@ -147,7 +144,7 @@ Cypress.Commands.add('uiOpenSettingsModal', (section = '') => {
 
 Cypress.Commands.add('uiLogout', () => {
     // # Click logout via user menu
-    cy.uiOpenUserMenu('Log Out');
+    cy.uiOpenUserMenu('Log out');
 
     cy.url().should('include', '/login');
     cy.get('.login-body-message').should('be.visible');

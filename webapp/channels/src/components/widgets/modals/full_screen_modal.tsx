@@ -26,6 +26,10 @@ type Props = {
 };
 
 class FullScreenModal extends React.PureComponent<Props> {
+    static defaultProps = {
+        overrideTargetEvent: true,
+    };
+
     private modal = React.createRef<HTMLDivElement>();
 
     public componentDidMount() {
@@ -70,6 +74,7 @@ class FullScreenModal extends React.PureComponent<Props> {
         return (
             <CSSTransition
                 in={this.props.show}
+                nodeRef={this.modal}
                 classNames='FullScreenModal'
                 mountOnEnter={true}
                 unmountOnExit={true}
@@ -84,7 +89,7 @@ class FullScreenModal extends React.PureComponent<Props> {
                         aria-modal={true}
                         aria-label={this.props.ariaLabel}
                         aria-labelledby={this.props.ariaLabelledBy}
-                        role='dialog'
+                        role='none'
                     >
                         {this.props.onGoBack &&
                             <button
@@ -115,7 +120,4 @@ class FullScreenModal extends React.PureComponent<Props> {
 
 const wrappedComponent = injectIntl(FullScreenModal, {forwardRef: true});
 wrappedComponent.displayName = 'injectIntl(FullScreenModal)';
-wrappedComponent.defaultProps = {
-    overrideTargetEvent: true,
-};
 export default wrappedComponent;

@@ -5,21 +5,26 @@ import {connect} from 'react-redux';
 import {bindActionCreators} from 'redux';
 import type {Dispatch} from 'redux';
 
-import type {GlobalState} from '@mattermost/types/store';
+import type {Channel} from '@mattermost/types/channels';
 
-import {getConfig} from 'mattermost-redux/selectors/entities/general';
 import {getCurrentTeam} from 'mattermost-redux/selectors/entities/teams';
 
 import {deleteChannel} from 'actions/views/channel';
 
+import {getChannelKind} from 'utils/channel_kind';
+
+import type {GlobalState} from 'types/store';
+
 import DeleteChannelModal from './delete_channel_modal';
 
-function mapStateToProps(state: GlobalState) {
-    const config = getConfig(state);
+type OwnProps = {
+    channel: Channel;
+};
 
+function mapStateToProps(state: GlobalState, ownProps: OwnProps) {
     return {
-        canViewArchivedChannels: config.ExperimentalViewArchivedChannels === 'true',
         currentTeamDetails: getCurrentTeam(state),
+        channelKind: getChannelKind(state, ownProps.channel),
     };
 }
 

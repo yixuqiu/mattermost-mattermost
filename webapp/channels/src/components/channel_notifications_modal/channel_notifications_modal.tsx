@@ -2,29 +2,37 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback, useState} from 'react';
-import {Modal} from 'react-bootstrap';
-import {FormattedMessage, useIntl} from 'react-intl';
+import {FormattedMessage, defineMessage, useIntl} from 'react-intl';
+import type {OnChangeValue} from 'react-select';
 
-import {BellOffOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
-import type {Channel, ChannelNotifyProps} from '@mattermost/types/channels';
+import {BellOffOutlineIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {GenericModal} from '@mattermost/components';
+import type {Channel, ChannelMembership, ChannelNotifyProps} from '@mattermost/types/channels';
 import type {UserNotifyProps, UserProfile} from '@mattermost/types/users';
 
 import AlertBanner from 'components/alert_banner';
 import CheckboxSettingItem from 'components/widgets/modals/components/checkbox_setting_item';
+import CheckboxWithSelectSettingItem from 'components/widgets/modals/components/checkbox_with_select_item';
 import ModalHeader from 'components/widgets/modals/components/modal_header';
 import ModalSection from 'components/widgets/modals/components/modal_section';
 import RadioSettingItem from 'components/widgets/modals/components/radio_setting_item';
+import type {SelectOption} from 'components/widgets/modals/components/react_select_item';
 
-import {IgnoreChannelMentions, NotificationLevels} from 'utils/constants';
+import {useChannelKind} from 'hooks/useChannelKind';
+import {focusElement} from 'utils/a11y_utils';
+import type {KindMessages} from 'utils/channel_kind';
+import {NotificationLevels, DesktopSound, IgnoreChannelMentions} from 'utils/constants';
+import {convertDesktopSoundNotifyPropFromUserToDesktop, DesktopNotificationSounds, getValueOfNotificationSoundsSelect, stopTryNotificationRing, tryNotificationSound} from 'utils/notification_sounds';
 
-import type {ChannelMemberNotifyProps} from './utils';
+import ResetToDefaultButton, {SectionName} from './reset_to_default_button';
 import utils from './utils';
 
 import type {PropsFromRedux} from './index';
 
 import './channel_notifications_modal.scss';
 
-type Props = PropsFromRedux & {
+export type Props = PropsFromRedux & {
 
     /**
      * Function that is called when the modal has been hidden and should be removed
@@ -40,83 +48,177 @@ type Props = PropsFromRedux & {
      * Object with info about current user
      */
     currentUser: UserProfile;
+
+    /**
+     * Id of the element that triggered the modal opening
+     */
+    focusOriginElement?: string;
 };
 
-function getUseSameDesktopSetting(currentUserNotifyProps: UserNotifyProps, channelMemberNotifyProps?: ChannelMemberNotifyProps) {
-    const isSameAsDesktop = channelMemberNotifyProps ? channelMemberNotifyProps?.desktop === channelMemberNotifyProps?.push : currentUserNotifyProps.push === currentUserNotifyProps.desktop;
-    const isSameAsDesktopThreads = channelMemberNotifyProps ? channelMemberNotifyProps?.desktop_threads === channelMemberNotifyProps?.push_threads : currentUserNotifyProps.push_threads === currentUserNotifyProps.desktop_threads;
-    return isSameAsDesktop && isSameAsDesktopThreads;
-}
-
-function getStateFromNotifyProps(currentUserNotifyProps: UserNotifyProps, channelMemberNotifyProps?: ChannelMemberNotifyProps) {
-    let ignoreChannelMentionsDefault: ChannelNotifyProps['ignore_channel_mentions'] = IgnoreChannelMentions.OFF;
-
-    if (channelMemberNotifyProps?.mark_unread === NotificationLevels.MENTION || (currentUserNotifyProps.channel && currentUserNotifyProps.channel === 'false')) {
-        ignoreChannelMentionsDefault = IgnoreChannelMentions.ON;
-    }
-
-    let ignoreChannelMentions = channelMemberNotifyProps?.ignore_channel_mentions;
-    if (!ignoreChannelMentions || ignoreChannelMentions === IgnoreChannelMentions.DEFAULT) {
-        ignoreChannelMentions = ignoreChannelMentionsDefault;
-    }
-
-    const desktop = channelMemberNotifyProps?.desktop === NotificationLevels.DEFAULT ? currentUserNotifyProps.desktop : (channelMemberNotifyProps?.desktop || currentUserNotifyProps.desktop);
-    const push = channelMemberNotifyProps?.push === NotificationLevels.DEFAULT ? currentUserNotifyProps.desktop : (channelMemberNotifyProps?.push || currentUserNotifyProps.push);
-
-    return {
-        desktop,
-        desktop_threads: channelMemberNotifyProps?.desktop_threads || NotificationLevels.ALL,
-        mark_unread: channelMemberNotifyProps?.mark_unread || NotificationLevels.ALL,
-        push,
-        push_threads: channelMemberNotifyProps?.push_threads || NotificationLevels.ALL,
-        ignore_channel_mentions: ignoreChannelMentions,
-        channel_auto_follow_threads: channelMemberNotifyProps?.channel_auto_follow_threads || 'off',
-    };
-}
-
-type SettingsType = {
-    desktop: ChannelNotifyProps['desktop'];
-    desktop_threads: ChannelNotifyProps['desktop_threads'];
-    mark_unread: ChannelNotifyProps['mark_unread'];
-    push: ChannelNotifyProps['push'];
-    push_threads: ChannelNotifyProps['push_threads'];
-    ignore_channel_mentions: ChannelNotifyProps['ignore_channel_mentions'];
-    channel_auto_follow_threads: ChannelNotifyProps['channel_auto_follow_threads'];
-};
+const messages = {
+    muteTitle: {
+        channel: defineMessage({
+            id: 'channel_notifications.muteChannelTitle',
+            defaultMessage: 'Mute channel',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.muteChannelTitle.board',
+            defaultMessage: 'Mute board',
+        }),
+    },
+    muteDesc: {
+        channel: defineMessage({
+            id: 'channel_notifications.muteChannelDesc',
+            defaultMessage: 'Turns off notifications for this channel. You’ll still see badges if you’re mentioned.',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.muteChannelDesc.board',
+            defaultMessage: 'Turns off notifications for this board. You’ll still see badges if you’re mentioned.',
+        }),
+    },
+    ignoreMentionsDesc: {
+        channel: defineMessage({
+            id: 'channel_notifications.ignoreMentionsDesc',
+            defaultMessage: 'When enabled, @channel, @here and @all will not trigger mentions or mention notifications in this channel',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.ignoreMentionsDesc.board',
+            defaultMessage: 'When enabled, @channel, @here and @all will not trigger mentions or mention notifications in this board',
+        }),
+    },
+    autoFollowThreadsCheckbox: {
+        channel: defineMessage({
+            id: 'channel_notifications.checkbox.autoFollowThreadsTitle',
+            defaultMessage: 'Automatically follow threads in this channel',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.checkbox.autoFollowThreadsTitle.board',
+            defaultMessage: 'Automatically follow threads in this board',
+        }),
+    },
+    mutedBannerTitle: {
+        channel: defineMessage({
+            id: 'channel_notifications.alertBanner.title',
+            defaultMessage: 'This channel is muted',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.alertBanner.title.board',
+            defaultMessage: 'This board is muted',
+        }),
+    },
+    mutedBannerDescription: {
+        channel: defineMessage({
+            id: 'channel_notifications.alertBanner.description',
+            defaultMessage: 'All other notification preferences for this channel are disabled',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.alertBanner.description.board',
+            defaultMessage: 'All other notification preferences for this board are disabled',
+        }),
+    },
+    autoFollowThreadsTitle: {
+        channel: defineMessage({
+            id: 'channel_notifications.autoFollowThreadsTitle',
+            defaultMessage: 'Follow all threads in this channel',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.autoFollowThreadsTitle.board',
+            defaultMessage: 'Follow all threads in this board',
+        }),
+    },
+    autoFollowThreadsDesc: {
+        channel: defineMessage({
+            id: 'channel_notifications.autoFollowThreadsDesc',
+            defaultMessage: 'When enabled, all new replies in this channel will be automatically followed and will appear in your Threads view.',
+        }),
+        board: defineMessage({
+            id: 'channel_notifications.autoFollowThreadsDesc.board',
+            defaultMessage: 'When enabled, all new replies in this board will be automatically followed and will appear in your Threads view.',
+        }),
+    },
+} satisfies Record<string, KindMessages>;
 
 export default function ChannelNotificationsModal(props: Props) {
     const {formatMessage} = useIntl();
+    const channelKind = useChannelKind(props.channel);
+
     const [show, setShow] = useState(true);
     const [serverError, setServerError] = useState('');
-    const [mobileSettingsSameAsDesktop, setMobileSettingsSameAsDesktop] = useState<boolean>(getUseSameDesktopSetting(props.currentUser.notify_props, props.channelMember?.notify_props));
-    const [settings, setSettings] = useState<SettingsType>(getStateFromNotifyProps(props.currentUser.notify_props, props.channelMember?.notify_props));
+
+    const [settings, setSettings] = useState(getStateFromNotifyProps(props.currentUser.notify_props, props.channelMember?.notify_props));
+
+    const [desktopAndMobileSettingsDifferent, setDesktopAndMobileSettingDifferent] = useState<boolean>(areDesktopAndMobileSettingsDifferent(
+        props.collapsedReplyThreads,
+        getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props?.channelMember?.notify_props?.desktop, props.currentUser.notify_props.desktop),
+        getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props?.channelMember?.notify_props?.desktop_threads, props.currentUser.notify_props.desktop_threads),
+        getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props?.channelMember?.notify_props?.push, props.currentUser.notify_props.push),
+        getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props?.channelMember?.notify_props?.push_threads, props.currentUser.notify_props.push_threads),
+    ));
 
     function handleHide() {
         setShow(false);
+    }
+
+    function handleExited() {
+        if (props.focusOriginElement) {
+            focusElement(props.focusOriginElement, true);
+        }
+        props.onExited?.();
     }
 
     const handleChange = useCallback((values: Record<string, string>) => {
         setSettings((prevSettings) => ({...prevSettings, ...values}));
     }, []);
 
-    const handleMobileSettingsChange = useCallback(() => {
-        setMobileSettingsSameAsDesktop((prevSettings) => !prevSettings);
-        setSettings((prevSettings) => ({...prevSettings, push: prevSettings.desktop, push_threads: prevSettings.desktop_threads}));
-    }, []);
+    function handleUseSameMobileSettingsAsDesktopCheckboxChange(value: boolean) {
+        const newValueOfSettings = {...settings};
+        const newValueOfDesktopAndMobileSettingsDifferent = !value;
 
-    const MuteOrIgnoreSectionContent = (
+        if (newValueOfDesktopAndMobileSettingsDifferent === false) {
+            newValueOfSettings.push = settings.desktop;
+            newValueOfSettings.push_threads = settings.desktop_threads;
+        } else {
+            newValueOfSettings.push = getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props.channelMember?.notify_props?.push, props.currentUser?.notify_props?.push);
+            newValueOfSettings.push_threads = getInitialValuesOfChannelNotifyProps(NotificationLevels.ALL, props.channelMember?.notify_props?.push_threads, props.currentUser?.notify_props?.push_threads);
+        }
+        setSettings(newValueOfSettings);
+        setDesktopAndMobileSettingDifferent(newValueOfDesktopAndMobileSettingsDifferent);
+    }
+
+    function handleResetToDefaultClicked(channelNotifyPropsDefaultedToUserNotifyProps: ChannelMembership['notify_props'], sectionName: SectionName) {
+        if (sectionName === SectionName.Mobile) {
+            const desktopAndMobileSettingsDiff = areDesktopAndMobileSettingsDifferent(
+                props.collapsedReplyThreads,
+                settings.desktop,
+                settings.desktop_threads,
+                channelNotifyPropsDefaultedToUserNotifyProps.push,
+                channelNotifyPropsDefaultedToUserNotifyProps.push_threads,
+            );
+
+            setDesktopAndMobileSettingDifferent(desktopAndMobileSettingsDiff);
+        }
+
+        setSettings({...settings, ...channelNotifyPropsDefaultedToUserNotifyProps});
+    }
+
+    function handleSave() {
+        const channelNotifyProps = createChannelNotifyPropsFromSelectedSettings(props.currentUser.notify_props, settings, desktopAndMobileSettingsDifferent);
+
+        props.actions.updateChannelNotifyProps(props.currentUser.id, props.channel.id, channelNotifyProps).then((value) => {
+            const {error} = value;
+            if (error) {
+                setServerError(error.message);
+            } else {
+                handleHide();
+            }
+        });
+    }
+
+    const muteOrIgnoreSectionContent = (
         <>
             <CheckboxSettingItem
-                inputFieldTitle={
-                    <FormattedMessage
-                        id='channel_notifications.muteChannelTitle'
-                        defaultMessage='Mute channel'
-                    />
-                }
-                description={formatMessage({
-                    id: 'channel_notifications.muteChannelDesc',
-                    defaultMessage: 'Turns off notifications for this channel. You\'ll still see badges if you\'re mentioned.',
-                })}
+                inputFieldTitle={<FormattedMessage {...messages.muteTitle[channelKind]}/>}
+                description={formatMessage(messages.muteDesc[channelKind])}
                 inputFieldValue={settings.mark_unread === 'mention'}
                 inputFieldData={utils.MuteChannelInputFieldData}
                 handleChange={(e) => handleChange({mark_unread: e ? 'mention' : 'all'})}
@@ -128,10 +230,7 @@ export default function ChannelNotificationsModal(props: Props) {
                         defaultMessage='Ignore mentions for @channel, @here and @all'
                     />
                 }
-                description={formatMessage({
-                    id: 'channel_notifications.ignoreMentionsDesc',
-                    defaultMessage: 'When enabled, @channel, @here and @all will not trigger mentions or mention notifications in this channel',
-                })}
+                description={formatMessage(messages.ignoreMentionsDesc[channelKind])}
                 inputFieldValue={settings.ignore_channel_mentions === 'on'}
                 inputFieldData={utils.IgnoreMentionsInputFieldData}
                 handleChange={(e) => handleChange({ignore_channel_mentions: e ? 'on' : 'off'})}
@@ -139,14 +238,23 @@ export default function ChannelNotificationsModal(props: Props) {
         </>
     );
 
-    const DesktopNotificationsSectionContent = (
+    const handleChangeForMessageNotificationSoundSelect = (selectedOption: OnChangeValue<SelectOption, boolean>) => {
+        stopTryNotificationRing();
+
+        if (selectedOption && 'value' in selectedOption) {
+            handleChange({desktop_notification_sound: ((selectedOption as SelectOption).value)});
+            tryNotificationSound(selectedOption.value);
+        }
+    };
+
+    const desktopNotificationsSectionContent = (
         <>
             <RadioSettingItem
                 title={formatMessage({
                     id: 'channel_notifications.NotifyMeTitle',
                     defaultMessage: 'Notify me about…',
                 })}
-                inputFieldValue={settings.desktop}
+                inputFieldValue={settings.desktop || ''}
                 inputFieldData={utils.desktopNotificationInputFieldData(props.currentUser.notify_props.desktop)}
                 handleChange={(e) => handleChange({desktop: e.target.value})}
             />
@@ -161,15 +269,41 @@ export default function ChannelNotificationsModal(props: Props) {
                     inputFieldTitle={
                         <FormattedMessage
                             id='channel_notifications.checkbox.threadsReplyTitle'
-                            defaultMessage="Notify me about replies to threads I\'m following"
+                            defaultMessage='Notify me about replies to threads I’m following'
                         />
                     }
                     handleChange={(e) => handleChange({desktop_threads: e ? 'all' : 'mention'})}
-                />}
+                />
+            }
+            {settings.desktop !== 'none' && (
+                <CheckboxWithSelectSettingItem
+                    title={formatMessage({
+                        id: 'channel_notifications.desktopNotifications.title',
+                        defaultMessage: 'Sounds',
+                    })}
+                    checkboxFieldTitle={
+                        <FormattedMessage
+                            id='channel_notifications.desktopNotifications.soundEnable'
+                            defaultMessage='Message notification sounds'
+                        />
+                    }
+                    checkboxFieldValue={settings.desktop_sound === DesktopSound.ON}
+                    checkboxFieldData={utils.desktopNotificationSoundsCheckboxFieldData}
+                    handleCheckboxChange={(isChecked) => handleChange({desktop_sound: isChecked ? DesktopSound.ON : DesktopSound.OFF})}
+                    selectFieldData={utils.desktopNotificationSoundsSelectFieldData}
+                    selectFieldValue={getValueOfNotificationSoundsSelect(settings.desktop_notification_sound)}
+                    isSelectDisabled={settings.desktop_sound !== 'on'}
+                    selectPlaceholder={formatMessage({
+                        id: 'channel_notifications.desktopNotifications.soundSelectPlaceholder',
+                        defaultMessage: 'Select a sound',
+                    })}
+                    handleSelectChange={handleChangeForMessageNotificationSoundSelect}
+                />
+            )}
         </>
     );
 
-    const MobileNotificationsSectionContent = (
+    const mobileNotificationsSectionContent = (
         <>
             <CheckboxSettingItem
                 inputFieldTitle={
@@ -178,134 +312,94 @@ export default function ChannelNotificationsModal(props: Props) {
                         defaultMessage='Use the same notification settings as desktop'
                     />
                 }
-                inputFieldValue={mobileSettingsSameAsDesktop}
+                inputFieldValue={!desktopAndMobileSettingsDifferent}
                 inputFieldData={utils.sameMobileSettingsDesktopInputFieldData}
-                handleChange={() => handleMobileSettingsChange()}
+                handleChange={handleUseSameMobileSettingsAsDesktopCheckboxChange}
             />
-            {!mobileSettingsSameAsDesktop && (
+            {desktopAndMobileSettingsDifferent && (
                 <>
                     <RadioSettingItem
+                        dataTestId='mobile-notify-me-radio-section'
                         title={formatMessage({
                             id: 'channel_notifications.NotifyMeTitle',
                             defaultMessage: 'Notify me about…',
                         })}
-                        inputFieldValue={settings.push}
+                        inputFieldValue={settings.push || ''}
                         inputFieldData={utils.mobileNotificationInputFieldData(props.currentUser.notify_props.push)}
                         handleChange={(e) => handleChange({push: e.target.value})}
                     />
                     {props.collapsedReplyThreads && settings.push === 'mention' &&
-                    <CheckboxSettingItem
-                        title={formatMessage({
-                            id: 'channel_notifications.ThreadsReplyTitle',
-                            defaultMessage: 'Thread reply notifications',
-                        })}
-                        inputFieldTitle={
-                            <FormattedMessage
-                                id='channel_notifications.checkbox.threadsReplyTitle'
-                                defaultMessage="Notify me about replies to threads I\'m following"
-                            />
-                        }
-                        inputFieldValue={settings.push_threads === 'all'}
-                        inputFieldData={utils.MobileReplyThreadsInputFieldData}
-                        handleChange={(e) => handleChange({push_threads: e ? 'all' : 'mention'})}
-                    />}
+                        <CheckboxSettingItem
+                            dataTestId='mobile-reply-threads-checkbox-section'
+                            title={formatMessage({
+                                id: 'channel_notifications.ThreadsReplyTitle',
+                                defaultMessage: 'Thread reply notifications',
+                            })}
+                            inputFieldTitle={
+                                <FormattedMessage
+                                    id='channel_notifications.checkbox.threadsReplyTitle'
+                                    defaultMessage='Notify me about replies to threads I’m following'
+                                />
+                            }
+                            inputFieldValue={settings.push_threads === 'all'}
+                            inputFieldData={utils.MobileReplyThreadsInputFieldData}
+                            handleChange={(e) => handleChange({push_threads: e ? 'all' : 'mention'})}
+                        />}
                 </>
             )}
         </>
     );
 
-    const AutoFollowThreadsSectionContent = (
+    const autoFollowThreadsSectionContent = (
         <CheckboxSettingItem
-            inputFieldTitle={
-                <FormattedMessage
-                    id='channel_notifications.checkbox.autoFollowThreadsTitle'
-                    defaultMessage='Automatically follow threads in this channel'
-                />
-            }
+            inputFieldTitle={<FormattedMessage {...messages.autoFollowThreadsCheckbox[channelKind]}/>}
             inputFieldValue={settings.channel_auto_follow_threads === 'on'}
             inputFieldData={utils.AutoFollowThreadsInputFieldData}
             handleChange={(e) => handleChange({channel_auto_follow_threads: e ? 'on' : 'off'})}
         />
     );
 
-    function handleSave() {
-        const userSettings: Partial<SettingsType> = {...settings};
-        if (!props.collapsedReplyThreads) {
-            delete userSettings.push_threads;
-            delete userSettings.desktop_threads;
-            delete userSettings.channel_auto_follow_threads;
-        }
-        props.actions.updateChannelNotifyProps(props.currentUser.id, props.channel.id, userSettings).then((value) => {
-            const {error} = value;
-            if (error) {
-                setServerError(error.message);
-            } else {
-                handleHide();
-            }
-        });
-    }
-
-    const resetToDefaultBtn = useCallback((settingName: string) => {
-        const defaultSettings = props.currentUser.notify_props;
-
-        const resetToDefault = (settingName: string) => {
-            if (settingName === 'desktop') {
-                setSettings({...settings, desktop: defaultSettings.desktop, desktop_threads: defaultSettings.desktop_threads || settings.desktop_threads});
-            }
-            if (settingName === 'push') {
-                setSettings({...settings, push: defaultSettings.desktop, push_threads: defaultSettings.push_threads || settings.push_threads});
-            }
-        };
-
-        const isDesktopSameAsDefault = (defaultSettings.desktop === settings.desktop && defaultSettings.desktop_threads === settings.desktop_threads);
-        const isPushSameAsDefault = (defaultSettings.push === settings.push && defaultSettings.push_threads === settings.push_threads);
-        if ((settingName === 'desktop' && isDesktopSameAsDefault) || (settingName === 'push' && isPushSameAsDefault)) {
-            return <></>;
-        }
-        return (
-            <button
-                className='channel-notifications-settings-modal__reset-btn'
-                onClick={() => resetToDefault(settingName)}
-            >
-                <RefreshIcon
-                    size={14}
-                    color={'currentColor'}
-                />
-                {formatMessage({
-                    id: 'channel_notifications.resetToDefault',
-                    defaultMessage: 'Reset to default',
-                })}
-            </button>
-        );
-    }, [props.currentUser, settings]);
-
     const desktopAndMobileNotificationSectionContent = settings.mark_unread === 'all' ? (
         <>
-            <div className='channel-notifications-settings-modal__divider'/>
+            <div className='ChannelNotificationModal__divider'/>
             <ModalSection
                 title={formatMessage({
                     id: 'channel_notifications.desktopNotificationsTitle',
                     defaultMessage: 'Desktop Notifications',
                 })}
-                titleSuffix={resetToDefaultBtn('desktop')}
+                titleSuffix={
+                    <ResetToDefaultButton
+                        sectionName={SectionName.Desktop}
+                        userNotifyProps={props.currentUser.notify_props}
+                        userSelectedChannelNotifyProps={settings}
+                        onClick={handleResetToDefaultClicked}
+                    />
+                }
                 description={formatMessage({
                     id: 'channel_notifications.desktopNotificationsDesc',
                     defaultMessage: 'Available on Chrome, Edge, Firefox, and the Mattermost Desktop App.',
                 })}
-                content={DesktopNotificationsSectionContent}
+                content={desktopNotificationsSectionContent}
             />
-            <div className='channel-notifications-settings-modal__divider'/>
+            <div className='ChannelNotificationModal__divider'/>
             <ModalSection
                 title={formatMessage({
                     id: 'channel_notifications.mobileNotificationsTitle',
                     defaultMessage: 'Mobile Notifications',
                 })}
-                titleSuffix={resetToDefaultBtn('push')}
+                titleSuffix={
+                    <ResetToDefaultButton
+                        sectionName={SectionName.Mobile}
+                        userNotifyProps={props.currentUser.notify_props}
+                        userSelectedChannelNotifyProps={settings}
+                        onClick={handleResetToDefaultClicked}
+                    />
+                }
                 description={formatMessage({
                     id: 'channel_notifications.mobileNotificationsDesc',
                     defaultMessage: 'Notification alerts are pushed to your mobile device when there is activity in Mattermost.',
                 })}
-                content={MobileNotificationsSectionContent}
+                content={mobileNotificationsSectionContent}
             />
         </>
     ) : (
@@ -319,91 +413,312 @@ export default function ChannelNotificationsModal(props: Props) {
                     color={'currentColor'}
                 />
             }
-            title={
-                <FormattedMessage
-                    id='channel_notifications.alertBanner.title'
-                    defaultMessage='This channel is muted'
-                />
+            title={<FormattedMessage {...messages.mutedBannerTitle[channelKind]}/>}
+            message={<FormattedMessage {...messages.mutedBannerDescription[channelKind]}/>}
+        />
+    );
+
+    const footerContent = (
+        <>
+            {serverError &&
+            <span
+                role='alert'
+                className='ChannelNotificationModal__server-error'
+            >
+                {serverError}
+            </span>
             }
-            message={
+            <Button
+                emphasis='tertiary'
+                size='medium'
+                onClick={handleHide}
+            >
                 <FormattedMessage
-                    id='channel_notifications.alertBanner.description'
-                    defaultMessage='All other notification preferences for this channel are disabled'
+                    id='generic_btn.cancel'
+                    defaultMessage='Cancel'
                 />
-            }
+            </Button>
+            <Button
+                emphasis='primary'
+                size='medium'
+                onClick={handleSave}
+            >
+                <FormattedMessage
+                    id='generic_btn.save'
+                    defaultMessage='Save'
+                />
+            </Button>
+        </>
+    );
+
+    const headerText = (
+        <ModalHeader
+            id={'channelNotificationModalLabel'}
+            title={formatMessage({
+                id: 'channel_notifications.preferences',
+                defaultMessage: 'Notification Preferences',
+            })}
+            subtitle={props.channel.display_name}
         />
     );
 
     return (
-        <Modal
-            dialogClassName='a11y__modal channel-notifications-settings-modal'
+        <GenericModal
+            id='channelNotificationModal'
+            className='a11y__modal ChannelNotificationModal modal--overflow'
             show={show}
             onHide={handleHide}
-            onExited={props.onExited}
-            role='dialog'
-            aria-labelledby='channelNotificationModalLabel'
-            style={{display: 'flex', placeItems: 'center'}}
+            onExited={handleExited}
+            ariaLabel='channelNotificationModalLabel'
+            compassDesign={true}
+            footerContent={footerContent}
+            modalHeaderText={headerText}
+            bodyPadding={false}
+            footerDivider={true}
         >
-            <ModalHeader
-                id={'channelNotificationModalLabel'}
-                title={formatMessage({
-                    id: 'channel_notifications.preferences',
-                    defaultMessage: 'Notification Preferences',
-                })}
-                subtitle={props.channel.display_name}
-                handleClose={handleHide}
-            />
-            <main className='channel-notifications-settings-modal__body'>
-                <ModalSection
-                    title={formatMessage({
-                        id: 'channel_notifications.muteAndIgnore',
-                        defaultMessage: 'Mute or ignore',
-                    })}
-                    content={MuteOrIgnoreSectionContent}
-                />
+
+            <main className='ChannelNotificationModal__body'>
+                <fieldset aria-labelledby='ChannelNotificationModal-legend'>
+                    <ModalSection
+                        title={
+                            <legend
+                                style={{all: 'unset'}}
+                                id='ChannelNotificationModal-legend'
+                            >
+                                {formatMessage({
+                                    id: 'channel_notifications.muteAndIgnore',
+                                    defaultMessage: 'Mute or ignore',
+                                })}
+                            </legend>
+                        }
+                        content={muteOrIgnoreSectionContent}
+                    />
+                </fieldset>
                 {desktopAndMobileNotificationSectionContent}
                 {props.collapsedReplyThreads &&
                     <>
-                        <div className='channel-notifications-settings-modal__divider'/>
+                        <div className='ChannelNotificationModal__divider'/>
                         <ModalSection
-                            title={formatMessage({
-                                id: 'channel_notifications.autoFollowThreadsTitle',
-                                defaultMessage: 'Follow all threads in this channel',
-                            })}
-                            description={formatMessage({
-                                id: 'channel_notifications.autoFollowThreadsDesc',
-                                defaultMessage: 'When enabled, all new replies in this channel will be automatically followed and will appear in your Threads view.',
-                            })}
-                            content={AutoFollowThreadsSectionContent}
+                            title={formatMessage(messages.autoFollowThreadsTitle[channelKind])}
+                            description={formatMessage(messages.autoFollowThreadsDesc[channelKind])}
+                            content={autoFollowThreadsSectionContent}
                         />
                     </>
                 }
             </main>
-            <footer className='channel-notifications-settings-modal__footer'>
-                {serverError &&
-                    <span className='channel-notifications-settings-modal__server-error'>
-                        {serverError}
-                    </span>
-                }
-                <button
-                    className='btn btn-tertiary btn-md'
-                    onClick={handleHide}
-                >
-                    <FormattedMessage
-                        id='generic_btn.cancel'
-                        defaultMessage='Cancel'
-                    />
-                </button>
-                <button
-                    className='btn btn-primary btn-md'
-                    onClick={handleSave}
-                >
-                    <FormattedMessage
-                        id='generic_btn.save'
-                        defaultMessage='Save'
-                    />
-                </button>
-            </footer>
-        </Modal>
+        </GenericModal>
     );
+}
+
+function getStateFromNotifyProps(
+    currentUserNotifyProps: UserNotifyProps,
+    channelMemberNotifyProps?: ChannelMembership['notify_props'],
+): Required<Omit<ChannelMembership['notify_props'], 'email'>> {
+    return {
+        mark_unread: channelMemberNotifyProps?.mark_unread ?? NotificationLevels.ALL,
+        ignore_channel_mentions: getInitialValuesOfIgnoreChannelMentions(
+            channelMemberNotifyProps?.mark_unread,
+            channelMemberNotifyProps?.ignore_channel_mentions,
+            currentUserNotifyProps?.channel,
+        ),
+        desktop: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['desktop']>(
+            NotificationLevels.ALL,
+            channelMemberNotifyProps?.desktop,
+            currentUserNotifyProps?.desktop,
+        ),
+        desktop_threads: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['desktop_threads']>(
+            NotificationLevels.ALL,
+            channelMemberNotifyProps?.desktop_threads,
+            currentUserNotifyProps?.desktop_threads,
+        ),
+        desktop_sound: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['desktop_sound']>(
+            DesktopSound.ON,
+            channelMemberNotifyProps?.desktop_sound,
+            convertDesktopSoundNotifyPropFromUserToDesktop(currentUserNotifyProps?.desktop_sound),
+        ),
+        desktop_notification_sound: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['desktop_notification_sound']>(
+            DesktopNotificationSounds.BING,
+            channelMemberNotifyProps?.desktop_notification_sound,
+            currentUserNotifyProps?.desktop_notification_sound,
+        ),
+        push: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['push']>(
+            NotificationLevels.ALL,
+            channelMemberNotifyProps?.push,
+            currentUserNotifyProps?.push,
+        ),
+        push_threads: getInitialValuesOfChannelNotifyProps<ChannelMembership['notify_props']['push_threads']>(
+            NotificationLevels.ALL,
+            channelMemberNotifyProps?.push_threads,
+            currentUserNotifyProps?.push_threads,
+        ),
+        channel_auto_follow_threads: channelMemberNotifyProps?.channel_auto_follow_threads ?? 'off',
+    };
+}
+
+export function getInitialValuesOfChannelNotifyProps<KeyInNotifyProps>(
+    defaultValue: NonNullable<KeyInNotifyProps>,
+    channelMemberNotifyProp: KeyInNotifyProps | undefined = undefined,
+    userNotifyProp: KeyInNotifyProps | undefined = undefined,
+) {
+    let value = defaultValue;
+
+    // Check if channel_member's notify_prop is defined for the selected notify_prop
+    if (channelMemberNotifyProp) {
+        // If channel_member's notify_prop is default and user's notify_prop is defined, we should use user's notify_prop
+        if (channelMemberNotifyProp === NotificationLevels.DEFAULT && userNotifyProp) {
+            value = userNotifyProp;
+        } else {
+            // Otherwise, we should use channel_member's notify_prop as is
+            value = channelMemberNotifyProp;
+        }
+    } else if (userNotifyProp) {
+        // If channel_member's notify_prop is not defined and user's notify_prop is defined, we should use user's notify_prop as is
+        value = userNotifyProp;
+    }
+
+    return value;
+}
+
+export function getInitialValuesOfIgnoreChannelMentions(
+    markUnread: ChannelMembership['notify_props']['mark_unread'],
+    ignoreChannelMentions: ChannelMembership['notify_props']['ignore_channel_mentions'],
+    userNotifyPropForChannel: UserNotifyProps['channel'],
+): NonNullable<ChannelMembership['notify_props']['ignore_channel_mentions']> {
+    let ignoreChannelMentionsDefault: ChannelNotifyProps['ignore_channel_mentions'] = IgnoreChannelMentions.OFF;
+    if (
+        markUnread === NotificationLevels.MENTION ||
+        (userNotifyPropForChannel && userNotifyPropForChannel === 'false')
+    ) {
+        ignoreChannelMentionsDefault = IgnoreChannelMentions.ON;
+    }
+
+    if (ignoreChannelMentions) {
+        if (ignoreChannelMentions === IgnoreChannelMentions.DEFAULT) {
+            return ignoreChannelMentionsDefault;
+        }
+        return ignoreChannelMentions;
+    }
+
+    return ignoreChannelMentionsDefault;
+}
+
+export function createChannelNotifyPropsFromSelectedSettings(
+    userNotifyProps: UserNotifyProps,
+    savedChannelNotifyProps: ChannelMembership['notify_props'],
+    desktopAndMobileSettingsDifferent: boolean,
+) {
+    const channelNotifyProps: ChannelMembership['notify_props'] = {
+        mark_unread: savedChannelNotifyProps.mark_unread,
+        ignore_channel_mentions: savedChannelNotifyProps.ignore_channel_mentions,
+        channel_auto_follow_threads: savedChannelNotifyProps.channel_auto_follow_threads,
+    };
+
+    if (savedChannelNotifyProps.desktop === userNotifyProps.desktop) {
+        channelNotifyProps.desktop = NotificationLevels.DEFAULT;
+    } else {
+        channelNotifyProps.desktop = savedChannelNotifyProps.desktop;
+    }
+
+    // Check if USER's desktop_thread setting are defined
+    if (userNotifyProps?.desktop_threads?.length) {
+        // If USER's desktop_thread setting is same as CHANNEL's new desktop_threads setting, we should set it to default
+        if (userNotifyProps.desktop_threads === savedChannelNotifyProps.desktop_threads) {
+            channelNotifyProps.desktop_threads = NotificationLevels.DEFAULT;
+        } else {
+            // Otherwise, we should use the CHANNEL's new desktop_threads setting as is
+            channelNotifyProps.desktop_threads = savedChannelNotifyProps.desktop_threads;
+        }
+    } else if (savedChannelNotifyProps.desktop_threads === NotificationLevels.MENTION || savedChannelNotifyProps.desktop_threads === NotificationLevels.DEFAULT) {
+        // If USER's desktop_thread setting is not defined and CHANNEL's new desktop_threads setting is MENTION or DEFAULT, then save it as default
+        channelNotifyProps.desktop_threads = NotificationLevels.DEFAULT;
+    } else {
+        // Otherwise, we should use the CHANNEL's new desktop_threads setting as is
+        channelNotifyProps.desktop_threads = savedChannelNotifyProps.desktop_threads;
+    }
+
+    if (convertDesktopSoundNotifyPropFromUserToDesktop(userNotifyProps?.desktop_sound) === savedChannelNotifyProps.desktop_sound) {
+        channelNotifyProps.desktop_sound = DesktopSound.DEFAULT;
+    } else {
+        channelNotifyProps.desktop_sound = savedChannelNotifyProps.desktop_sound;
+    }
+
+    // Check if USER's desktop_notification_sound setting is defined
+    if (userNotifyProps?.desktop_notification_sound?.length) {
+        // If USER's desktop_notification_sound setting is same as CHANNEL's new desktop_notification_sound setting, we should set it to default
+        if (userNotifyProps.desktop_notification_sound === savedChannelNotifyProps.desktop_notification_sound) {
+            channelNotifyProps.desktop_notification_sound = DesktopNotificationSounds.DEFAULT;
+        } else {
+            // Otherwise, we should use the CHANNEL's new desktop_notification_sound setting as is
+            channelNotifyProps.desktop_notification_sound = savedChannelNotifyProps.desktop_notification_sound;
+        }
+    } else if (
+        savedChannelNotifyProps.desktop_notification_sound === DesktopNotificationSounds.BING ||
+        savedChannelNotifyProps.desktop_notification_sound === DesktopNotificationSounds.DEFAULT
+    ) {
+        channelNotifyProps.desktop_notification_sound = DesktopNotificationSounds.DEFAULT;
+    } else {
+        // Otherwise, we should use the CHANNEL's new desktop_notification_sound setting as is
+        channelNotifyProps.desktop_notification_sound = savedChannelNotifyProps.desktop_notification_sound;
+    }
+
+    if (savedChannelNotifyProps.push === userNotifyProps.push) {
+        channelNotifyProps.push = NotificationLevels.DEFAULT;
+    } else {
+        channelNotifyProps.push = savedChannelNotifyProps.push;
+    }
+
+    // Check if USER's push_threads setting are defined
+    if (userNotifyProps?.push_threads?.length) {
+        // If USER's push_threads setting is same as CHANNEL's new push_threads setting, we should set it to default
+        if (userNotifyProps.push_threads === savedChannelNotifyProps.push_threads) {
+            channelNotifyProps.push_threads = NotificationLevels.DEFAULT;
+        } else {
+            // Otherwise, we should use the CHANNEL's new push_threads setting as is
+            channelNotifyProps.push_threads = savedChannelNotifyProps.push_threads;
+        }
+    } else if (savedChannelNotifyProps.push_threads === NotificationLevels.MENTION || savedChannelNotifyProps.push_threads === NotificationLevels.DEFAULT) {
+        // If USER's push_threads setting is not defined and CHANNEL's new push_threads setting is MENTION or DEFAULT, then save it as default
+        channelNotifyProps.push_threads = NotificationLevels.DEFAULT;
+    } else {
+        // Otherwise, we should use the CHANNEL's new push_threads setting as is
+        channelNotifyProps.push_threads = savedChannelNotifyProps.push_threads;
+    }
+
+    // If desktop and mobile settings are checked to be same, then same settings should be applied to push and push_threads
+    // as that of desktop and desktop_threads
+    if (desktopAndMobileSettingsDifferent === false) {
+        // If desktop is set to default, it means it is synced to the user's notification settings.
+        // Since we checked the box to use the same settings for mobile, we need to set channel's mobile to match channel's desktop.
+        // Setting mobile to default would sync it to the user's notification settings, which we want to avoid.
+        if (channelNotifyProps.desktop === NotificationLevels.DEFAULT) {
+            channelNotifyProps.push = userNotifyProps.desktop;
+        } else {
+            // Otherwise, we should use the CHANNEL's desktop setting as is to match mobile settings
+            channelNotifyProps.push = channelNotifyProps.desktop;
+        }
+
+        if (channelNotifyProps.desktop_threads === NotificationLevels.DEFAULT) {
+            channelNotifyProps.push_threads = userNotifyProps.desktop_threads;
+        } else {
+            channelNotifyProps.push_threads = channelNotifyProps.desktop_threads;
+        }
+    }
+
+    return channelNotifyProps;
+}
+
+/**
+ * Check's if channel's notification settings for desktop and mobile are different
+ */
+export function areDesktopAndMobileSettingsDifferent(
+    isCollapsedThreadsEnabled: boolean,
+    desktop: UserNotifyProps['desktop'],
+    desktopThreads: UserNotifyProps['desktop_threads'],
+    push?: UserNotifyProps['push'],
+    pushThreads?: UserNotifyProps['push_threads'],
+): boolean {
+    if (push === NotificationLevels.DEFAULT || push === desktop) {
+        return isCollapsedThreadsEnabled && desktopThreads !== pushThreads;
+    }
+    return true;
 }

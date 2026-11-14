@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import marked from 'marked';
-import React from 'react';
+import React, {type JSX} from 'react';
 import type {MessageDescriptor} from 'react-intl';
 import {FormattedMessage} from 'react-intl';
 
@@ -11,8 +11,8 @@ import FormattedMarkdownMessage, {CustomRenderer} from 'components/formatted_mar
 type Props = {
     isMarkdown?: boolean;
     text: string | MessageDescriptor | JSX.Element;
-    textValues?: Record<string, React.ReactNode>;
-}
+    textValues?: Record<string, string | (() => React.ReactNode)>;
+};
 
 const SchemaText = ({
     isMarkdown,

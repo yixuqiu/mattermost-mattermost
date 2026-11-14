@@ -7,14 +7,14 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @enterprise @ldap
 
-import {Channel} from '@mattermost/types/channels';
-import {Team} from '@mattermost/types/teams';
-import {UserProfile} from '@mattermost/types/users';
-import {AdminConfig} from '@mattermost/types/config';
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
+import type {Channel} from '@mattermost/types/channels';
+import type {Team} from '@mattermost/types/teams';
+import type {UserProfile} from '@mattermost/types/users';
+import type {AdminConfig} from '@mattermost/types/config';
+
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 function setLDAPTestSettings(config: AdminConfig) {
     return {
@@ -84,7 +84,7 @@ context('ldap', () => {
             // # Link 2 groups to testChannel
             cy.visit(`/admin_console/user_management/channels/${testChannel.id}`);
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
-            cy.wait(TIMEOUTS.TWO_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+            cy.wait(TIMEOUTS.TWO_SEC);
 
             // # Link first group
             cy.get('#addGroupsToChannelToggle').click();
@@ -128,12 +128,11 @@ context('ldap', () => {
             // # Add board-one to test team
             cy.visit(`/admin_console/user_management/teams/${testTeam.id}`);
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Team Configuration');
-            cy.wait(TIMEOUTS.TWO_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+            cy.wait(TIMEOUTS.TWO_SEC);
 
             // # Turn on sync group members
-            cy.findByTestId('syncGroupSwitch').
+            cy.findByTestId('syncGroupSwitch-button').
                 scrollIntoView().
-                findByRole('button').
                 click({force: true});
 
             // # Add board group to team
@@ -170,7 +169,7 @@ context('ldap', () => {
             // # Go to testTeam config page
             cy.visit(`/admin_console/user_management/teams/${testTeam.id}`);
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Team Configuration');
-            cy.wait(TIMEOUTS.TWO_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+            cy.wait(TIMEOUTS.TWO_SEC);
 
             // # Make the team so anyone can join it
             cy.findByTestId('allowAllToggleSwitch').scrollIntoView().click();
@@ -208,20 +207,24 @@ context('ldap', () => {
             // # Add board-one to test team
             cy.visit(`/admin_console/user_management/channels/${testChannel.id}`);
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
-            cy.wait(TIMEOUTS.TWO_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+            cy.wait(TIMEOUTS.TWO_SEC);
 
             // Make it private and then cancel
-            cy.findByTestId('allow-all-toggle').click();
+            cy.findByTestId('allow-all-toggle-private').click({force: true});
             cy.get('#cancelButtonSettings').click();
             cy.get('#confirmModalButton').click();
             cy.visit(`/admin_console/user_management/channels/${testChannel.id}`);
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
 
             // * Ensure it still public
-            cy.findByTestId('allow-all-toggle').should('has.have.text', 'Public');
+            cy.findByTestId('allow-all-toggle').within(() => {
+                cy.findByText('Public channel or private channel').should('be.visible');
+            });
+            cy.findByTestId('allow-all-toggle-public').should('have.attr', 'aria-pressed', 'true');
+            cy.findByTestId('allow-all-toggle-private').should('have.attr', 'aria-pressed', 'false');
 
             // Make it private and save
-            cy.findByTestId('allow-all-toggle').click();
+            cy.findByTestId('allow-all-toggle-private').click({force: true});
             cy.get('#saveSetting').should('be.enabled').click();
             cy.get('#confirmModalButton').click();
 
@@ -230,11 +233,15 @@ context('ldap', () => {
             cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
 
             // * Ensure it is Private
-            cy.findByTestId('allow-all-toggle').should('has.have.text', 'Private');
+            cy.findByTestId('allow-all-toggle').within(() => {
+                cy.findByText('Public channel or private channel').should('be.visible');
+            });
+            cy.findByTestId('allow-all-toggle-public').should('have.attr', 'aria-pressed', 'false');
+            cy.findByTestId('allow-all-toggle-private').should('have.attr', 'aria-pressed', 'true');
 
             // # Go to team page to look for this channel in public channel directory
             cy.visit(`/${testTeam.name}`);
-            cy.uiBrowseOrCreateChannel('Browse channels').click();
+            cy.uiBrowseOrCreateChannel('Browse channels');
 
             // * Search private channel name and make sure it is still visible
             cy.get('#searchChannelsTextbox').type(testChannel.display_name);
@@ -256,7 +263,7 @@ context('ldap', () => {
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
 
                 // Make it public and then cancel
-                cy.findByTestId('allow-all-toggle').click();
+                cy.findByTestId('allow-all-toggle-public').click({force: true});
                 cy.get('#cancelButtonSettings').click();
                 cy.get('#confirmModalButton').click();
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Mattermost Channels');
@@ -264,11 +271,15 @@ context('ldap', () => {
                 // Reload
                 cy.visit(`/admin_console/user_management/channels/${privateChannel.id}`);
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
-                cy.wait(TIMEOUTS.THREE_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+                cy.wait(TIMEOUTS.THREE_SEC);
 
                 // Make it public and save
                 // * Ensure it still showing the channel as private
-                cy.findByTestId('allow-all-toggle').should('has.have.text', 'Private').click();
+                cy.findByTestId('allow-all-toggle').within(() => {
+                    cy.findByText('Public channel or private channel').should('be.visible');
+                });
+                cy.findByTestId('allow-all-toggle-private').should('have.attr', 'aria-pressed', 'true');
+                cy.findByTestId('allow-all-toggle-public').click({force: true});
                 cy.get('#saveSetting').should('be.enabled').click();
                 cy.get('#confirmModalButton').click();
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Mattermost Channels');
@@ -277,8 +288,12 @@ context('ldap', () => {
                 cy.visit(`/admin_console/user_management/channels/${privateChannel.id}`);
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
 
-                // * Ensure it still showing the channel as private
-                cy.findByTestId('allow-all-toggle').should('has.have.text', 'Public');
+                // * Ensure it is showing the channel as public
+                cy.findByTestId('allow-all-toggle').within(() => {
+                    cy.findByText('Public channel or private channel').should('be.visible');
+                });
+                cy.findByTestId('allow-all-toggle-public').should('have.attr', 'aria-pressed', 'true');
+                cy.findByTestId('allow-all-toggle-private').should('have.attr', 'aria-pressed', 'false');
 
                 // # Ensure the last message in the message says that it was converted to a public channel
                 cy.visit(`/${testTeam.name}/channels/${privateChannel.name}`);
@@ -296,14 +311,15 @@ context('ldap', () => {
             cy.get('.DataGrid_searchBar').within(() => {
                 cy.findByPlaceholderText('Search').should('be.visible').type('Town Square');
             });
-            cy.wait(TIMEOUTS.FIVE_SEC); //eslint-disable-line cypress/no-unnecessary-waiting
+            cy.wait(TIMEOUTS.FIVE_SEC);
 
             cy.findAllByTestId('town-squareedit').then((elements) => {
                 elements[0].click();
                 cy.get('.admin-console__header', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and('have.text', 'Channel Configuration');
 
                 // * Ensure the toggle to private/public is disabled
-                cy.findByTestId('allow-all-toggle-button').should('be.disabled');
+                cy.findByTestId('allow-all-toggle-public').should('be.disabled');
+                cy.findByTestId('allow-all-toggle-private').should('be.disabled');
             });
         });
 
@@ -408,7 +424,7 @@ context('ldap', () => {
                 cy.wait(TIMEOUTS.THREE_SEC);
 
                 // # Type channel display name on Channel switcher input
-                cy.findByRole('textbox', {name: 'quick switch input'}).type(publicChannel.display_name);
+                cy.findByRole('combobox', {name: 'quick switch input'}).type(publicChannel.display_name);
                 cy.wait(TIMEOUTS.HALF_SEC);
 
                 // * Should open up suggestion list for channels
@@ -433,7 +449,7 @@ context('ldap', () => {
                 cy.wait(TIMEOUTS.THREE_SEC);
 
                 // # Type channel display name on Channel switcher input
-                cy.findByRole('textbox', {name: 'quick switch input'}).type(publicChannel.display_name);
+                cy.findByRole('combobox', {name: 'quick switch input'}).type(publicChannel.display_name);
                 cy.wait(TIMEOUTS.HALF_SEC);
 
                 // * Should open up suggestion list for channels
@@ -456,7 +472,7 @@ context('ldap', () => {
                 cy.visit(`/${testTeam.name}/channels/off-topic`);
 
                 // # Go to LHS and click 'Browse channels'
-                cy.uiBrowseOrCreateChannel('Browse channels').click();
+                cy.uiBrowseOrCreateChannel('Browse channels');
 
                 // * Search public channel and ensure it appears in the list
                 cy.get('#searchChannelsTextbox').type(publicChannel.display_name);
@@ -473,7 +489,7 @@ context('ldap', () => {
                 cy.visit(`/${testTeam.name}/channels/off-topic`);
 
                 // # Go to LHS and click 'Browse channels'
-                cy.uiBrowseOrCreateChannel('Browse channels').click();
+                cy.uiBrowseOrCreateChannel('Browse channels');
 
                 // * Search private channel name and make sure it isn't there in public channel directory
                 cy.get('#searchChannelsTextbox').type(publicChannel.display_name);

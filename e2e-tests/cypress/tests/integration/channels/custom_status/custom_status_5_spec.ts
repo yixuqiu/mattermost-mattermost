@@ -14,7 +14,7 @@ describe('Custom Status - Verifying Where Custom Status Appears', () => {
         emoji: 'grinning',
         text: 'Busy',
     };
-    let currentUser;
+    let currentUser: Cypress.UserProfile;
 
     before(() => {
         cy.apiUpdateConfig({TeamSettings: {EnableCustomUserStatuses: true}});
@@ -27,7 +27,7 @@ describe('Custom Status - Verifying Where Custom Status Appears', () => {
     });
 
     it('MM-T3850_1 set a status', () => {
-        cy.uiOpenUserMenu('Set a Custom Status');
+        cy.uiOpenUserMenu('Set custom status');
 
         // # Type the custom status text in the custom status modal input
         cy.findByPlaceholderText('Set a status').type(customStatus.text, {force: true});
@@ -100,12 +100,12 @@ describe('Custom Status - Verifying Where Custom Status Appears', () => {
         cy.get('#channelMembersModal .more-modal__row span.emoticon').should('exist').invoke('attr', 'data-emoticon').should('contain', customStatus.emoji);
 
         // # Close the channel members modal
-        cy.get('#channelMembersModal .close').click();
+        cy.get('#channelMembersModal').find('button[aria-label="Close"]').click();
     });
 
     it('MM-T3850_8 should show custom status emoji next to username in the team members modal', () => {
         // # Open team menu and click on "View Members"
-        cy.uiOpenTeamMenu('View Members');
+        cy.uiOpenTeamMenu('View members');
         cy.get('#teamMembersModal').should('exist');
 
         // # Search the current user's username in the search input
@@ -115,7 +115,7 @@ describe('Custom Status - Verifying Where Custom Status Appears', () => {
         cy.get('#teamMembersModal .more-modal__row span.emoticon').should('exist').invoke('attr', 'data-emoticon').should('contain', customStatus.emoji);
 
         // # Close the team members modal
-        cy.get('#teamMembersModal .close').click();
+        cy.get('#teamMembersModal').find('button[aria-label="Close"]').click();
     });
 
     it('MM-T3850_9 should show custom status emoji next to username in the more direct messages modal', () => {

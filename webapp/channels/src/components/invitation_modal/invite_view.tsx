@@ -4,40 +4,50 @@
 import classNames from 'classnames';
 import React, {useEffect, useMemo} from 'react';
 import {Modal} from 'react-bootstrap';
-import {FormattedMessage, useIntl} from 'react-intl';
-import {useSelector} from 'react-redux';
+import {FormattedMessage, defineMessages, useIntl} from 'react-intl';
 
+import {CheckIcon, CloseIcon, LinkVariantIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {Channel} from '@mattermost/types/channels';
-import type {Team} from '@mattermost/types/teams';
+import type {LockProfileFieldsSetting} from '@mattermost/types/config';
+import type {MemberInviteProfile, Team} from '@mattermost/types/teams';
 import type {UserProfile} from '@mattermost/types/users';
 
 import deepFreeze from 'mattermost-redux/utils/deep_freeze';
 
-import {trackEvent} from 'actions/telemetry_actions';
-
+import AlertBanner from 'components/alert_banner';
+import useAccessControlAttributes, {EntityType} from 'components/common/hooks/useAccessControlAttributes';
 import useCopyText from 'components/common/hooks/useCopyText';
-import {getAnalyticsCategory} from 'components/onboarding_tasks';
 import UsersEmailsInput from 'components/widgets/inputs/users_emails_input';
+import AlertTag from 'components/widgets/tag/alert_tag';
+import TagGroup from 'components/widgets/tag/tag_group';
 
 import {Constants} from 'utils/constants';
-import {t} from 'utils/i18n';
+import {formatAttributeName} from 'utils/format_attribute_name';
+import {getEmailsToPreset, getProfileForEmail, profileHasInput} from 'utils/member_invite_profiles';
 import {getSiteURL} from 'utils/url';
-import {getTrackFlowRole, getRoleForTrackFlow, getSourceForTrackFlow} from 'utils/utils';
+import {isValidUsername} from 'utils/utils';
 
 import AddToChannels, {defaultCustomMessage, defaultInviteChannels} from './add_to_channels';
 import type {CustomMessageProps, InviteChannels} from './add_to_channels';
 import InviteAs, {InviteType} from './invite_as';
+import MemberProfileInputs from './member_profile_inputs';
 import OverageUsersBannerNotice from './overage_users_banner_notice';
 
 import './invite_view.scss';
 
-export const initializeInviteState = (initialSearchValue = '', inviteAsGuest = false): InviteState => {
+export const initializeInviteState = (initialSearchValue = '', inviteAsGuest = false, canInviteGuestsWithMagicLink = false): InviteState => {
     return deepFreeze({
         inviteType: inviteAsGuest ? InviteType.GUEST : InviteType.MEMBER,
         customMessage: defaultCustomMessage,
         inviteChannels: defaultInviteChannels,
         usersEmails: [],
         usersEmailsSearch: initialSearchValue,
+        canInviteGuestsWithMagicLink,
+        profiles: {},
     });
 };
 
@@ -47,6 +57,8 @@ export type InviteState = {
     inviteChannels: InviteChannels;
     usersEmails: Array<UserProfile | string>;
     usersEmailsSearch: string;
+    canInviteGuestsWithMagicLink: boolean;
+    profiles: Record<string, MemberInviteProfile>;
 };
 
 export type Props = InviteState & {
@@ -62,6 +74,8 @@ export type Props = InviteState & {
     channelsLoader: (value: string, callback?: (channels: Channel[]) => void) => Promise<Channel[]>;
     regenerateTeamInviteId: (teamId: string) => void;
     isAdmin: boolean;
+    membershipPolicyEnforced: boolean;
+    membershipPolicyStrict: boolean;
     usersLoader: (value: string, callback: (users: UserProfile[]) => void) => Promise<UserProfile[]> | undefined;
     onChangeUsersEmails: (usersEmails: Array<UserProfile | string>) => void;
     isCloud: boolean;
@@ -74,12 +88,13 @@ export type Props = InviteState & {
     townSquareDisplayName: string;
     channelToInvite?: Channel;
     onPaste?: (e: ClipboardEvent) => void;
-}
+    useGuestMagicLink: boolean;
+    toggleGuestMagicLink: () => void;
+    lockProfileFieldsForEmailUsers: LockProfileFieldsSetting;
+    onProfileChange: (profile: MemberInviteProfile) => void;
+};
 
 export default function InviteView(props: Props) {
-    const trackFlowRole = useSelector(getTrackFlowRole);
-    const roleForTrackFlow = useSelector(getRoleForTrackFlow);
-
     useEffect(() => {
         if (!props.currentTeam.invite_id) {
             props.regenerateTeamInviteId(props.currentTeam.id);
@@ -88,17 +103,47 @@ export default function InviteView(props: Props) {
 
     const {formatMessage} = useIntl();
 
+    const {structuredAttributes} = useAccessControlAttributes(
+        EntityType.Team,
+        props.currentTeam.id,
+        props.membershipPolicyEnforced,
+    );
+
+    // Attribute chips shown inside the policy banner so the inviter can see
+    // which attributes gate the team. Memoised so typing in the picker doesn't
+    // re-render them.
+    const accessControlTags = useMemo(() => {
+        if (structuredAttributes.length === 0) {
+            return null;
+        }
+        return (
+            <TagGroup>
+                {structuredAttributes.flatMap((attribute) =>
+                    attribute.values.map((value) => {
+                        const attributeLabel = formatAttributeName(attribute.name);
+                        return (
+                            <AlertTag
+                                key={`${attribute.name}-${value}`}
+                                tooltipTitle={attributeLabel}
+                                text={`${attributeLabel}: ${value}`}
+                            />
+                        );
+                    }),
+                )}
+            </TagGroup>
+        );
+    }, [structuredAttributes]);
+
     const inviteURL = useMemo(() => {
-        return `${getSiteURL()}/signup_user_complete/?id=${props.currentTeam.invite_id}&md=link&sbr=${trackFlowRole}`;
-    }, [props.currentTeam.invite_id, trackFlowRole]);
+        return `${getSiteURL()}/signup_user_complete/?id=${props.currentTeam.invite_id}`;
+    }, [props.currentTeam.invite_id]);
 
     const copyText = useCopyText({
-        trackCallback: () => trackEvent(getAnalyticsCategory(props.isAdmin), 'click_copy_invite_link', {...roleForTrackFlow, ...getSourceForTrackFlow()}),
         text: inviteURL,
     });
 
     const copyButton = (
-        <button
+        <Button
             onClick={copyText.onClick}
             data-testid='InviteView__copyInviteLink'
             aria-label={
@@ -107,76 +152,89 @@ export default function InviteView(props: Props) {
                     defaultMessage: 'team invite link {inviteURL}',
                 }, {inviteURL})
             }
-            className='btn btn-secondary'
+            emphasis='secondary'
             aria-live='polite'
+            leadingIcon={(
+                <Icon
+                    glyph={copyText.copiedRecently ? <CheckIcon/> : <LinkVariantIcon/>}
+                />
+            )}
         >
-            {!copyText.copiedRecently && (
-                <>
-                    <i className='icon icon-link-variant'/>
-                    <FormattedMessage
-                        id='invite_modal.copy_link'
-                        defaultMessage='Copy invite link'
-                    />
-                </>
+            {copyText.copiedRecently ? (
+                <FormattedMessage
+                    id='invite_modal.copied'
+                    defaultMessage='Copied'
+                />
+            ) : (
+                <FormattedMessage
+                    id='invite_modal.copy_link'
+                    defaultMessage='Copy invite link'
+                />
             )}
-            {copyText.copiedRecently && (
-                <>
-                    <i className='icon icon-check'/>
-                    <FormattedMessage
-                        id='invite_modal.copied'
-                        defaultMessage='Copied'
-                    />
-                </>
-            )}
-        </button>
+        </Button>
     );
 
     const errorProperties = {
         showError: false,
-        errorMessageId: '',
-        errorMessageDefault: '',
+        errorMessage: messages.exceededMaxBatch,
         errorMessageValues: {
-            text: '',
+            text: Constants.MAX_ADD_MEMBERS_BATCH.toString(),
         },
-        extraErrorText: '',
     };
 
     if (props.usersEmails.length > Constants.MAX_ADD_MEMBERS_BATCH) {
         errorProperties.showError = true;
-        errorProperties.errorMessageId = t(
-            'invitation_modal.invite_members.exceeded_max_add_members_batch',
-        );
-        errorProperties.errorMessageDefault = 'No more than **{text}** people can be invited at once';
-        errorProperties.errorMessageValues.text = Constants.MAX_ADD_MEMBERS_BATCH.toString();
     }
 
-    let placeholder = formatMessage({
-        id: 'invite_modal.add_invites',
-        defaultMessage: 'Enter a name or email address',
-    });
-    let noMatchMessageId = t(
-        'invitation_modal.members.users_emails_input.no_user_found_matching',
-    );
-    let noMatchMessageDefault =
-        'No one found matching **{text}**. Enter their email to invite them.';
-
-    if (!props.emailInvitationsEnabled) {
+    let placeholder;
+    let noMatchMessage;
+    if (props.emailInvitationsEnabled) {
+        placeholder = formatMessage({
+            id: 'invite_modal.add_invites',
+            defaultMessage: 'Enter a name or email address',
+        });
+        noMatchMessage = messages.noUserFound;
+    } else {
         placeholder = formatMessage({
             id: 'invitation_modal.members.search-and-add.placeholder-email-disabled',
             defaultMessage: 'Add members',
         });
-        noMatchMessageId = t(
-            'invitation_modal.members.users_emails_input.no_user_found_matching-email-disabled',
-        );
-        noMatchMessageDefault = 'No one found matching **{text}**';
+        noMatchMessage = messages.noUserFoundEmailDisabled;
     }
+
+    let validAddressMessage;
+    if (props.inviteType === InviteType.MEMBER) {
+        validAddressMessage = messages.validAddressMember;
+    } else {
+        validAddressMessage = messages.validAddressGuest;
+    }
+
+    const showMemberProfileInputs = props.inviteType === InviteType.MEMBER &&
+        props.emailInvitationsEnabled &&
+        props.lockProfileFieldsForEmailUsers !== Constants.LOCK_PROFILE_FIELDS.NONE;
+
+    const arePresetProfilesValid = useMemo(() => {
+        if (!showMemberProfileInputs) {
+            return true;
+        }
+
+        // A row may be left fully empty, but any pre-set fields need a valid username to
+        // pass server-side invite validation.
+        return getEmailsToPreset(props.usersEmails).every((email) => {
+            const profile = getProfileForEmail(props.profiles, email);
+            if (!profile || !profileHasInput(profile)) {
+                return true;
+            }
+            return isValidUsername(profile.username.toLowerCase()) === undefined;
+        });
+    }, [showMemberProfileInputs, props.usersEmails, props.profiles]);
 
     const isInviteValid = useMemo(() => {
         if (props.inviteType === InviteType.GUEST) {
             return props.inviteChannels.channels.length > 0 && props.usersEmails.length > 0;
         }
-        return props.usersEmails.length > 0;
-    }, [props.inviteType, props.inviteChannels.channels, props.usersEmails]);
+        return props.usersEmails.length > 0 && arePresetProfilesValid;
+    }, [props.inviteType, props.inviteChannels.channels, props.usersEmails, arePresetProfilesValid]);
 
     const inviteModalPeople = formatMessage({
         id: 'invite_modal.people',
@@ -186,6 +244,11 @@ export default function InviteView(props: Props) {
     const inviteModalGuest = formatMessage({
         id: 'invite_modal.guests',
         defaultMessage: 'guests',
+    });
+
+    const closeLabel = formatMessage({
+        id: 'generic_modal.close',
+        defaultMessage: 'Close',
     });
 
     return (
@@ -206,15 +269,57 @@ export default function InviteView(props: Props) {
                         }}
                     />
                 </h1>
-                <button
-                    id='closeIcon'
-                    className='icon icon-close close'
-                    aria-label='Close'
-                    title='Close'
-                    onClick={props.onClose}
-                />
+                <WithTooltip title={closeLabel}>
+                    <IconButton
+                        id='closeIcon'
+                        className='GenericModal__close'
+                        size='medium'
+                        icon={<Icon glyph={<CloseIcon/>}/>}
+                        onClick={props.onClose}
+                        aria-label={closeLabel}
+                    />
+                </WithTooltip>
             </Modal.Header>
             <Modal.Body className='overflow-visible'>
+                {props.membershipPolicyEnforced && (
+                    <div
+                        className='InviteView__policyBanner'
+                        role='status'
+                    >
+                        <AlertBanner
+                            mode='info'
+                            variant='app'
+                            title={props.membershipPolicyStrict ? (
+                                <FormattedMessage
+                                    id='invite_modal.policy_enforced.title'
+                                    defaultMessage='Team access is restricted by user attributes'
+                                />
+                            ) : (
+                                <FormattedMessage
+                                    id='invite_modal.policy_advisory.title'
+                                    defaultMessage='This team has membership requirements'
+                                />
+                            )}
+                            message={props.membershipPolicyStrict ? (
+                                <FormattedMessage
+                                    id='invite_modal.policy_enforced.description'
+                                    defaultMessage='Only users who meet the membership requirements can be added to this team.'
+                                />
+                            ) : (
+                                <FormattedMessage
+                                    id='invite_modal.policy_advisory.description'
+                                    defaultMessage='Users who do not meet them can still join, but will not be automatically added.'
+                                />
+                            )}
+                        >
+                            {accessControlTags && (
+                                <div className='InviteView__policyBannerTags'>
+                                    {accessControlTags}
+                                </div>
+                            )}
+                        </AlertBanner>
+                    </div>
+                )}
                 <div className='InviteView__sectionTitle InviteView__sectionTitle--first'>
                     <FormattedMessage
                         id='invite_modal.to'
@@ -233,12 +338,8 @@ export default function InviteView(props: Props) {
                         props.onChangeUsersEmails(usersEmails);
                     }}
                     value={props.usersEmails}
-                    validAddressMessageId={props.inviteType === InviteType.MEMBER ? t(
-                        'invitation_modal.members.users_emails_input.valid_email',
-                    ) : t('invitation_modal.guests.users_emails_input.valid_email')}
-                    validAddressMessageDefault={props.inviteType === InviteType.MEMBER ? 'Invite **{email}** as a team member' : 'Invite **{email}** as a guest'}
-                    noMatchMessageId={noMatchMessageId}
-                    noMatchMessageDefault={noMatchMessageDefault}
+                    validAddressMessage={validAddressMessage}
+                    noMatchMessage={noMatchMessage}
                     onInputChange={props.onUsersInputChange}
                     inputValue={props.usersEmailsSearch}
                     emailInvitationsEnabled={props.emailInvitationsEnabled}
@@ -250,8 +351,16 @@ export default function InviteView(props: Props) {
                     inviteType={props.inviteType}
                     setInviteAs={props.setInviteAs}
                     titleClass='InviteView__sectionTitle'
+                    canInviteGuests={props.canInviteGuests}
                 />
                 }
+                {showMemberProfileInputs && (
+                    <MemberProfileInputs
+                        usersEmails={props.usersEmails}
+                        profiles={props.profiles}
+                        onProfileChange={props.onProfileChange}
+                    />
+                )}
                 {(props.inviteType === InviteType.GUEST || (props.inviteType === InviteType.MEMBER && props.channelToInvite)) && (
                     <AddToChannels
                         setCustomMessage={props.setCustomMessage}
@@ -268,22 +377,79 @@ export default function InviteView(props: Props) {
                         inviteType={props.inviteType}
                     />
                 )}
+                {props.inviteType === InviteType.GUEST && props.canInviteGuestsWithMagicLink && (
+                    <div className='InviteView__guestMagicLinkSection'>
+                        <label className='InviteView__guestMagicLinkCheckbox'>
+                            <input
+                                type='checkbox'
+                                checked={props.useGuestMagicLink}
+                                onChange={props.toggleGuestMagicLink}
+                                data-testid='InviteView__guestMagicLinkCheckbox'
+                            />
+                            <FormattedMessage
+                                id='invite_modal.guest_magic_link'
+                                defaultMessage='Allow invited guests to log in with a magic link (without password)'
+                            />
+                        </label>
+                    </div>
+                )}
                 <OverageUsersBannerNotice/>
             </Modal.Body>
             <Modal.Footer className={classNames('InviteView__footer', props.footerClass, {'InviteView__footer-guest': props.inviteType === InviteType.GUEST})}>
+                {props.inviteType === InviteType.MEMBER && props.membershipPolicyEnforced && (
+                    <span
+                        className='InviteView__inviteLinkWarning'
+                        role='status'
+                    >
+                        {props.membershipPolicyStrict ? (
+                            <FormattedMessage
+                                id='invite_modal.policy_enforced.link_warning'
+                                defaultMessage='People who use this link must meet the membership requirements to join.'
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='invite_modal.policy_advisory.link_warning'
+                                defaultMessage='People who use this link can join even if they do not meet the membership requirements, but will not be automatically added.'
+                            />
+                        )}
+                    </span>
+                )}
                 {props.inviteType === InviteType.MEMBER && copyButton}
-                <button
+                <Button
                     disabled={!isInviteValid}
                     onClick={props.invite}
-                    className={'btn btn-primary'}
+                    emphasis='primary'
                     data-testid={'inviteButton'}
                 >
                     <FormattedMessage
                         id='invite_modal.invite'
                         defaultMessage='Invite'
                     />
-                </button>
+                </Button>
             </Modal.Footer>
         </>
     );
 }
+
+const messages = defineMessages({
+    exceededMaxBatch: {
+        id: 'invitation_modal.invite_members.exceeded_max_add_members_batch',
+        defaultMessage: 'No more than **{text}** people can be invited at once',
+    },
+    noUserFound: {
+        id: 'invitation_modal.members.users_emails_input.no_user_found_matching',
+        defaultMessage: 'No one found matching **{text}**. Enter their email to invite them.',
+    },
+    noUserFoundEmailDisabled: {
+        id: 'invitation_modal.members.users_emails_input.no_user_found_matching-email-disabled',
+        defaultMessage: 'No one found matching **{text}**',
+    },
+    validAddressGuest: {
+        id: 'invitation_modal.guests.users_emails_input.valid_email',
+        defaultMessage: 'Invite **{email}** as a guest',
+    },
+    validAddressMember: {
+        id: 'invitation_modal.members.users_emails_input.valid_email',
+        defaultMessage: 'Invite **{email}** as a team member',
+    },
+});

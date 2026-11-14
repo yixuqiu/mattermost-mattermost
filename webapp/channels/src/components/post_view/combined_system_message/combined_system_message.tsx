@@ -1,17 +1,21 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {injectIntl} from 'react-intl';
+import React, {type JSX} from 'react';
+import {defineMessage, defineMessages, injectIntl} from 'react-intl';
 import type {IntlShape, MessageDescriptor} from 'react-intl';
 
 import type {UserProfile} from '@mattermost/types/users';
 
 import {Posts} from 'mattermost-redux/constants';
+import type {MessageData} from 'mattermost-redux/utils/post_list';
+import {secureGetFromRecord} from 'mattermost-redux/utils/post_utils';
 
 import Markdown from 'components/markdown';
 
-import {t} from 'utils/i18n';
+import type {KindMessages} from 'utils/channel_kind';
+
+import type {ChannelKind} from 'types/store/plugins';
 
 import LastUsers from './last_users';
 
@@ -20,189 +24,327 @@ const {
     JOIN_TEAM, ADD_TO_TEAM, REMOVE_FROM_TEAM, LEAVE_TEAM,
 } = Posts.POST_TYPES;
 
-const postTypeMessage = {
+type PostTypeMessageKey = 'one' | 'one_you' | 'two' | 'many_expanded';
+
+// Channel post types, one message per kind of channel.
+/* eslint-disable formatjs/enforce-placeholders -- values are passed where each message is rendered */
+const channelPostTypeMessage = {
     [JOIN_CHANNEL]: {
         one: {
-            id: t('combined_system_message.joined_channel.one'),
-            defaultMessage: '{firstUser} **joined the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.joined_channel.one',
+                defaultMessage: '{firstUser} **joined the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.joined_channel.one.board',
+                defaultMessage: '{firstUser} **joined the board**.',
+            }),
         },
         one_you: {
-            id: t('combined_system_message.joined_channel.one_you'),
-            defaultMessage: 'You **joined the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.joined_channel.one_you',
+                defaultMessage: 'You **joined the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.joined_channel.one_you.board',
+                defaultMessage: 'You **joined the board**.',
+            }),
         },
         two: {
-            id: t('combined_system_message.joined_channel.two'),
-            defaultMessage: '{firstUser} and {secondUser} **joined the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.joined_channel.two',
+                defaultMessage: '{firstUser} and {secondUser} **joined the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.joined_channel.two.board',
+                defaultMessage: '{firstUser} and {secondUser} **joined the board**.',
+            }),
         },
         many_expanded: {
-            id: t('combined_system_message.joined_channel.many_expanded'),
-            defaultMessage: '{users} and {lastUser} **joined the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.joined_channel.many_expanded',
+                defaultMessage: '{users} and {lastUser} **joined the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.joined_channel.many_expanded.board',
+                defaultMessage: '{users} and {lastUser} **joined the board**.',
+            }),
         },
-    },
+    } satisfies Record<PostTypeMessageKey, KindMessages>,
     [ADD_TO_CHANNEL]: {
         one: {
-            id: t('combined_system_message.added_to_channel.one'),
-            defaultMessage: '{firstUser} **added to the channel** by {actor}.',
+            channel: defineMessage({
+                id: 'combined_system_message.added_to_channel.one',
+                defaultMessage: '{firstUser} **added to the channel** by {actor}.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.added_to_channel.one.board',
+                defaultMessage: '{firstUser} **added to the board** by {actor}.',
+            }),
         },
         one_you: {
-            id: t('combined_system_message.added_to_channel.one_you'),
-            defaultMessage: 'You were **added to the channel** by {actor}.',
+            channel: defineMessage({
+                id: 'combined_system_message.added_to_channel.one_you',
+                defaultMessage: 'You were **added to the channel** by {actor}.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.added_to_channel.one_you.board',
+                defaultMessage: 'You were **added to the board** by {actor}.',
+            }),
         },
         two: {
-            id: t('combined_system_message.added_to_channel.two'),
-            defaultMessage: '{firstUser} and {secondUser} **added to the channel** by {actor}.',
+            channel: defineMessage({
+                id: 'combined_system_message.added_to_channel.two',
+                defaultMessage: '{firstUser} and {secondUser} **added to the channel** by {actor}.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.added_to_channel.two.board',
+                defaultMessage: '{firstUser} and {secondUser} **added to the board** by {actor}.',
+            }),
         },
         many_expanded: {
-            id: t('combined_system_message.added_to_channel.many_expanded'),
-            defaultMessage: '{users} and {lastUser} were **added to the channel** by {actor}.',
+            channel: defineMessage({
+                id: 'combined_system_message.added_to_channel.many_expanded',
+                defaultMessage: '{users} and {lastUser} were **added to the channel** by {actor}.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.added_to_channel.many_expanded.board',
+                defaultMessage: '{users} and {lastUser} were **added to the board** by {actor}.',
+            }),
         },
-    },
+    } satisfies Record<PostTypeMessageKey, KindMessages>,
     [REMOVE_FROM_CHANNEL]: {
         one: {
-            id: t('combined_system_message.removed_from_channel.one'),
-            defaultMessage: '{firstUser} was **removed from the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.removed_from_channel.one',
+                defaultMessage: '{firstUser} was **removed from the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.removed_from_channel.one.board',
+                defaultMessage: '{firstUser} was **removed from the board**.',
+            }),
         },
         one_you: {
-            id: t('combined_system_message.removed_from_channel.one_you'),
-            defaultMessage: 'You were **removed from the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.removed_from_channel.one_you',
+                defaultMessage: 'You were **removed from the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.removed_from_channel.one_you.board',
+                defaultMessage: 'You were **removed from the board**.',
+            }),
         },
         two: {
-            id: t('combined_system_message.removed_from_channel.two'),
-            defaultMessage: '{firstUser} and {secondUser} were **removed from the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.removed_from_channel.two',
+                defaultMessage: '{firstUser} and {secondUser} were **removed from the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.removed_from_channel.two.board',
+                defaultMessage: '{firstUser} and {secondUser} were **removed from the board**.',
+            }),
         },
         many_expanded: {
-            id: t('combined_system_message.removed_from_channel.many_expanded'),
-            defaultMessage: '{users} and {lastUser} were **removed from the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.removed_from_channel.many_expanded',
+                defaultMessage: '{users} and {lastUser} were **removed from the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.removed_from_channel.many_expanded.board',
+                defaultMessage: '{users} and {lastUser} were **removed from the board**.',
+            }),
         },
-    },
+    } satisfies Record<PostTypeMessageKey, KindMessages>,
     [LEAVE_CHANNEL]: {
         one: {
-            id: t('combined_system_message.left_channel.one'),
-            defaultMessage: '{firstUser} **left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.left_channel.one',
+                defaultMessage: '{firstUser} **left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.left_channel.one.board',
+                defaultMessage: '{firstUser} **left the board**.',
+            }),
         },
         one_you: {
-            id: t('combined_system_message.left_channel.one_you'),
-            defaultMessage: 'You **left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.left_channel.one_you',
+                defaultMessage: 'You **left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.left_channel.one_you.board',
+                defaultMessage: 'You **left the board**.',
+            }),
         },
         two: {
-            id: t('combined_system_message.left_channel.two'),
-            defaultMessage: '{firstUser} and {secondUser} **left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.left_channel.two',
+                defaultMessage: '{firstUser} and {secondUser} **left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.left_channel.two.board',
+                defaultMessage: '{firstUser} and {secondUser} **left the board**.',
+            }),
         },
         many_expanded: {
-            id: t('combined_system_message.left_channel.many_expanded'),
-            defaultMessage: '{users} and {lastUser} **left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.left_channel.many_expanded',
+                defaultMessage: '{users} and {lastUser} **left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.left_channel.many_expanded.board',
+                defaultMessage: '{users} and {lastUser} **left the board**.',
+            }),
         },
-    },
+    } satisfies Record<PostTypeMessageKey, KindMessages>,
     [JOIN_LEAVE_CHANNEL]: {
         one: {
-            id: t('combined_system_message.join_left_channel.one'),
-            defaultMessage: '{firstUser} **joined and left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.join_left_channel.one',
+                defaultMessage: '{firstUser} **joined and left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.join_left_channel.one.board',
+                defaultMessage: '{firstUser} **joined and left the board**.',
+            }),
         },
         one_you: {
-            id: t('combined_system_message.join_left_channel.one_you'),
-            defaultMessage: 'You **joined and left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.join_left_channel.one_you',
+                defaultMessage: 'You **joined and left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.join_left_channel.one_you.board',
+                defaultMessage: 'You **joined and left the board**.',
+            }),
         },
         two: {
-            id: t('combined_system_message.join_left_channel.two'),
-            defaultMessage: '{firstUser} and {secondUser} **joined and left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.join_left_channel.two',
+                defaultMessage: '{firstUser} and {secondUser} **joined and left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.join_left_channel.two.board',
+                defaultMessage: '{firstUser} and {secondUser} **joined and left the board**.',
+            }),
         },
         many_expanded: {
-            id: t('combined_system_message.join_left_channel.many_expanded'),
-            defaultMessage: '{users} and {lastUser} **joined and left the channel**.',
+            channel: defineMessage({
+                id: 'combined_system_message.join_left_channel.many_expanded',
+                defaultMessage: '{users} and {lastUser} **joined and left the channel**.',
+            }),
+            board: defineMessage({
+                id: 'combined_system_message.join_left_channel.many_expanded.board',
+                defaultMessage: '{users} and {lastUser} **joined and left the board**.',
+            }),
         },
-    },
-    [JOIN_TEAM]: {
+    } satisfies Record<PostTypeMessageKey, KindMessages>,
+};
+/* eslint-enable formatjs/enforce-placeholders */
+
+const teamPostTypeMessage = {
+    [JOIN_TEAM]: defineMessages({
         one: {
-            id: t('combined_system_message.joined_team.one'),
+            id: 'combined_system_message.joined_team.one',
             defaultMessage: '{firstUser} **joined the team**.',
         },
         one_you: {
-            id: t('combined_system_message.joined_team.one_you'),
+            id: 'combined_system_message.joined_team.one_you',
             defaultMessage: 'You **joined the team**.',
         },
         two: {
-            id: t('combined_system_message.joined_team.two'),
+            id: 'combined_system_message.joined_team.two',
             defaultMessage: '{firstUser} and {secondUser} **joined the team**.',
         },
         many_expanded: {
-            id: t('combined_system_message.joined_team.many_expanded'),
+            id: 'combined_system_message.joined_team.many_expanded',
             defaultMessage: '{users} and {lastUser} **joined the team**.',
         },
-    },
-    [ADD_TO_TEAM]: {
+    }),
+    [ADD_TO_TEAM]: defineMessages({
         one: {
-            id: t('combined_system_message.added_to_team.one'),
+            id: 'combined_system_message.added_to_team.one',
             defaultMessage: '{firstUser} **added to the team** by {actor}.',
         },
         one_you: {
-            id: t('combined_system_message.added_to_team.one_you'),
+            id: 'combined_system_message.added_to_team.one_you',
             defaultMessage: 'You were **added to the team** by {actor}.',
         },
         two: {
-            id: t('combined_system_message.added_to_team.two'),
+            id: 'combined_system_message.added_to_team.two',
             defaultMessage: '{firstUser} and {secondUser} **added to the team** by {actor}.',
         },
         many_expanded: {
-            id: t('combined_system_message.added_to_team.many_expanded'),
+            id: 'combined_system_message.added_to_team.many_expanded',
             defaultMessage: '{users} and {lastUser} were **added to the team** by {actor}.',
         },
-    },
-    [REMOVE_FROM_TEAM]: {
+    }),
+    [REMOVE_FROM_TEAM]: defineMessages({
         one: {
-            id: t('combined_system_message.removed_from_team.one'),
+            id: 'combined_system_message.removed_from_team.one',
             defaultMessage: '{firstUser} was **removed from the team**.',
         },
         one_you: {
-            id: t('combined_system_message.removed_from_team.one_you'),
+            id: 'combined_system_message.removed_from_team.one_you',
             defaultMessage: 'You were **removed from the team**.',
         },
         two: {
-            id: t('combined_system_message.removed_from_team.two'),
+            id: 'combined_system_message.removed_from_team.two',
             defaultMessage: '{firstUser} and {secondUser} were **removed from the team**.',
         },
         many_expanded: {
-            id: t('combined_system_message.removed_from_team.many_expanded'),
+            id: 'combined_system_message.removed_from_team.many_expanded',
             defaultMessage: '{users} and {lastUser} were **removed from the team**.',
         },
-    },
-    [LEAVE_TEAM]: {
+    }),
+    [LEAVE_TEAM]: defineMessages({
         one: {
-            id: t('combined_system_message.left_team.one'),
+            id: 'combined_system_message.left_team.one',
             defaultMessage: '{firstUser} **left the team**.',
         },
         one_you: {
-            id: t('combined_system_message.left_team.one_you'),
+            id: 'combined_system_message.left_team.one_you',
             defaultMessage: 'You **left the team**.',
         },
         two: {
-            id: t('combined_system_message.left_team.two'),
+            id: 'combined_system_message.left_team.two',
             defaultMessage: '{firstUser} and {secondUser} **left the team**.',
         },
         many_expanded: {
-            id: t('combined_system_message.left_team.many_expanded'),
+            id: 'combined_system_message.left_team.many_expanded',
             defaultMessage: '{users} and {lastUser} **left the team**.',
         },
-    },
+    }),
 };
+
+function getPostTypeMessage(postType: string, kind: ChannelKind): Record<PostTypeMessageKey, MessageDescriptor> | undefined {
+    const byKind = secureGetFromRecord(channelPostTypeMessage, postType);
+    if (byKind) {
+        return {
+            one: byKind.one[kind],
+            one_you: byKind.one_you[kind],
+            two: byKind.two[kind],
+            many_expanded: byKind.many_expanded[kind],
+        };
+    }
+    return secureGetFromRecord(teamPostTypeMessage, postType);
+}
 
 export type Props = {
     allUserIds: string[];
     allUsernames: string[];
+    channelKind?: ChannelKind;
     currentUserId: string;
     currentUsername: string;
     intl: IntlShape;
-    messageData: Array<{
-        actorId?: string;
-        postType: string;
-        userIds: string[];
-    }>;
+    messageData: MessageData[];
     showJoinLeave: boolean;
     userProfiles: UserProfile[];
     actions: {
         getMissingProfilesByIds: (userIds: string[]) => void;
         getMissingProfilesByUsernames: (usernames: string[]) => void;
     };
-}
+};
 
 export class CombinedSystemMessage extends React.PureComponent<Props> {
     static defaultProps = {
@@ -246,7 +388,7 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
             return acc;
         }, {});
 
-        const currentUserDisplayName = formatMessage({id: t('combined_system_message.you'), defaultMessage: 'You'});
+        const currentUserDisplayName = formatMessage({id: 'combined_system_message.you', defaultMessage: 'You'});
         if (allUserIds.includes(currentUserId)) {
             usernames[currentUserId] = currentUserDisplayName;
         } else if (allUsernames.includes(currentUsername)) {
@@ -262,14 +404,15 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
         const allUsernames = this.getAllUsernames();
 
         const {formatMessage} = this.props.intl;
-        const someone = formatMessage({id: t('channel_loader.someone'), defaultMessage: 'Someone'});
+        const someone = formatMessage({id: 'channel_loader.someone', defaultMessage: 'Someone'});
 
         const usernames = userIdsArray.
             filter((userId) => {
                 return userId !== currentUserId && userId !== currentUsername;
             }).
             map((userId) => {
-                return allUsernames[userId] ? `@${allUsernames[userId]}` : someone;
+                const username = secureGetFromRecord(allUsernames, userId);
+                return username ? `@${username}` : someone;
             }).
             filter((username) => {
                 return username && username !== '';
@@ -286,7 +429,7 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
 
     renderFormattedMessage(postType: string, userIds: string[], actorId?: string): JSX.Element {
         const {formatMessage} = this.props.intl;
-        const {currentUserId, currentUsername} = this.props;
+        const {channelKind = 'channel', currentUserId, currentUsername} = this.props;
         const usernames = this.getUsernamesByIds(userIds);
         let actor = actorId ? this.getUsernamesByIds([actorId])[0] : '';
         if (actor && (actorId === currentUserId || actorId === currentUsername)) {
@@ -304,12 +447,18 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
             singleline: true,
         };
 
+        const selectedPostTypeMessage = getPostTypeMessage(postType, channelKind);
+        if (!selectedPostTypeMessage) {
+            return <></>;
+        }
+
         if (numOthers > 1) {
             return (
                 <LastUsers
                     actor={actor}
-                    expandedLocale={postTypeMessage[postType].many_expanded}
+                    expandedLocale={selectedPostTypeMessage.many_expanded}
                     formatOptions={options}
+                    channelKind={channelKind}
                     postType={postType}
                     usernames={usernames}
                 />
@@ -318,16 +467,16 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
 
         let localeHolder: MessageDescriptor = {};
         if (numOthers === 0) {
-            localeHolder = postTypeMessage[postType].one;
+            localeHolder = selectedPostTypeMessage.one;
 
             if (
                 (userIds[0] === this.props.currentUserId || userIds[0] === this.props.currentUsername) &&
-                postTypeMessage[postType].one_you
+                selectedPostTypeMessage.one_you
             ) {
-                localeHolder = postTypeMessage[postType].one_you;
+                localeHolder = selectedPostTypeMessage.one_you;
             }
         } else if (numOthers === 1) {
-            localeHolder = postTypeMessage[postType].two;
+            localeHolder = selectedPostTypeMessage.two;
         }
 
         const formattedMessage = formatMessage(localeHolder, {firstUser, secondUser, actor});
@@ -380,9 +529,9 @@ export class CombinedSystemMessage extends React.PureComponent<Props> {
         }
 
         return (
-            <React.Fragment>
+            <>
                 {content}
-            </React.Fragment>
+            </>
         );
     }
 }

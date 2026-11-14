@@ -10,10 +10,10 @@
 // Stage: @prod
 // Group: @channels @system_console @enterprise @e20_only @not_cloud
 
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
-import {TERMS_OF_SERVICE_LINK} from '../../../../utils/constants';
-
 import {backToTeam, saveSetting} from './helper';
+
+import * as TIMEOUTS from '@/fixtures/timeouts';
+import {TERMS_OF_SERVICE_LINK} from '@/utils/constants';
 
 describe('SupportSettings', () => {
     const tosLink = 'https://github.com/mattermost/platform/blob/master/README.md';
@@ -42,6 +42,7 @@ describe('SupportSettings', () => {
         cy.findByTestId('SupportSettings.PrivacyPolicyLinkinput').clear().type(privacyLink);
         cy.findByTestId('SupportSettings.AboutLinkinput').clear().type(aboutLink);
         cy.findByTestId('SupportSettings.HelpLinkinput').clear().type(helpLink);
+        cy.findByTestId('SupportSettings.ReportAProblemTypedropdown').select('Custom link');
         cy.findByTestId('SupportSettings.ReportAProblemLinkinput').clear().type(problemLink);
 
         // # Save setting then back to team view
@@ -53,7 +54,7 @@ describe('SupportSettings', () => {
             // * Verify links changed
             [
                 {text: 'Report a problem', link: problemLink},
-                {text: 'Help resources', link: helpLink},
+                {text: 'Ask the community', link: askCommunityLink},
             ].forEach((guide) => {
                 cy.findByText(guide.text).
                     parent().
@@ -114,7 +115,7 @@ describe('SupportSettings', () => {
     it('MM-T1036 - Customization: Blank Help and Report a Problem hides options from help menu', () => {
         // # Change help and report links to blanks
         cy.findByTestId('SupportSettings.HelpLinkinput').type('any').clear();
-        cy.findByTestId('SupportSettings.ReportAProblemLinkinput').type('any').clear();
+        cy.findByTestId('SupportSettings.ReportAProblemTypedropdown').select('Hide link');
 
         // # Save setting and back to team view
         saveSetting();
@@ -128,21 +129,23 @@ describe('SupportSettings', () => {
     });
 
     it('MM-T1038 - Customization App download link - Change to different', () => {
+        cy.window().then((win) => {
+            cy.stub(win, 'open').as('open');
+        });
+
         // # Edit links in the support email field
-        const link = 'some_link';
+        const link = 'https://github.com/mattermost/desktop/releases';
         cy.findByTestId('NativeAppSettings.AppDownloadLinkinput').clear().type(link);
 
         // # Save setting then back to team view
         saveSetting();
         backToTeam();
 
-        // # Open about modal
-        cy.uiOpenProductMenu().within(() => {
-            // * Verify that 'Download Apps' has expected link
-            cy.findByText('Download Apps').
-                parent().
-                should('have.attr', 'href', link);
-        });
+        // # Open about switch product menu and click on Download Apps menu item
+        cy.uiOpenSwitchProductMenu('Download Apps');
+
+        // * Verify that the link is opened in a new tab
+        cy.get('@open').should('have.been.calledWith', link, '_blank', 'noopener,noreferrer');
     });
 
     it('MM-T3289_1 - Help (Ask community link setting)', () => {
@@ -157,18 +160,16 @@ describe('SupportSettings', () => {
 
         // * Verify that hover shows "Help" text
         cy.uiGetHelpButton().
-            trigger('mouseover', {force: true}).
-            should('have.attr', 'aria-describedby').
-            and('equal', 'userGuideHelpTooltip');
+            trigger('mouseenter').
+            should('have.attr', 'aria-describedby');
         cy.uiGetHelpButton().
-            trigger('mouseout', {force: true}).
+            trigger('mouseleave').
             should('not.have.attr', 'aria-describedby');
 
         // # Open help menu
         cy.uiOpenHelpMenu().within(() => {
             // * Verify 4 options shown
             cy.findByText('Ask the community');
-            cy.findByText('Help resources');
             cy.findByText('Report a problem');
             cy.findByText('Keyboard shortcuts');
 
@@ -185,6 +186,7 @@ describe('SupportSettings', () => {
 
         // Edit help link and report a problem link
         cy.findByTestId('SupportSettings.HelpLinkinput').clear().type(helpLink);
+        cy.findByTestId('SupportSettings.ReportAProblemTypedropdown').select('Custom link');
         cy.findByTestId('SupportSettings.ReportAProblemLinkinput').clear().type(problemLink);
 
         // # Save setting and back to team view
@@ -193,15 +195,9 @@ describe('SupportSettings', () => {
 
         // # Open help menu
         cy.uiOpenHelpMenu().within(() => {
-            // * Verify 3 options shown
-            cy.findByText('Help resources');
+            // * Verify 2 options shown
             cy.findByText('Report a problem');
             cy.findByText('Keyboard shortcuts');
-
-            // * Verify help link has changed
-            cy.findByText('Help resources').
-                parent().
-                should('have.attr', 'href', helpLink);
 
             // * Verify report a problem link has changed
             cy.findByText('Report a problem').

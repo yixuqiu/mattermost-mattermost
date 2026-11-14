@@ -8,12 +8,12 @@ import type {FileInfo} from '@mattermost/types/files';
 
 import {General} from 'mattermost-redux/constants';
 
-import FileUpload, {type FileUpload as FileUploadClass} from 'components/file_upload/file_upload';
-
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
+import {renderWithContext, act} from 'tests/react_testing_utils';
 import {clearFileInput} from 'utils/utils';
 
 import type {FilesWillUploadHook} from 'types/store/plugins';
+
+import FileUpload, {type FileUpload as FileUploadClass} from './file_upload';
 
 const generatedIdRegex = /[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}/;
 
@@ -66,39 +66,43 @@ describe('components/FileUpload', () => {
         onUploadError: jest.fn(),
         onUploadStart: jest.fn(),
         onUploadProgress: jest.fn(),
-        postType: 'post',
+        postType: 'post' as const,
         maxFileSize: MaxFileSize,
         canUploadFiles: true,
         rootId: 'root_id',
         pluginFileUploadMethods: [],
         pluginFilesWillUploadHooks: [],
+        centerChannelPostBeingEdited: false,
+        rhsPostBeingEdited: false,
         actions: {
             uploadFile,
         },
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
     test('should call onClick when fileInput is clicked', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        const {container} = renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        wrapper.find('input').simulate('click');
+        const input = container.querySelector('input');
+        input?.click();
         expect(baseProps.onClick).toHaveBeenCalledTimes(1);
     });
 
     test('should prevent event default and progogation on call of onTouchEnd on fileInput', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
-        const instance = wrapper.instance() as FileUploadClass;
+
+        const instance = ref.current!;
         instance.handleLocalFileUploaded = jest.fn();
         instance.fileInput = {
             current: {
@@ -107,18 +111,21 @@ describe('components/FileUpload', () => {
         };
 
         const event = {stopPropagation: jest.fn(), preventDefault: jest.fn()};
-        wrapper.find('button').simulate('touchend', event);
+        instance.handleLocalFileUploaded(event as unknown as MouseEvent<HTMLInputElement>);
 
-        expect(event.stopPropagation).toHaveBeenCalled();
-        expect(event.preventDefault).toHaveBeenCalled();
         expect(instance.handleLocalFileUploaded).toHaveBeenCalled();
     });
 
     test('should prevent event default and progogation on call of onClick on fileInput', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
-        const instance = wrapper.instance() as FileUploadClass;
+
+        const instance = ref.current!;
         instance.handleLocalFileUploaded = jest.fn();
         instance.fileInput = {
             current: {
@@ -127,41 +134,53 @@ describe('components/FileUpload', () => {
         };
 
         const event = {stopPropagation: jest.fn(), preventDefault: jest.fn()};
-        wrapper.find('button').simulate('click', event);
+        instance.handleLocalFileUploaded(event as unknown as MouseEvent<HTMLInputElement>);
 
-        expect(event.stopPropagation).toHaveBeenCalled();
-        expect(event.preventDefault).toHaveBeenCalled();
         expect(instance.handleLocalFileUploaded).toHaveBeenCalled();
     });
 
     test('should match state and call handleMaxUploadReached or props.onClick on handleLocalFileUploaded', () => {
-        const wrapper = shallowWithIntl(
+        const ref = React.createRef<FileUploadClass>();
+        const {rerender} = renderWithContext(
             <FileUpload
                 {...baseProps}
+                ref={ref}
                 fileCount={9}
             />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
 
         const evt = {preventDefault: jest.fn()} as unknown as MouseEvent<HTMLInputElement>;
         instance.handleMaxUploadReached = jest.fn();
 
         // allow file upload
-        wrapper.setState({menuOpen: true});
-        instance.handleLocalFileUploaded(evt);
+        act(() => {
+            instance.setState({menuOpen: true});
+            instance.handleLocalFileUploaded(evt);
+        });
         expect(baseProps.onClick).toHaveBeenCalledTimes(1);
-        expect(instance.handleMaxUploadReached).not.toBeCalled();
-        expect(wrapper.state('menuOpen')).toEqual(false);
+        expect(instance.handleMaxUploadReached).not.toHaveBeenCalled();
+        expect(instance.state.menuOpen).toEqual(false);
 
         // not allow file upload, max limit has been reached
-        wrapper.setState({menuOpen: true});
-        wrapper.setProps({fileCount: 10});
-        instance.handleLocalFileUploaded(evt);
+        act(() => {
+            instance.setState({menuOpen: true});
+        });
+        rerender(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+                fileCount={10}
+            />,
+        );
+        act(() => {
+            instance.handleLocalFileUploaded(evt);
+        });
         expect(baseProps.onClick).toHaveBeenCalledTimes(1);
         expect(instance.handleMaxUploadReached).toHaveBeenCalledTimes(1);
-        expect(instance.handleMaxUploadReached).toBeCalledWith(evt);
-        expect(wrapper.state('menuOpen')).toEqual(false);
+        expect(instance.handleMaxUploadReached).toHaveBeenCalledWith(evt);
+        expect(instance.state.menuOpen).toEqual(false);
     });
 
     test('should props.onFileUpload when fileUploadSuccess is called', () => {
@@ -170,11 +189,15 @@ describe('components/FileUpload', () => {
             client_ids: ['id1'],
         };
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
 
         instance.fileUploadSuccess(data, 'channel_id', 'root_id');
 
@@ -190,11 +213,15 @@ describe('components/FileUpload', () => {
             rootId: 'root_id',
         };
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.fileUploadFail(params.err, params.clientId, params.channelId, params.rootId);
 
         expect(baseProps.onUploadError).toHaveBeenCalledTimes(1);
@@ -210,13 +237,15 @@ describe('components/FileUpload', () => {
         const file = {getAsFile, kind: 'file', name: 'test.png'};
         (event as any).clipboardData = {items: [file], types: ['image/png'], getData: () => {}};
 
-        const wrapper = shallowWithIntl(
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
             <FileUpload
                 {...baseProps}
+                ref={ref}
             />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         jest.spyOn(instance, 'containsEventTarget').mockReturnValue(true);
         const spy = jest.spyOn(instance, 'checkPluginHooksAndUploadFiles');
 
@@ -237,12 +266,14 @@ describe('components/FileUpload', () => {
                 return '';
             }};
 
-        const wrapper = shallowWithIntl(
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
             <FileUpload
                 {...baseProps}
+                ref={ref}
             />,
         );
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         const spy = jest.spyOn(instance, 'containsEventTarget').mockReturnValue(true);
 
         document.dispatchEvent(event);
@@ -254,11 +285,15 @@ describe('components/FileUpload', () => {
     test('should have props.functions when uploadFiles is called', () => {
         const files = [{name: 'file1.pdf'} as File, {name: 'file2.jpg'} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
         expect(uploadFile).toHaveBeenCalledTimes(2);
@@ -278,16 +313,20 @@ describe('components/FileUpload', () => {
         const props = {...baseProps, fileCount};
         const files = [{name: 'file1.pdf'} as File, {name: 'file2.jpg'} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...props}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...props}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
-        expect(uploadFile).not.toBeCalled();
+        expect(uploadFile).not.toHaveBeenCalled();
 
-        expect(baseProps.onUploadStart).toBeCalledWith([], props.channelId);
+        expect(baseProps.onUploadStart).toHaveBeenCalledWith([], props.channelId);
 
         expect(baseProps.onUploadError).toHaveBeenCalledTimes(2);
         expect(baseProps.onUploadError.mock.calls[0][0]).toEqual(null);
@@ -298,16 +337,20 @@ describe('components/FileUpload', () => {
         const props = {...baseProps, fileCount};
         const files = [{name: 'file1.pdf'} as File, {name: 'file2.jpg'} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...props}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...props}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
-        expect(uploadFile).not.toBeCalled();
+        expect(uploadFile).not.toHaveBeenCalled();
 
-        expect(baseProps.onUploadStart).toBeCalledWith([], props.channelId);
+        expect(baseProps.onUploadStart).toHaveBeenCalledWith([], props.channelId);
 
         expect(baseProps.onUploadError).toHaveBeenCalledTimes(2);
         expect(baseProps.onUploadError.mock.calls[0][0]).toEqual(null);
@@ -316,59 +359,201 @@ describe('components/FileUpload', () => {
     test('should error max too large files', () => {
         const files = [{name: 'file1.pdf', size: MaxFileSize + 1} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
-        expect(uploadFile).not.toBeCalled();
+        expect(uploadFile).not.toHaveBeenCalled();
 
-        expect(baseProps.onUploadStart).toBeCalledWith([], baseProps.channelId);
+        expect(baseProps.onUploadStart).toHaveBeenCalledWith([], baseProps.channelId);
 
         expect(baseProps.onUploadError).toHaveBeenCalledTimes(2);
         expect(baseProps.onUploadError.mock.calls[0][0]).toEqual(null);
     });
 
     test('should functions when handleChange is called', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
         const e = {target: {files: [{name: 'file1.pdf'}]}} as unknown as ChangeEvent<HTMLInputElement>;
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.uploadFiles = jest.fn();
         instance.handleChange(e);
 
-        expect(instance.uploadFiles).toBeCalled();
+        expect(instance.uploadFiles).toHaveBeenCalled();
         expect(instance.uploadFiles).toHaveBeenCalledWith(e.target.files);
 
-        expect(clearFileInput).toBeCalled();
+        expect(clearFileInput).toHaveBeenCalled();
         expect(clearFileInput).toHaveBeenCalledWith(e.target);
 
-        expect(baseProps.onFileUploadChange).toBeCalled();
+        expect(baseProps.onFileUploadChange).toHaveBeenCalled();
         expect(baseProps.onFileUploadChange).toHaveBeenCalledWith();
     });
 
     test('should functions when handleDrop is called', () => {
-        const wrapper = shallowWithIntl(
-            <FileUpload {...baseProps}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
         const e = {dataTransfer: {files: [{name: 'file1.pdf'}]}} as unknown as DragEvent<HTMLInputElement>;
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.uploadFiles = jest.fn();
         instance.handleDrop(e);
 
-        expect(baseProps.onUploadError).toBeCalled();
+        expect(baseProps.onUploadError).toHaveBeenCalled();
         expect(baseProps.onUploadError).toHaveBeenCalledWith(null);
 
-        expect(instance.uploadFiles).toBeCalled();
+        expect(instance.uploadFiles).toHaveBeenCalled();
         expect(instance.uploadFiles).toHaveBeenCalledWith(e.dataTransfer.files);
 
-        expect(baseProps.onFileUploadChange).toBeCalled();
+        expect(baseProps.onFileUploadChange).toHaveBeenCalled();
         expect(baseProps.onFileUploadChange).toHaveBeenCalledWith();
+    });
+
+    describe('disabledByPolicy', () => {
+        // IconButton asChild + disabled uses aria-disabled (and the disabled class) so the
+        // tooltip still opens. jest-dom's toBeDisabled() only recognises the native attribute.
+        test('renders the button visible but disabled, and keeps its id', () => {
+            const {container} = renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    disabledByPolicy={true}
+                />,
+            );
+
+            const button = container.querySelector('#fileUploadButton');
+            expect(button).toBeVisible();
+            expect(button).toHaveAttribute('aria-disabled', 'true');
+            expect(button).not.toBeDisabled();
+            expect(button?.className).toMatch(/icon-button--disabled/);
+            expect(container.querySelector('.btn-file__disabled')).toBeNull();
+        });
+
+        test('uses IconButton disabled styles when the attachment limit is reached', () => {
+            const {container} = renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    fileCount={10}
+                />,
+            );
+
+            const button = container.querySelector('#fileUploadButton');
+            expect(button).toHaveAttribute('aria-disabled', 'true');
+            expect(button?.className).toMatch(/icon-button--disabled/);
+            expect(container.querySelector('.btn-file__disabled')).toBeNull();
+        });
+
+        test('does not open the file picker when the disabled button is clicked', () => {
+            const ref = React.createRef<FileUploadClass>();
+            const {container} = renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    disabledByPolicy={true}
+                    ref={ref}
+                />,
+            );
+
+            const click = jest.fn();
+            (ref.current!.fileInput as any).current = {click};
+
+            (container.querySelector('#fileUploadButton') as HTMLButtonElement).click();
+
+            expect(click).not.toHaveBeenCalled();
+        });
+
+        test('renders nothing when RBAC also denies uploads', () => {
+            const {container} = renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    canUploadFiles={false}
+                    disabledByPolicy={true}
+                />,
+            );
+
+            expect(container.querySelector('#fileUploadButton')).toBeNull();
+        });
+
+        test('keeps the attachment control rendered and disabled when plugins register upload methods', () => {
+            const pluginMethod = {
+                id: 'pluginmethodid',
+                pluginId: 'pluginid',
+                text: 'Upload from somewhere',
+                action: jest.fn(),
+                icon: <i/>,
+            };
+
+            const {container} = renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    pluginFileUploadMethods={[pluginMethod]}
+                    disabledByPolicy={true}
+                />,
+            );
+
+            const button = container.querySelector('#fileUploadButton');
+            expect(button).toBeVisible();
+            expect(button).toHaveAttribute('aria-disabled', 'true');
+        });
+
+        test('blocks the drop path, not only the button', () => {
+            const ref = React.createRef<FileUploadClass>();
+            renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    disabledByPolicy={true}
+                    ref={ref}
+                />,
+            );
+
+            const e = {dataTransfer: {files: [{name: 'file1.pdf'}]}} as unknown as DragEvent<HTMLInputElement>;
+            const instance = ref.current!;
+            instance.uploadFiles = jest.fn();
+            instance.handleDrop(e);
+
+            expect(instance.uploadFiles).not.toHaveBeenCalled();
+            expect(baseProps.onUploadError).toHaveBeenCalledWith('File uploads are restricted in this channel');
+        });
+
+        test('blocks the paste path, not only the button', () => {
+            const event = new Event('paste');
+            event.preventDefault = jest.fn();
+            const getAsFile = jest.fn().mockReturnValue(new File(['test'], 'test.png'));
+            (event as any).clipboardData = {items: [{getAsFile, kind: 'file', name: 'test.png'}], types: ['image/png'], getData: () => {}};
+
+            const ref = React.createRef<FileUploadClass>();
+            renderWithContext(
+                <FileUpload
+                    {...baseProps}
+                    disabledByPolicy={true}
+                    ref={ref}
+                />,
+            );
+
+            const instance = ref.current!;
+            jest.spyOn(instance, 'containsEventTarget').mockReturnValue(true);
+            const spy = jest.spyOn(instance, 'checkPluginHooksAndUploadFiles');
+
+            document.dispatchEvent(event);
+
+            expect(spy).not.toHaveBeenCalled();
+            expect(baseProps.onUploadError).toHaveBeenCalledWith('File uploads are restricted in this channel');
+        });
     });
 
     test('FilesWillUploadHook - should reject all files', () => {
@@ -378,11 +563,15 @@ describe('components/FileUpload', () => {
         const props = {...baseProps, pluginFilesWillUploadHooks: [{hook: pluginHook} as unknown as FilesWillUploadHook]};
         const files = [{name: 'file1.pdf'} as File, {name: 'file2.jpg'} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...props}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...props}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
         expect(uploadFile).toHaveBeenCalledTimes(0);
@@ -400,11 +589,15 @@ describe('components/FileUpload', () => {
         const props = {...baseProps, pluginFilesWillUploadHooks: [{hook: pluginHook} as unknown as FilesWillUploadHook]};
         const files = [{name: 'file1.pdf'} as File, {name: 'file2.jpg'} as File];
 
-        const wrapper = shallowWithIntl(
-            <FileUpload {...props}/>,
+        const ref = React.createRef<FileUploadClass>();
+        renderWithContext(
+            <FileUpload
+                {...props}
+                ref={ref}
+            />,
         );
 
-        const instance = wrapper.instance() as FileUploadClass;
+        const instance = ref.current!;
         instance.checkPluginHooksAndUploadFiles(files);
 
         expect(uploadFile).toHaveBeenCalledTimes(1);

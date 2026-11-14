@@ -1,7 +1,11 @@
-@charset 'UTF-8';
-
 .save-button {
     .icon {
         margin-right: 10px;
     }
+}
+
+.setting-list-item__buttons {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-s, 8px);
 }

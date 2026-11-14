@@ -25,7 +25,7 @@ const SECTION_TLS = (
     <tr>
         <td>
             <FormattedMessage
-                id='admin.connectionSecurityTls'
+                id='admin.connectionSecurityTls.title'
                 defaultMessage='TLS'
             />
         </td>
@@ -147,7 +147,7 @@ export const WEBSERVER_MODE_HELP_TEXT = (
         <p className='help-text'>
             <FormattedMessage
                 id='admin.webserverModeHelpText'
-                defaultMessage='gzip compression applies to static content files. It is recommended to enable gzip to improve performance unless your environment has specific restrictions, such as a web proxy that distributes gzip files poorly.'
+                defaultMessage='gzip compression applies to static content files. It is recommended to enable compression to improve performance unless your environment has specific restrictions, such as a web proxy that distributes compressed files poorly.'
             />
         </p>
     </div>
@@ -165,5 +165,9 @@ export const LOG_LEVEL_OPTIONS = [
     {
         value: 'ERROR',
         display_name: defineMessage({id: 'admin.log.levelOptions.ERROR', defaultMessage: 'ERROR'}),
+    },
+    {
+        value: 'WARN',
+        display_name: defineMessage({id: 'admin.log.levelOptions.WARN', defaultMessage: 'WARN'}),
     },
 ];

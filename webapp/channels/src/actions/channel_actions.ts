@@ -13,14 +13,14 @@ import {savePreferences} from 'mattermost-redux/actions/preferences';
 import {getChannelByName, getUnreadChannelIds, getChannel} from 'mattermost-redux/selectors/entities/channels';
 import {getCurrentTeamUrl, getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 import {getCurrentUserId} from 'mattermost-redux/selectors/entities/users';
-import type {ActionFuncAsync} from 'mattermost-redux/types/actions';
 
-import {trackEvent} from 'actions/telemetry_actions.jsx';
 import {loadNewDMIfNeeded, loadNewGMIfNeeded, loadProfilesForSidebar} from 'actions/user_actions';
 
 import {getHistory} from 'utils/browser_history';
 import {Constants, Preferences, NotificationLevels} from 'utils/constants';
 import {getDirectChannelName} from 'utils/utils';
+
+import type {ActionFuncAsync} from 'types/store';
 
 export function openDirectChannelToUserId(userId: UserProfile['id']): ActionFuncAsync<Channel> {
     return async (dispatch, getState) => {
@@ -33,7 +33,6 @@ export function openDirectChannelToUserId(userId: UserProfile['id']): ActionFunc
             return dispatch(ChannelActions.createDirectChannel(currentUserId, userId));
         }
 
-        trackEvent('api', 'api_channels_join_direct');
         const now = Date.now();
         const prefDirect = {
             category: Preferences.CATEGORY_DIRECT_CHANNEL_SHOW,
@@ -153,17 +152,29 @@ export function autocompleteChannelsForSearch(term: string, success?: (channels:
     };
 }
 
+export function autocompleteChannelsForSearchInTeam(term: string, teamId: string, success?: (channels: Channel[]) => void, error?: (err: ServerError) => void): ActionFuncAsync {
+    return async (dispatch) => {
+        if (!teamId) {
+            return {data: false};
+        }
+
+        const {data, error: err} = await dispatch(ChannelActions.autocompleteChannelsForSearch(teamId, term));
+        if (data && success) {
+            success(data);
+        } else if (err && error) {
+            error({id: err.server_error_id, ...err});
+        }
+        return {data: true};
+    };
+}
+
 export function addUsersToChannel(channelId: Channel['id'], userIds: Array<UserProfile['id']>): ActionFuncAsync {
     return async (dispatch) => {
-        try {
-            const requests = userIds.map((uId) => dispatch(ChannelActions.addChannelMember(channelId, uId)));
-
-            await Promise.all(requests);
-
-            return {data: true};
-        } catch (error) {
-            return {error};
+        const error = await dispatch(ChannelActions.addChannelMembers(channelId, userIds));
+        if (error) {
+            return error;
         }
+        return {data: true};
     };
 }
 
@@ -178,3 +189,4 @@ export function muteChannel(userId: UserProfile['id'], channelId: Channel['id'])
         mark_unread: NotificationLevels.MENTION,
     });
 }
+

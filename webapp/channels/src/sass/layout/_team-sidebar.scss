@@ -1,10 +1,11 @@
 .team-sidebar {
     z-index: 17;
     display: flex;
+    overflow: hidden;
     width: 65px;
-    height: 100%;
     flex-direction: column;
-    background: var(--sidebar-teambar-bg);
+    justify-content: space-between;
+    background-color: var(--sidebar-header-bg);
     text-align: center;
 
     .fa {
@@ -17,26 +18,55 @@
         }
     }
 
+    .team-sidebar__hide {
+        display: flex;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-m);
+        margin: 4px auto 12px;
+        background: none;
+        color: rgba(var(--sidebar-text-rgb), 0.56);
+
+        svg {
+            fill: currentColor;
+        }
+
+        &:hover,
+        &:focus-visible {
+            background: rgba(var(--sidebar-text-rgb), 0.08);
+            color: var(--sidebar-text);
+        }
+    }
+
     .team-sidebar-bottom-plugin {
         width: 100%;
         flex: 0 0 auto;
         padding: 16px 0 6px;
-        background-color: var(--sidebar-teambar-bg);
     }
 
     .team-wrapper {
         position: relative;
         overflow: hidden;
         height: 100%;
-        flex: 1 1 auto;
-        background-color: var(--sidebar-teambar-bg);
+        flex: 1;
+        padding-top: 4px;
         -webkit-overflow-scrolling: touch;
 
         .draggable-team-container {
             position: relative;
+            display: inline-block;
             margin-right: auto;
             margin-bottom: 12px;
             margin-left: auto;
+
+            &:hover, &:focus {
+                text-decoration: none;
+            }
         }
 
         .team-container {
@@ -126,12 +156,12 @@
             }
         }
 
-        .scrollbar--view {
-            padding-top: 15px;
-        }
-
         .team-container a:hover {
             text-decoration: none;
+        }
+
+        .team-container .add-team-button {
+            border-radius: var(--radius-m);
         }
     }
 }
@@ -139,12 +169,11 @@
 @media screen and (min-width: 769px) {
     // global header style adjustments
     .team-sidebar {
+        background: none;
         // use sidebar header variables for team sidebar
         --sidebar-teambar-bg: var(--sidebar-header-bg);
         --sidebar-header-text-color: var(--sidebar-text);
         --sidebar-teambar-bg-rgb: var(--sidebar-header-bg-rgb);
         --sidebar-header-text-color-rgb: var(--sidebar-text-rgb);
-
-        border-right: solid 1px rgba(var(--center-channel-color-rgb), 0.08);
     }
 }

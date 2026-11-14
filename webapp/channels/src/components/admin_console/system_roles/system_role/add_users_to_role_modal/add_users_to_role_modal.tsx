@@ -1,10 +1,10 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {type JSX} from 'react';
 import {Modal} from 'react-bootstrap';
 import type {IntlShape} from 'react-intl';
-import {injectIntl, FormattedMessage} from 'react-intl';
+import {injectIntl, FormattedMessage, defineMessage} from 'react-intl';
 
 import type {Role} from '@mattermost/types/roles';
 import type {UserProfile} from '@mattermost/types/users';
@@ -20,7 +20,7 @@ import ProfilePicture from 'components/profile_picture';
 import BotTag from 'components/widgets/tag/bot_tag';
 import GuestTag from 'components/widgets/tag/guest_tag';
 
-import {displayEntireNameForUser, localizeMessage} from 'utils/utils';
+import {displayEntireNameForUser} from 'utils/utils';
 
 import {rolesStrings} from '../../strings';
 
@@ -32,8 +32,8 @@ type UserProfileValue = Value & UserProfile;
 export type Props = {
     role: Role;
     users: UserProfile[];
-    excludeUsers: { [userId: string]: UserProfile };
-    includeUsers: { [userId: string]: UserProfile };
+    excludeUsers: {[userId: string]: UserProfile};
+    includeUsers: {[userId: string]: UserProfile};
     intl: IntlShape;
     onAddCallback: (users: UserProfile[]) => void;
     onExited: () => void;
@@ -42,7 +42,7 @@ export type Props = {
         getProfiles: (page: number, perPage?: number, options?: Record<string, any>) => Promise<ActionResult<UserProfile[]>>;
         searchProfiles: (term: string, options?: Record<string, any>) => Promise<ActionResult<UserProfile[]>>;
     };
-}
+};
 
 type State = {
     searchResults: UserProfile[];
@@ -52,7 +52,7 @@ type State = {
     addError: null;
     loading: boolean;
     term: string;
-}
+};
 
 function searchUsersToAdd(users: Record<string, UserProfile>, term: string): Record<string, UserProfile> {
     const profilesList: UserProfile[] = Object.keys(users).map((key) => users[key]);
@@ -120,7 +120,6 @@ export class AddUsersToRoleModal extends React.PureComponent<Props, State> {
         return (
             <div
                 key={option.id}
-                ref={isSelected ? 'selected' : option.id}
                 className={'more-modal__row clickable ' + rowSelected}
                 onClick={() => onAdd(option)}
                 onMouseMove={() => onMouseMove(option)}
@@ -137,17 +136,20 @@ export class AddUsersToRoleModal extends React.PureComponent<Props, State> {
                     </div>
                 </div>
                 <div className='more-modal__actions'>
-                    <div className='more-modal__actions--round'>
+                    <button
+                        className='more-modal__actions--round'
+                        aria-label={this.props.intl.formatMessage({id: 'admin.accessibility.add_users_to_role', defaultMessage: 'Add users to role'})}
+                    >
                         <i
                             className='icon icon-plus'
                         />
-                    </div>
+                    </button>
                 </div>
             </div>
         );
     };
 
-    renderValue = (value: { data: UserProfileValue }): string => {
+    renderValue = (value: {data: UserProfileValue}): string => {
         return value.data?.username || '';
     };
 
@@ -194,8 +196,8 @@ export class AddUsersToRoleModal extends React.PureComponent<Props, State> {
             </div>
         );
 
-        const buttonSubmitText = localizeMessage('multiselect.add', 'Add');
-        const buttonSubmitLoadingText = localizeMessage('multiselect.adding', 'Adding...');
+        const buttonSubmitText = defineMessage({id: 'multiselect.add', defaultMessage: 'Add'});
+        const buttonSubmitLoadingText = defineMessage({id: 'multiselect.adding', defaultMessage: 'Adding...'});
 
         let addError = null;
         if (this.state.addError) {
@@ -268,7 +270,7 @@ export class AddUsersToRoleModal extends React.PureComponent<Props, State> {
                         buttonSubmitLoadingText={buttonSubmitLoadingText}
                         saving={this.state.saving}
                         loading={this.state.loading}
-                        placeholderText={localizeMessage('multiselect.placeholder', 'Search and add members')}
+                        placeholderText={defineMessage({id: 'multiselect.placeholder', defaultMessage: 'Search for people'})}
                     />
                 </Modal.Body>
             </Modal>

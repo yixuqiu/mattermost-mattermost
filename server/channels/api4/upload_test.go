@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -20,8 +21,8 @@ import (
 )
 
 func TestCreateUpload(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 
 	us := &model.UploadSession{
 		ChannelId: th.BasicChannel.Id,
@@ -59,7 +60,10 @@ func TestCreateUpload(t *testing.T) {
 
 	t.Run("not allowed in cloud", func(t *testing.T) {
 		th.App.Srv().SetLicense(model.NewTestLicense("cloud"))
-		defer th.App.Srv().RemoveLicense()
+		defer func() {
+			appErr := th.App.Srv().RemoveLicense()
+			require.Nil(t, appErr)
+		}()
 
 		u, resp, err := th.SystemAdminClient.CreateUpload(context.Background(), &model.UploadSession{
 			ChannelId: th.BasicChannel.Id,
@@ -112,12 +116,225 @@ func TestCreateUpload(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, u)
 		})
+
+		t.Run("directory conflict - import directory is subdirectory of plugin directory", func(t *testing.T) {
+			originalPluginDir := *th.App.Config().PluginSettings.Directory
+			originalImportDir := *th.App.Config().ImportSettings.Directory
+
+			// Use non-existent paths to test conflict detection without filesystem dependencies
+			pluginDir := "/nonexistent/conflict-test/plugins"
+			importDir := "/nonexistent/conflict-test/plugins/imports"
+
+			defer th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.PluginSettings.Directory = originalPluginDir
+				*cfg.ImportSettings.Directory = originalImportDir
+			})
+
+			th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.PluginSettings.Directory = pluginDir
+				*cfg.ImportSettings.Directory = importDir
+			})
+
+			us := &model.UploadSession{
+				Filename: info.Name(),
+				FileSize: info.Size(),
+				Type:     model.UploadTypeImport,
+			}
+			u, resp, err := th.SystemAdminClient.CreateUpload(context.Background(), us)
+			require.Nil(t, u)
+			CheckErrorID(t, err, "api.upload.create.directory_conflict.app_error")
+			require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		})
+
+		t.Run("directory conflict - plugin directory is subdirectory of import directory", func(t *testing.T) {
+			originalPluginDir := *th.App.Config().PluginSettings.Directory
+			originalImportDir := *th.App.Config().ImportSettings.Directory
+
+			// Use non-existent paths to test conflict detection without filesystem dependencies
+			importDir := "/nonexistent/conflict-test/data"
+			pluginDir := "/nonexistent/conflict-test/data/plugins"
+
+			defer th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.PluginSettings.Directory = originalPluginDir
+				*cfg.ImportSettings.Directory = originalImportDir
+			})
+
+			th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.ImportSettings.Directory = importDir
+				*cfg.PluginSettings.Directory = pluginDir
+			})
+
+			us := &model.UploadSession{
+				Filename: info.Name(),
+				FileSize: info.Size(),
+				Type:     model.UploadTypeImport,
+			}
+			u, resp, err := th.SystemAdminClient.CreateUpload(context.Background(), us)
+			require.Nil(t, u)
+			CheckErrorID(t, err, "api.upload.create.directory_conflict.app_error")
+			require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		})
+
+		t.Run("directory conflict - same directory", func(t *testing.T) {
+			originalPluginDir := *th.App.Config().PluginSettings.Directory
+			originalImportDir := *th.App.Config().ImportSettings.Directory
+
+			// Use non-existent path to test conflict detection without filesystem dependencies
+			sharedDir := "/nonexistent/conflict-test/shared"
+
+			defer th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.PluginSettings.Directory = originalPluginDir
+				*cfg.ImportSettings.Directory = originalImportDir
+			})
+
+			th.App.UpdateConfig(func(cfg *model.Config) {
+				*cfg.PluginSettings.Directory = sharedDir
+				*cfg.ImportSettings.Directory = sharedDir
+			})
+
+			us := &model.UploadSession{
+				Filename: info.Name(),
+				FileSize: info.Size(),
+				Type:     model.UploadTypeImport,
+			}
+			u, resp, err := th.SystemAdminClient.CreateUpload(context.Background(), us)
+			require.Nil(t, u)
+			CheckErrorID(t, err, "api.upload.create.directory_conflict.app_error")
+			require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		})
+	})
+
+	t.Run("should clean filename", func(t *testing.T) {
+		us := &model.UploadSession{
+			ChannelId: th.BasicChannel.Id,
+			Filename:  "../../../image.png",
+			FileSize:  8 * 1024 * 1024,
+		}
+
+		u, resp, err := th.Client.CreateUpload(context.Background(), us)
+		require.NoError(t, err)
+		require.NotEmpty(t, u)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+		require.Equal(t, "image.png", u.Filename)
+
+		rus, appErr := th.App.GetUploadSession(th.Context, u.Id)
+		require.Nil(t, appErr)
+		require.Equal(t, "image.png", rus.Filename)
+		require.Equal(
+			t,
+			fmt.Sprintf(
+				"%s/teams/noteam/channels/%s/users/%s/%s/image.png",
+				model.GetTimeForMillis(u.CreateAt).Format("20060102"),
+				u.ChannelId,
+				u.UserId,
+				u.Id,
+			),
+			rus.Path,
+		)
+	})
+}
+
+func TestCreateUploadABACEnforcement(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := setupUploadFileAttachmentABAC(t)
+
+	newUploadSession := func() *model.UploadSession {
+		return &model.UploadSession{
+			ChannelId: th.BasicChannel.Id,
+			Filename:  "upload",
+			FileSize:  1024,
+		}
+	}
+
+	t.Run("rejected when the policy denies the upload action", func(t *testing.T) {
+		mockUploadFileAttachmentPolicy(t, th, th.BasicChannel.Id)
+
+		u, resp, err := th.Client.CreateUpload(context.Background(), newUploadSession())
+		require.Error(t, err)
+		require.Nil(t, u)
+		CheckForbiddenStatus(t, resp)
+		CheckErrorID(t, err, uploadFileAttachmentDeniedErrorID)
+	})
+
+	t.Run("succeeds when the policy allows the upload action", func(t *testing.T) {
+		mockUploadFileAttachmentPolicy(t, th)
+
+		u, resp, err := th.Client.CreateUpload(context.Background(), newUploadSession())
+		require.NoError(t, err)
+		require.NotNil(t, u)
+		CheckCreatedStatus(t, resp)
+	})
+
+	t.Run("unaffected when ABAC is disabled", func(t *testing.T) {
+		mockUploadFileAttachmentPolicy(t, th, th.BasicChannel.Id)
+		disableABACForTest(t, th)
+
+		u, resp, err := th.Client.CreateUpload(context.Background(), newUploadSession())
+		require.NoError(t, err)
+		require.NotNil(t, u)
+		CheckCreatedStatus(t, resp)
+	})
+
+	t.Run("import uploads are not gated by the policy", func(t *testing.T) {
+		mockUploadFileAttachmentPolicy(t, th, th.BasicChannel.Id)
+
+		us := &model.UploadSession{
+			Filename: "import.zip",
+			FileSize: 1024,
+			Type:     model.UploadTypeImport,
+		}
+		u, resp, err := th.SystemAdminClient.CreateUpload(context.Background(), us)
+		require.NoError(t, err)
+		require.NotNil(t, u)
+		CheckCreatedStatus(t, resp)
+	})
+}
+
+func TestUploadDataABACEnforcement(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := setupUploadFileAttachmentABAC(t)
+
+	// The session is created while the policy still allows uploads; the policy
+	// tightens before the bytes are sent.
+	createSession := func(t *testing.T) (*model.UploadSession, []byte) {
+		t.Helper()
+
+		us, resp, err := th.Client.CreateUpload(context.Background(), &model.UploadSession{
+			ChannelId: th.BasicChannel.Id,
+			Filename:  "upload",
+			FileSize:  1024,
+		})
+		require.NoError(t, err)
+		CheckCreatedStatus(t, resp)
+
+		return us, randomBytes(t, int(us.FileSize))
+	}
+
+	t.Run("rejected when the policy denies the upload action", func(t *testing.T) {
+		us, data := createSession(t)
+		mockUploadFileAttachmentPolicy(t, th, th.BasicChannel.Id)
+
+		info, resp, err := th.Client.UploadData(context.Background(), us.Id, bytes.NewReader(data))
+		require.Error(t, err)
+		require.Nil(t, info)
+		CheckForbiddenStatus(t, resp)
+		CheckErrorID(t, err, uploadFileAttachmentDeniedErrorID)
+	})
+
+	t.Run("succeeds when the policy allows the upload action", func(t *testing.T) {
+		us, data := createSession(t)
+		mockUploadFileAttachmentPolicy(t, th)
+
+		info, _, err := th.Client.UploadData(context.Background(), us.Id, bytes.NewReader(data))
+		require.NoError(t, err)
+		require.NotNil(t, info)
 	})
 }
 
 func TestGetUpload(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 
 	us := &model.UploadSession{
 		Id:        model.NewId(),
@@ -160,8 +377,8 @@ func TestGetUpload(t *testing.T) {
 }
 
 func TestGetUploadsForUser(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 
 	t.Run("no permissions", func(t *testing.T) {
 		uss, _, err := th.Client.GetUploadsForUser(context.Background(), th.BasicUser2.Id)
@@ -178,7 +395,7 @@ func TestGetUploadsForUser(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		uploads := make([]*model.UploadSession, 4)
-		for i := 0; i < len(uploads); i++ {
+		for i := range uploads {
 			us := &model.UploadSession{
 				Id:        model.NewId(),
 				Type:      model.UploadTypeAttachment,
@@ -207,8 +424,8 @@ func TestGetUploadsForUser(t *testing.T) {
 }
 
 func TestUploadData(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 	if *th.App.Config().FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
 	}
@@ -252,7 +469,10 @@ func TestUploadData(t *testing.T) {
 
 	t.Run("not allowed in cloud", func(t *testing.T) {
 		th.App.Srv().SetLicense(model.NewTestLicense("cloud"))
-		defer th.App.Srv().RemoveLicense()
+		defer func() {
+			appErr := th.App.Srv().RemoveLicense()
+			require.Nil(t, appErr)
+		}()
 
 		us2 := &model.UploadSession{
 			Id:        model.NewId(),
@@ -329,8 +549,8 @@ func TestUploadData(t *testing.T) {
 }
 
 func TestUploadDataMultipart(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 	if *th.App.Config().FileSettings.DriverName == "" {
 		t.Skip("skipping because no file driver is enabled")
 	}

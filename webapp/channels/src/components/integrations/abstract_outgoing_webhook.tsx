@@ -2,11 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import type {ChangeEventHandler, FormEvent, MouseEvent} from 'react';
+import type {ChangeEventHandler, FormEvent, JSX, MouseEvent} from 'react';
 import {FormattedMessage} from 'react-intl';
 import type {MessageDescriptor} from 'react-intl';
 import {Link} from 'react-router-dom';
 
+import {Button} from '@mattermost/compass-ui/components/button';
 import type {OutgoingWebhook} from '@mattermost/types/integrations';
 import type {Team} from '@mattermost/types/teams';
 
@@ -17,6 +18,7 @@ import FormError from 'components/form_error';
 import SpinnerButton from 'components/spinner_button';
 
 import {DocLinks} from 'utils/constants';
+import {usernameFromDisplayName} from 'utils/username';
 import {localizeMessage} from 'utils/utils';
 
 interface State {
@@ -87,6 +89,9 @@ interface Props {
 }
 
 export default class AbstractOutgoingWebhook extends React.PureComponent<Props, State> {
+    // Whether the user typed their own username, which stops it from following the display name.
+    private usernameEdited = false;
+
     constructor(props: Props | Readonly<Props>) {
         super(props);
 
@@ -208,8 +213,15 @@ export default class AbstractOutgoingWebhook extends React.PureComponent<Props, 
     };
 
     updateDisplayName: ChangeEventHandler<HTMLInputElement> = (e) => {
+        const displayName = e.target.value;
+        if (this.props.initialHook || !this.props.enablePostUsernameOverride || this.usernameEdited) {
+            this.setState({displayName});
+            return;
+        }
+
         this.setState({
-            displayName: e.target.value,
+            displayName,
+            username: usernameFromDisplayName(displayName),
         });
     };
 
@@ -250,6 +262,7 @@ export default class AbstractOutgoingWebhook extends React.PureComponent<Props, 
     };
 
     updateUsername: ChangeEventHandler<HTMLInputElement> = (e) => {
+        this.usernameEdited = e.target.value !== '';
         this.setState({
             username: e.target.value,
         });
@@ -462,12 +475,12 @@ export default class AbstractOutgoingWebhook extends React.PureComponent<Props, 
                                     <option
                                         value='0'
                                     >
-                                        {localizeMessage('add_outgoing_webhook.triggerWordsTriggerWhenFullWord', 'First word matches a trigger word exactly')}
+                                        {localizeMessage({id: 'add_outgoing_webhook.triggerWordsTriggerWhenFullWord', defaultMessage: 'First word matches a trigger word exactly'})}
                                     </option>
                                     <option
                                         value='1'
                                     >
-                                        {localizeMessage('add_outgoing_webhook.triggerWordsTriggerWhenStartsWith', 'First word starts with a trigger word')}
+                                        {localizeMessage({id: 'add_outgoing_webhook.triggerWordsTriggerWhenStartsWith', defaultMessage: 'First word starts with a trigger word'})}
                                     </option>
                                 </select>
                                 <div className='form__help'>
@@ -541,7 +554,7 @@ export default class AbstractOutgoingWebhook extends React.PureComponent<Props, 
                                     <div className='form__help'>
                                         <FormattedMessage
                                             id='add_outgoing_webhook.username.help'
-                                            defaultMessage='Specify the username this integration will post as. Usernames can be up to 22 characters, and contain lowercase letters, numbers and the symbols \"-\", \"_\", and \".\". If left blank, the name specified by the webhook creator is used.'
+                                            defaultMessage='Specify the username this integration will post as. Usernames can be up to 22 characters, and contain lowercase letters, numbers and the symbols "-", "_", and ".". If left blank, the name specified by the webhook creator is used.'
                                         />
                                     </div>
                                 </div>
@@ -581,20 +594,21 @@ export default class AbstractOutgoingWebhook extends React.PureComponent<Props, 
                                 type='backstage'
                                 errors={[this.props.serverError, this.state.clientError]}
                             />
-                            <Link
-                                className='btn btn-tertiary'
-                                to={`/${this.props.team.name}/integrations/outgoing_webhooks`}
+                            <Button
+                                asChild={true}
+                                emphasis='tertiary'
                             >
-                                <FormattedMessage
-                                    id='add_outgoing_webhook.cancel'
-                                    defaultMessage='Cancel'
-                                />
-                            </Link>
+                                <Link to={`/${this.props.team.name}/integrations/outgoing_webhooks`}>
+                                    <FormattedMessage
+                                        id='add_outgoing_webhook.cancel'
+                                        defaultMessage='Cancel'
+                                    />
+                                </Link>
+                            </Button>
                             <SpinnerButton
-                                className='btn btn-primary'
                                 type='submit'
                                 spinning={this.state.saving}
-                                spinningText={localizeMessage(this.props.loading.id as string, this.props.loading.defaultMessage as string)}
+                                spinningText={this.props.loading}
                                 onClick={this.handleSubmit}
                                 id='saveWebhook'
                             >

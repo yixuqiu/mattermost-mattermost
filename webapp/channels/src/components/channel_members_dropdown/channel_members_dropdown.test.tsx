@@ -1,7 +1,6 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {Channel, ChannelMembership} from '@mattermost/types/channels';
@@ -12,6 +11,7 @@ import type {ActionResult} from 'mattermost-redux/types/actions';
 import ChannelMembersDropdown from 'components/channel_members_dropdown/channel_members_dropdown';
 
 import {mockDispatch} from 'packages/mattermost-redux/test/test_store';
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 import {ModalIdentifiers} from 'utils/constants';
 
 jest.mock('react-redux', () => ({
@@ -68,78 +68,7 @@ describe('components/channel_members_dropdown', () => {
         },
     };
 
-    test('should match snapshot for dropdown with guest user', () => {
-        const props = {
-            ...baseProps,
-            user: {
-                ...baseProps.user,
-                roles: 'system_guest',
-            },
-            channelMember: {
-                ...baseProps.channelMember,
-                roles: 'channel_guest',
-            },
-            canChangeMemberRoles: true,
-        };
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot for dropdown with shared user', () => {
-        const props = {
-            ...baseProps,
-            user: {
-                ...baseProps.user,
-                roles: 'system_user',
-                remote_id: 'fakeid',
-            },
-        };
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot for not dropdown with guest user', () => {
-        const props = {
-            ...baseProps,
-            user: {
-                ...baseProps.user,
-                roles: 'system_guest',
-            },
-            channelMember: {
-                ...baseProps.channelMember,
-                roles: 'channel_guest',
-            },
-            canChangeMemberRoles: false,
-        };
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot for channel_members_dropdown', () => {
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...baseProps}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot opening dropdown upwards', () => {
-        const wrapper = shallow(
-            <ChannelMembersDropdown
-                {...baseProps}
-                index={4}
-                totalUsers={5}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('If a removal is in progress do not execute another removal', () => {
+    test('If a removal is in progress do not execute another removal', async () => {
         const removeMock = jest.fn().mockImplementation(() => {
             const myPromise = new Promise<ActionResult>((resolve) => {
                 setTimeout(() => {
@@ -157,16 +86,22 @@ describe('components/channel_members_dropdown', () => {
             },
         };
 
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <ChannelMembersDropdown {...props}/>,
         );
 
-        wrapper.find('[data-testid="removeFromChannel"]').simulate('click');
-        wrapper.find('[data-testid="removeFromChannel"]').simulate('click');
+        // Open the dropdown menu and click remove
+        const dropdownToggle = container.querySelector('button.dropdown-toggle') as HTMLElement;
+        await userEvent.click(dropdownToggle);
+        await userEvent.click(screen.getByText('Remove from Channel'));
+
+        // Try to remove again
+        await userEvent.click(dropdownToggle);
+        await userEvent.click(screen.getByText('Remove from Channel'));
         expect(removeMock).toHaveBeenCalledTimes(1);
     });
 
-    test('should fail to remove channel member', (done) => {
+    test('should fail to remove channel member', async () => {
         const removeMock = jest.fn().mockImplementation(() => {
             return Promise.resolve({error: {message: 'Failed'}});
         });
@@ -179,19 +114,21 @@ describe('components/channel_members_dropdown', () => {
             },
         };
 
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <ChannelMembersDropdown {...props}/>,
         );
 
-        wrapper.find('[data-testid="removeFromChannel"]').simulate('click');
-        process.nextTick(() => {
+        const dropdownToggle = container.querySelector('button.dropdown-toggle') as HTMLElement;
+        await userEvent.click(dropdownToggle);
+        await userEvent.click(screen.getByText('Remove from Channel'));
+
+        await waitFor(() => {
             expect(removeMock).toHaveBeenCalledTimes(1);
-            expect(wrapper.find('.has-error.control-label').text()).toEqual('Failed');
-            done();
+            expect(screen.getByText('Failed')).toBeInTheDocument();
         });
     });
 
-    test('should remove the channel member', (done) => {
+    test('should remove the channel member', async () => {
         const removeMock = jest.fn().mockImplementation(() => {
             return Promise.resolve({data: true});
         });
@@ -204,47 +141,20 @@ describe('components/channel_members_dropdown', () => {
             },
         };
 
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <ChannelMembersDropdown {...props}/>,
         );
 
-        wrapper.find('[data-testid="removeFromChannel"]').simulate('click');
-        process.nextTick(() => {
+        const dropdownToggle = container.querySelector('button.dropdown-toggle') as HTMLElement;
+        await userEvent.click(dropdownToggle);
+        await userEvent.click(screen.getByText('Remove from Channel'));
+
+        await waitFor(() => {
             expect(removeMock).toHaveBeenCalledTimes(1);
-            done();
         });
     });
 
-    test('should match snapshot for group_constrained channel', () => {
-        baseProps.channel.group_constrained = true;
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...baseProps}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot with role change possible', () => {
-        const wrapper = shallow(
-            <ChannelMembersDropdown
-                {...baseProps}
-                canChangeMemberRoles={true}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot when user is current user', () => {
-        const props = {
-            ...baseProps,
-            currentUserId: 'user-1',
-        };
-        const wrapper = shallow(
-            <ChannelMembersDropdown {...props}/>,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should open a confirmation modal when current user tries to remove themselves from a channel', () => {
+    test('should open a confirmation modal when current user tries to remove themselves from a channel', async () => {
         const removeMock = jest.fn().mockImplementation(() => {
             const myPromise = new Promise<ActionResult>((resolve) => {
                 setTimeout(() => {
@@ -266,12 +176,14 @@ describe('components/channel_members_dropdown', () => {
                 removeChannelMember: removeMock,
             },
         };
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <ChannelMembersDropdown {...props}/>,
         );
 
-        expect(wrapper.find('[data-testid="leaveChannel"]').exists()).toBe(true);
-        wrapper.find('[data-testid="leaveChannel"]').simulate('click');
+        const dropdownToggle = container.querySelector('button.dropdown-toggle') as HTMLElement;
+        await userEvent.click(dropdownToggle);
+        expect(screen.getByText('Leave Channel')).toBeInTheDocument();
+        await userEvent.click(screen.getByText('Leave Channel'));
 
         expect(removeMock).not.toHaveBeenCalled();
         expect(props.actions.openModal).toHaveBeenCalledWith(

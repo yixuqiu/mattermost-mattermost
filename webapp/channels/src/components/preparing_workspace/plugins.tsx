@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect} from 'react';
+import React, {useRef} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {CSSTransition} from 'react-transition-group';
 
@@ -9,11 +9,8 @@ import MultiSelectCards from 'components/common/multi_select_cards';
 import GithubSVG from 'components/common/svg_images_components/github_svg';
 import GitlabSVG from 'components/common/svg_images_components/gitlab_svg';
 import JiraSVG from 'components/common/svg_images_components/jira_svg';
-import ServiceNowSVG from 'components/common/svg_images_components/servicenow_svg';
 import ZoomSVG from 'components/common/svg_images_components/zoom_svg';
 import ExternalLink from 'components/external_link';
-
-import {t} from 'utils/i18n';
 
 import Description from './description';
 import PageBody from './page_body';
@@ -31,16 +28,11 @@ type Props = PreparingWorkspacePageProps & {
     className?: string;
     isSelfHosted: boolean;
     handleVisitMarketPlaceClick: () => void;
-}
+};
 const Plugins = (props: Props) => {
     const {formatMessage} = useIntl();
+    const nodeRef = useRef<HTMLDivElement>(null);
     let className = 'Plugins-body';
-
-    useEffect(() => {
-        if (props.show) {
-            props.onPageView();
-        }
-    }, [props.show]);
 
     if (props.className) {
         className += ' ' + props.className;
@@ -63,12 +55,16 @@ const Plugins = (props: Props) => {
     return (
         <CSSTransition
             in={props.show}
+            nodeRef={nodeRef}
             timeout={Animations.PAGE_SLIDE}
             classNames={mapAnimationReasonToClass('Plugins', props.transitionDirection)}
             mountOnEnter={true}
             unmountOnExit={true}
         >
-            <div className={className}>
+            <div
+                ref={nodeRef}
+                className={className}
+            >
                 <SingleColumnLayout>
                     <PageLine
                         style={{
@@ -91,8 +87,11 @@ const Plugins = (props: Props) => {
                                 {
                                     onClick: () => props.setOption('github'),
                                     icon: <GithubSVG/>,
-                                    id: t('onboarding_wizard.plugins.github'),
-                                    defaultMessage: 'GitHub',
+                                    id: 'onboarding_wizard.plugins.github',
+                                    buttonText: formatMessage({
+                                        id: 'onboarding_wizard.plugins.github',
+                                        defaultMessage: 'GitHub',
+                                    }),
                                     checked: props.options.github,
                                     tooltip: formatMessage({
                                         id: 'onboarding_wizard.plugins.github.tooltip',
@@ -102,45 +101,43 @@ const Plugins = (props: Props) => {
                                 {
                                     onClick: () => props.setOption('gitlab'),
                                     icon: <GitlabSVG/>,
-                                    id: t('onboarding_wizard.plugins.gitlab'),
-                                    defaultMessage: 'GitLab',
+                                    id: 'onboarding_wizard.plugins.gitlab',
+                                    buttonText: formatMessage({
+                                        id: 'onboarding_wizard.plugins.gitlab',
+                                        defaultMessage: 'GitLab',
+                                    }),
                                     checked: props.options.gitlab,
                                     tooltip: formatMessage({
                                         id: 'onboarding_wizard.plugins.gitlab.tooltip',
-                                        defaultMessage: 'GitLab tooltip',
+                                        defaultMessage: 'Subscribe to repositories, stay up-to-date with reviews, assignments and more',
                                     }),
                                 },
                                 {
                                     onClick: () => props.setOption('jira'),
                                     icon: <JiraSVG/>,
-                                    id: t('onboarding_wizard.plugins.jira'),
-                                    defaultMessage: 'Jira',
+                                    id: 'onboarding_wizard.plugins.jira',
+                                    buttonText: formatMessage({
+                                        id: 'onboarding_wizard.plugins.jira',
+                                        defaultMessage: 'Jira',
+                                    }),
                                     checked: props.options.jira,
                                     tooltip: formatMessage({
                                         id: 'onboarding_wizard.plugins.jira.tooltip',
-                                        defaultMessage: 'Jira tooltip',
+                                        defaultMessage: 'Create Jira tickets from messages in Mattermost, get notified of important updates in Jira',
                                     }),
                                 },
                                 {
                                     onClick: () => props.setOption('zoom'),
                                     icon: <ZoomSVG/>,
-                                    id: t('onboarding_wizard.plugins.zoom'),
-                                    defaultMessage: 'Zoom',
+                                    id: 'onboarding_wizard.plugins.zoom',
+                                    buttonText: formatMessage({
+                                        id: 'onboarding_wizard.plugins.zoom',
+                                        defaultMessage: 'Zoom',
+                                    }),
                                     checked: props.options.zoom,
                                     tooltip: formatMessage({
                                         id: 'onboarding_wizard.plugins.zoom.tooltip',
-                                        defaultMessage: 'Zoom tooltip',
-                                    }),
-                                },
-                                {
-                                    onClick: () => props.setOption('servicenow'),
-                                    icon: <ServiceNowSVG/>,
-                                    id: t('onboarding_wizard.plugins.servicenow'),
-                                    defaultMessage: 'ServiceNow',
-                                    checked: props.options.servicenow,
-                                    tooltip: formatMessage({
-                                        id: 'onboarding_wizard.plugins.servicenow.tooltip',
-                                        defaultMessage: 'ServiceNow tooltip',
+                                        defaultMessage: 'Start Zoom audio and video conferencing calls in Mattermost with a single click',
                                     }),
                                 },
                             ]}
@@ -151,7 +148,7 @@ const Plugins = (props: Props) => {
                                     id='onboarding_wizard.plugins.marketplace'
                                     defaultMessage='More tools can be added once your workspace is set up. To see all available integrations, <a>visit the Marketplace.</a>'
                                     values={{
-                                        a: (chunks: React.ReactNode | React.ReactNodeArray) => (
+                                        a: (chunks: React.ReactNode | readonly React.ReactNode[]) => (
                                             <strong>
                                                 <ExternalLink
                                                     href='https://mattermost.com/marketplace/'

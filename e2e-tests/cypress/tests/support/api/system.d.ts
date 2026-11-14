@@ -147,6 +147,14 @@ declare namespace Cypress {
         apiInvalidateCache(): Chainable<Record<string, any>>;
 
         /**
+         * Allow test if matches elastic search disabled.
+         * Otherwise, fail fast.
+         * @example
+         *   cy.shouldHaveElasticsearchDisabled();
+         */
+        shouldHaveElasticsearchDisabled(): Chainable;
+
+        /**
          * Allow test for server other than Cloud edition or with Cloud license.
          * Otherwise, fail fast.
          * @example
@@ -169,14 +177,6 @@ declare namespace Cypress {
          *   cy.shouldHavePluginUploadEnabled();
          */
         shouldHavePluginUploadEnabled(): Chainable;
-
-        /**
-         * Allow test for server running with subpath.
-         * Otherwise, fail fast.
-         * @example
-         *   cy.shouldRunWithSubpath();
-         */
-        shouldRunWithSubpath(): Chainable;
 
         /**
          * Allow test if matches feature flag setting

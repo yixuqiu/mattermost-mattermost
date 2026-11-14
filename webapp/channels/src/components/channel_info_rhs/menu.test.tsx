@@ -5,15 +5,30 @@ import React from 'react';
 
 import type {Channel, ChannelStats} from '@mattermost/types/channels';
 
+import {openModal} from 'actions/views/modals';
+import {canAccessChannelSettings} from 'selectors/views/channel_settings';
+
 import {
     act,
-    fireEvent,
     renderWithContext,
     screen,
+    userEvent,
+    fireEvent,
 } from 'tests/react_testing_utils';
-import Constants from 'utils/constants';
+import {boardChannelsState} from 'utils/channel_kind_test_utils';
+import Constants, {ModalIdentifiers} from 'utils/constants';
+
+jest.mock('selectors/views/channel_settings', () => ({
+    canAccessChannelSettings: jest.fn(),
+}));
+jest.mock('actions/views/modals', () => ({
+    openModal: jest.fn(() => ({type: 'OPEN_MODAL'})),
+}));
 
 import Menu from './menu';
+
+const mockedCanAccessChannelSettings = canAccessChannelSettings as unknown as jest.Mock;
+const mockedOpenModal = openModal as unknown as jest.Mock;
 
 describe('channel_info_rhs/menu', () => {
     const defaultProps = {
@@ -30,6 +45,8 @@ describe('channel_info_rhs/menu', () => {
     };
 
     beforeEach(() => {
+        mockedOpenModal.mockClear();
+        mockedCanAccessChannelSettings.mockReset();
         defaultProps.actions = {
             openNotificationSettings: jest.fn(),
             showChannelFiles: jest.fn(),
@@ -54,7 +71,7 @@ describe('channel_info_rhs/menu', () => {
         });
 
         expect(screen.getByText('Notification Preferences')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Notification Preferences'));
+        await userEvent.click(screen.getByText('Notification Preferences'));
 
         expect(props.actions.openNotificationSettings).toHaveBeenCalled();
     });
@@ -105,6 +122,7 @@ describe('channel_info_rhs/menu', () => {
             <Menu
                 {...props}
             />,
+            {entities: {general: {config: {EnableFileAttachments: 'true', EnableFileSearch: 'true'}}}},
         );
 
         await act(async () => {
@@ -115,8 +133,38 @@ describe('channel_info_rhs/menu', () => {
         expect(fileItem).toBeInTheDocument();
         expect(fileItem.parentElement).toHaveTextContent('3');
 
-        fireEvent.click(fileItem);
+        await userEvent.click(fileItem);
         expect(props.actions.showChannelFiles).toHaveBeenCalled();
+    });
+
+    test('should NOT display files when file search is disabled', async () => {
+        renderWithContext(
+            <Menu
+                {...defaultProps}
+            />,
+            {entities: {general: {config: {EnableFileAttachments: 'true', EnableFileSearch: 'false'}}}},
+        );
+
+        await act(async () => {
+            defaultProps.actions.getChannelStats();
+        });
+
+        expect(screen.queryByText('Files')).not.toBeInTheDocument();
+    });
+
+    test('should NOT display files when file attachments are disabled', async () => {
+        renderWithContext(
+            <Menu
+                {...defaultProps}
+            />,
+            {entities: {general: {config: {EnableFileAttachments: 'false', EnableFileSearch: 'true'}}}},
+        );
+
+        await act(async () => {
+            defaultProps.actions.getChannelStats();
+        });
+
+        expect(screen.queryByText('Files')).not.toBeInTheDocument();
     });
 
     test('should display the pinned messages', async () => {
@@ -137,7 +185,7 @@ describe('channel_info_rhs/menu', () => {
         expect(fileItem).toBeInTheDocument();
         expect(fileItem.parentElement).toHaveTextContent('12');
 
-        fireEvent.click(fileItem);
+        await userEvent.click(fileItem);
         expect(props.actions.showPinnedPosts).toHaveBeenCalled();
     });
 
@@ -159,7 +207,7 @@ describe('channel_info_rhs/menu', () => {
         expect(membersItem).toBeInTheDocument();
         expect(membersItem.parentElement).toHaveTextContent('32');
 
-        fireEvent.click(membersItem);
+        await userEvent.click(membersItem);
         expect(props.actions.showChannelMembers).toHaveBeenCalled();
     });
 
@@ -181,5 +229,152 @@ describe('channel_info_rhs/menu', () => {
 
         const membersItem = screen.queryByText('Members');
         expect(membersItem).not.toBeInTheDocument();
+    });
+
+    test('should display Channel Settings and open modal on click (non-DM/GM, not archived, permitted)', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(true);
+        const props = {...defaultProps};
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+        );
+
+        await act(async () => {
+            props.actions.getChannelStats();
+        });
+
+        const settingsItem = screen.getByText('Channel Settings');
+        expect(settingsItem).toBeInTheDocument();
+
+        fireEvent.click(settingsItem);
+        expect(mockedOpenModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                modalId: ModalIdentifiers.CHANNEL_SETTINGS,
+            }),
+        );
+    });
+
+    test('should NOT display Channel Settings in DM', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(true);
+        const props = {
+            ...defaultProps,
+            channel: {type: Constants.DM_CHANNEL} as Channel,
+        };
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+        );
+        await act(async () => props.actions.getChannelStats());
+        expect(screen.queryByText('Channel Settings')).not.toBeInTheDocument();
+    });
+
+    test('should NOT display Channel Settings in GM', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(true);
+        const props = {
+            ...defaultProps,
+            channel: {type: Constants.GM_CHANNEL} as Channel,
+        };
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+        );
+        await act(async () => props.actions.getChannelStats());
+        expect(screen.queryByText('Channel Settings')).not.toBeInTheDocument();
+    });
+
+    test('should NOT display Channel Settings when archived', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(true);
+        const props = {
+            ...defaultProps,
+            isArchived: true,
+        };
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+        );
+        await act(async () => props.actions.getChannelStats());
+        expect(screen.queryByText('Channel Settings')).not.toBeInTheDocument();
+    });
+
+    test('should NOT display Channel Settings without permission', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(false);
+        const props = {...defaultProps};
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+        );
+        await act(async () => props.actions.getChannelStats());
+        expect(screen.queryByText('Channel Settings')).not.toBeInTheDocument();
+    });
+
+    test('should display Board Settings for a board', async () => {
+        mockedCanAccessChannelSettings.mockReturnValue(true);
+        const props = {
+            ...defaultProps,
+            channel: {id: 'board1', type: Constants.OPEN_CHANNEL} as Channel,
+        };
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+            boardChannelsState('board1'),
+        );
+        await act(async () => props.actions.getChannelStats());
+
+        expect(screen.getByText('Board Settings')).toBeInTheDocument();
+        expect(screen.queryByText('Channel Settings')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Board Info Actions')).toBeInTheDocument();
+    });
+
+    test('should display and invoke plugin Channel Info menu items', async () => {
+        const pluginAction = jest.fn();
+        const channel = {id: 'ch1', type: Constants.OPEN_CHANNEL} as Channel;
+        const props = {
+            ...defaultProps,
+            channel,
+        };
+
+        renderWithContext(
+            <Menu
+                {...props}
+            />,
+            {
+                plugins: {
+                    components: {
+                        ChannelInfoMenu: [{
+                            id: 'plugin-artifacts',
+                            pluginId: 'mattermost-ai',
+                            icon: <i className='icon icon-code-tags'/>,
+                            text: 'Channel artifacts',
+                            action: pluginAction,
+                            shouldRender: () => true,
+                            badge: 3,
+                            opensSubpanel: true,
+                        }],
+                    },
+                },
+            },
+        );
+
+        await act(async () => {
+            props.actions.getChannelStats();
+        });
+
+        const item = screen.getByText('Channel artifacts');
+        expect(item).toBeInTheDocument();
+        expect(item.parentElement).toHaveTextContent('3');
+        await userEvent.click(item);
+        expect(pluginAction).toHaveBeenCalledWith('ch1');
     });
 });

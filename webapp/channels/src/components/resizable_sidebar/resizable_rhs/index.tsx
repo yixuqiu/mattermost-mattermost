@@ -13,7 +13,9 @@ import {shouldRhsOverlapChannelView} from '../utils';
 
 interface Props extends HTMLAttributes<'div'> {
     children: React.ReactNode;
-    rightWidthHolderRef: React.RefObject<HTMLDivElement>;
+    rightWidthHolderRef: React.RefObject<HTMLDivElement | null>;
+    ariaLabel?: string;
+    ariaLabeledby?: string;
 }
 
 function ResizableRhs({
@@ -22,6 +24,8 @@ function ResizableRhs({
     id,
     className,
     rightWidthHolderRef,
+    ariaLabel,
+    ariaLabeledby,
 }: Props) {
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -91,6 +95,8 @@ function ResizableRhs({
             className={className}
             role={role}
             ref={containerRef}
+            aria-label={ariaLabel}
+            aria-labelledby={ariaLabeledby || 'rhsPanelTitle'}
         >
             {children}
             <ResizableDivider

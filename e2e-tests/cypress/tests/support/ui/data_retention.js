@@ -28,7 +28,7 @@ Cypress.Commands.add('uiFillOutCustomPolicyFields', (name, durationDropdown, dur
 Cypress.Commands.add('uiAddTeamsToCustomPolicy', (teamNames) => {
     cy.uiGetButton('Add teams').click();
     teamNames.forEach((teamName) => {
-        cy.findByRole('textbox', {name: 'Search and add teams'}).typeWithForce(teamName);
+        cy.findByRole('combobox', {name: 'Search and add teams'}).typeWithForce(teamName);
         cy.get('.team-info-block').then((el) => {
             el.click();
         });
@@ -39,7 +39,7 @@ Cypress.Commands.add('uiAddTeamsToCustomPolicy', (teamNames) => {
 Cypress.Commands.add('uiAddChannelsToCustomPolicy', (channelNames) => {
     cy.uiGetButton('Add channels').click();
     channelNames.forEach((channelName) => {
-        cy.findByRole('textbox', {name: 'Search and add channels'}).typeWithForce(channelName);
+        cy.findByRole('combobox', {name: 'Search and add channels'}).typeWithForce(channelName);
         cy.wait(TIMEOUTS.ONE_SEC);
         cy.get('.channel-info-block').then((el) => {
             el.click();
@@ -80,8 +80,10 @@ Cypress.Commands.add('uiVerifyCustomPolicyRow', (policyId, description, duration
 });
 
 Cypress.Commands.add('uiClickEditCustomPolicyRow', (policyId) => {
-    cy.get(`#customWrapper-${policyId}`).trigger('mouseover').click();
-    cy.findByRole('button', {name: /edit/i}).should('be.visible').click();
+    // # Reveal CSS :hover IconButton, open menu, then Edit
+    cy.get(`#customWrapper-${policyId}`).realHover();
+    cy.get(`#custom-retention-policy-menu-${policyId}`).should('be.visible').click();
+    cy.findByRole('menuitem', {name: /edit/i}).should('be.visible').click();
 });
 
 Cypress.Commands.add('uiVerifyPolicyResponse', (body, teamCount, channelCount, duration, displayName) => {

@@ -10,7 +10,7 @@
 // Stage: @prod
 // Group: @channels @enterprise
 
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 describe('Team members test', () => {
     let testTeam;
@@ -41,6 +41,14 @@ describe('Team members test', () => {
         });
     });
 
+    it("MM-58840 Teams - can't navigate to invalid URL", () => {
+        // # Visit the invalid URL.
+        cy.visit('/admin_console/user_management/teams/invalid');
+
+        // * Verify that the user is seeing the listing (subroute not matched)
+        cy.findByText('Mattermost Teams').should('be.visible');
+    });
+
     it('MM-23938 - Team members block is only visible when team is not group synced', () => {
         // # Visit the team page
         cy.visit(`/admin_console/user_management/teams/${testTeam.id}`);
@@ -49,9 +57,8 @@ describe('Team members test', () => {
         cy.get('#teamMembers').scrollIntoView().should('be.visible');
 
         // # Click the sync group members switch
-        cy.findByTestId('syncGroupSwitch').
+        cy.findByTestId('syncGroupSwitch-button').
             scrollIntoView().
-            findByRole('button').
             click({force: true});
 
         // * Assert that the members block is no longer visible

@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {Tooltip} from 'react-bootstrap';
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {AppBinding, AppCallResponse} from '@mattermost/types/apps';
 
 import {AppCallResponseTypes} from 'mattermost-redux/constants/apps';
@@ -14,10 +14,7 @@ import {getCurrentTeamId} from 'mattermost-redux/selectors/entities/teams';
 
 import {handleBindingClick, openAppsModal, postEphemeralCallResponseForContext} from 'actions/apps';
 
-import OverlayTrigger from 'components/overlay_trigger';
-
 import {createCallContext} from 'utils/apps';
-import Constants from 'utils/constants';
 
 import type {DoAppCallResult} from 'types/apps';
 
@@ -27,7 +24,7 @@ export const isAppBinding = (x: Record<string, any> | undefined): x is AppBindin
 
 type BindingComponentProps = {
     binding: AppBinding;
-}
+};
 
 const AppBarBinding = (props: BindingComponentProps) => {
     const {binding} = props;
@@ -84,18 +81,10 @@ const AppBarBinding = (props: BindingComponentProps) => {
     const id = `app-bar-icon-${binding.app_id}`;
     const label = binding.label || binding.app_id;
 
-    const tooltip = (
-        <Tooltip id={'tooltip-' + id}>
-            <span>{label}</span>
-        </Tooltip>
-    );
-
     return (
-        <OverlayTrigger
-            trigger={['hover', 'focus']}
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            placement='left'
-            overlay={tooltip}
+        <WithTooltip
+            title={label}
+            isVertical={false}
         >
             <div
                 id={id}
@@ -107,7 +96,7 @@ const AppBarBinding = (props: BindingComponentProps) => {
                     <img src={binding.icon}/>
                 </div>
             </div>
-        </OverlayTrigger>
+        </WithTooltip>
     );
 };
 

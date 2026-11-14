@@ -4,7 +4,6 @@
 package platform
 
 import (
-	"context"
 	"fmt"
 	"slices"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/platform/services/sharedchannel"
 )
 
@@ -21,6 +21,8 @@ var sharedChannelEventsForSync = []model.WebsocketEventType{
 	model.WebsocketEventPostDeleted,
 	model.WebsocketEventReactionAdded,
 	model.WebsocketEventReactionRemoved,
+	model.WebsocketEventAcknowledgementAdded,
+	model.WebsocketEventAcknowledgementRemoved,
 }
 
 var sharedChannelEventsForInvitation = []model.WebsocketEventType{
@@ -28,15 +30,17 @@ var sharedChannelEventsForInvitation = []model.WebsocketEventType{
 }
 
 // SharedChannelSyncHandler is called when a websocket event is received by a cluster node.
-// Only on the leader node it will notify the sync service to perform necessary updates to the remote for the given
-// shared channel.
-func (ps *PlatformService) SharedChannelSyncHandler(event *model.WebSocketEvent) {
+// On the leader node it will notify the sync service to perform necessary updates to the remote for the given
+// shared channel. On other nodes it only handles content events published on this node that are not sent
+// reliably to the leader; the sync service sends the resulting task to the leader.
+func (ps *PlatformService) SharedChannelSyncHandler(event *model.WebSocketEvent, local bool) {
 	syncService := ps.GetSharedChannelService()
 	if syncService == nil {
 		return
 	}
-	if isEligibleForEvents(syncService, event, sharedChannelEventsForSync) {
-		err := handleContentSync(ps, syncService, event)
+	leader := syncService.Active()
+	if isEligibleForContentSync(event, leader, local) {
+		err := handleContentSync(ps, syncService, event, leader)
 		if err != nil {
 			mlog.Warn(
 				err.Error(),
@@ -62,6 +66,15 @@ func isEligibleForEvents(syncService SharedChannelServiceIFace, event *model.Web
 		slices.Contains(events, event.EventType())
 }
 
+// isEligibleForContentSync lets other nodes skip events that Publish sends reliably, since the
+// leader handles those itself.
+func isEligibleForContentSync(event *model.WebSocketEvent, leader, local bool) bool {
+	if !eventHasChannel(event) || !slices.Contains(sharedChannelEventsForSync, event.EventType()) {
+		return false
+	}
+	return leader || (local && !isReliableClusterPublish(event))
+}
+
 func eventHasChannel(event *model.WebSocketEvent) bool {
 	return event.GetBroadcast() != nil &&
 		event.GetBroadcast().ChannelId != ""
@@ -72,7 +85,9 @@ func syncServiceEnabled(syncService SharedChannelServiceIFace) bool {
 		syncService.Active()
 }
 
-func handleContentSync(ps *PlatformService, syncService SharedChannelServiceIFace, event *model.WebSocketEvent) error {
+// handleContentSync notifies the sync service of a content change. Only the leader auto-shares
+// DMs and GMs, since inviting a remote sends the invite directly instead of queuing a task.
+func handleContentSync(ps *PlatformService, syncService SharedChannelServiceIFace, event *model.WebSocketEvent, leader bool) error {
 	channel, err := findChannel(ps, event.GetBroadcast().ChannelId)
 	if err != nil {
 		return err
@@ -82,13 +97,13 @@ func handleContentSync(ps *PlatformService, syncService SharedChannelServiceIFac
 
 	// check if any remotes need to be auto-subscribed to this channel. Remotes are auto-subscribed to DM/GM's if they registered
 	// with the AutoShareDMs flag set.
-	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+	if leader && (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) {
 		filter := model.RemoteClusterQueryFilter{
 			NotInChannel:   channel.Id,
 			OnlyConfirmed:  true,
 			RequireOptions: model.BitflagOptionAutoShareDMs,
 		}
-		remotes, err := ps.Store.RemoteCluster().GetAll(filter) // empty list returned if none found,  no error
+		remotes, err := ps.Store.RemoteCluster().GetAll(0, 999999, filter) // empty list returned if none found,  no error
 		if err != nil {
 			return fmt.Errorf("cannot fetch remote clusters: %w", err)
 		}
@@ -140,12 +155,17 @@ func handleInvitation(ps *PlatformService, syncService SharedChannelServiceIFace
 		return nil
 	}
 
-	rc, err := ps.Store.RemoteCluster().Get(*participant.RemoteId)
+	rc, err := ps.Store.RemoteCluster().Get(*participant.RemoteId, false)
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("couldn't find remote cluster %s, for creating shared channel invitation for a DM", *participant.RemoteId))
 	}
 
-	return syncService.SendChannelInvite(channel, creator.Id, rc, sharedchannel.WithDirectParticipantID(creator.Id), sharedchannel.WithDirectParticipantID(participant.Id))
+	// On a cluster this runs on the leader, possibly after the DM got its first posts on another node.
+	return syncService.SendChannelInvite(channel, creator.Id, rc,
+		sharedchannel.WithDirectParticipant(creator, rc.RemoteId),
+		sharedchannel.WithDirectParticipant(participant, rc.RemoteId),
+		sharedchannel.WithSyncCursorStart(channel.CreateAt),
+	)
 }
 
 func getUserFromEvent(ps *PlatformService, event *model.WebSocketEvent, key string) (*model.User, error) {
@@ -154,7 +174,7 @@ func getUserFromEvent(ps *PlatformService, event *model.WebSocketEvent, key stri
 		return nil, fmt.Errorf("received websocket message that is eligible for sending an invitation but message does not have `%s` present", key)
 	}
 
-	user, err := ps.Store.User().Get(context.Background(), userID)
+	user, err := ps.Store.User().Get(request.EmptyContext(ps.logger), userID)
 	if err != nil {
 		return nil, errors.Wrap(err, "couldn't find user for creating shared channel invitation for a DM")
 	}

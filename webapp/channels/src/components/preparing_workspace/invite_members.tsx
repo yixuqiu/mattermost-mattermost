@@ -1,8 +1,8 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useMemo, useEffect} from 'react';
-import {FormattedMessage, useIntl} from 'react-intl';
+import React, {useState, useMemo, useEffect, useRef} from 'react';
+import {FormattedMessage, defineMessages, useIntl} from 'react-intl';
 import {CSSTransition} from 'react-transition-group';
 
 import type {UserProfile} from '@mattermost/types/users';
@@ -10,7 +10,6 @@ import type {UserProfile} from '@mattermost/types/users';
 import UsersEmailsInput from 'components/widgets/inputs/users_emails_input';
 
 import {Constants} from 'utils/constants';
-import {t} from 'utils/i18n';
 
 import Description from './description';
 import InviteMembersLink from './invite_members_link';
@@ -35,19 +34,18 @@ type Props = PreparingWorkspacePageProps & {
     inferredProtocol: 'http' | 'https' | null;
     isSelfHosted: boolean;
     show: boolean;
-}
+};
 
 const InviteMembers = (props: Props) => {
     const [email, setEmail] = useState('');
     const [showSkipButton, setShowSkipButton] = useState(false);
 
     const {formatMessage} = useIntl();
+    const nodeRef = useRef<HTMLDivElement>(null);
     let className = 'InviteMembers-body';
     if (props.className) {
         className += ' ' + props.className;
     }
-
-    useEffect(props.onPageView, []);
 
     useEffect(() => {
         setShowSkipButton(false);
@@ -64,10 +62,7 @@ const InviteMembers = (props: Props) => {
     });
     const errorProperties = {
         showError: false,
-        errorMessageId: t(
-            'invitation_modal.invite_members.exceeded_max_add_members_batch',
-        ),
-        errorMessageDefault: 'No more than **{text}** people can be invited at once',
+        errorMessage: messages.exceededMaxBatch,
         errorMessageValues: {
             text: Constants.MAX_ADD_MEMBERS_BATCH.toString(),
         },
@@ -115,8 +110,7 @@ const InviteMembers = (props: Props) => {
             inputValue={email}
             emailInvitationsEnabled={true}
             autoFocus={true}
-            validAddressMessageId={t('invitation_modal.members.users_emails_input.valid_email')}
-            validAddressMessageDefault={'Invite **{email}** as a team member'}
+            validAddressMessage={messages.validAddress}
             suppressNoOptionsMessage={suppressNoOptionsMessage}
         />
     );
@@ -173,7 +167,7 @@ const InviteMembers = (props: Props) => {
                 <Description>
                     <FormattedMessage
                         id={'onboarding_wizard.invite_members.description'}
-                        defaultMessage='Collaboration is tough by yourself. Invite a few team members. Separate each email address with a space or comma.'
+                        defaultMessage='Collaboration is tough by yourself. Invite a few team members. Separate each email address with a comma or semicolon.'
                     />
                 </Description>
                 <PageBody>
@@ -211,12 +205,16 @@ const InviteMembers = (props: Props) => {
     return (
         <CSSTransition
             in={props.show}
+            nodeRef={nodeRef}
             timeout={Animations.PAGE_SLIDE}
             classNames={mapAnimationReasonToClass('InviteMembers', props.transitionDirection)}
             mountOnEnter={true}
             unmountOnExit={true}
         >
-            <div className={className}>
+            <div
+                ref={nodeRef}
+                className={className}
+            >
                 <SingleColumnLayout style={{width: 547}}>
                     <PageLine
                         style={{
@@ -241,5 +239,16 @@ const InviteMembers = (props: Props) => {
         </CSSTransition>
     );
 };
+
+const messages = defineMessages({
+    exceededMaxBatch: {
+        id: 'invitation_modal.invite_members.exceeded_max_add_members_batch',
+        defaultMessage: 'No more than **{text}** people can be invited at once',
+    },
+    validAddress: {
+        id: 'invitation_modal.members.users_emails_input.valid_email',
+        defaultMessage: 'Invite **{email}** as a team member',
+    },
+});
 
 export default InviteMembers;

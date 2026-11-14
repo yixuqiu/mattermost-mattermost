@@ -1,15 +1,14 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import {AuthorType, ReleaseStage} from '@mattermost/types/marketplace';
 import type {MarketplacePlugin} from '@mattermost/types/marketplace';
 
-import MarketplaceList, {ITEMS_PER_PAGE} from './marketplace_list';
+import {renderWithContext} from 'tests/react_testing_utils';
 
-import MarketplaceItem from '../marketplace_item/marketplace_item_plugin';
+import MarketplaceList, {ITEMS_PER_PAGE} from './marketplace_list';
 
 describe('components/marketplace/marketplace_list', () => {
     const samplePlugin: MarketplacePlugin = {
@@ -28,20 +27,12 @@ describe('components/marketplace/marketplace_list', () => {
         installed_version: '',
     };
 
-    it('should render default', () => {
-        const wrapper = shallow(
-            <MarketplaceList
-                listing={[]}
-                page={0}
-                noResultsMessage=''
-            />,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
     it('should render page with ITEMS_PER_PAGE plugins', () => {
-        const wrapper = shallow(
+        // Suppress expected duplicate key warnings from using same plugin object multiple times
+        const originalError = console.error;
+        console.error = jest.fn();
+
+        const {container} = renderWithContext(
             <MarketplaceList
                 listing={[
                     samplePlugin, samplePlugin, samplePlugin, samplePlugin, samplePlugin,
@@ -54,11 +45,15 @@ describe('components/marketplace/marketplace_list', () => {
             />,
         );
 
-        expect(wrapper.find(MarketplaceItem)).toHaveLength(ITEMS_PER_PAGE);
+        // With RTL, verify items are rendered in the list
+        const listItems = container.querySelectorAll('.more-modal__list > *');
+        expect(listItems.length).toBe(ITEMS_PER_PAGE);
+
+        console.error = originalError;
     });
 
     it('should render no results', () => {
-        const wrapper = shallow(
+        const {container} = renderWithContext(
             <MarketplaceList
                 listing={[]}
                 page={0}
@@ -70,8 +65,8 @@ describe('components/marketplace/marketplace_list', () => {
             />,
         );
 
-        expect(wrapper.find('.icon__plugin').length).toEqual(1);
-        expect(wrapper.find('.no_plugins__message').length).toEqual(1);
-        expect(wrapper.find('.no_plugins__action').length).toEqual(1);
+        expect(container.querySelectorAll('.icon__plugin').length).toEqual(1);
+        expect(container.querySelectorAll('.no_plugins__message').length).toEqual(1);
+        expect(container.querySelectorAll('.no_plugins__action').length).toEqual(1);
     });
 });

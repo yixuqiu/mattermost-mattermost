@@ -10,7 +10,7 @@
 // Stage: @prod
 // Group: @channels @enterprise @system_console
 
-import * as TIMEOUTS from '../../../../fixtures/timeouts';
+import * as TIMEOUTS from '@/fixtures/timeouts';
 
 describe('group configuration', () => {
     let groupID;
@@ -53,6 +53,14 @@ describe('group configuration', () => {
                 verifyNoTeamsOrChannelsIsVisible();
             });
         });
+    });
+
+    it("MM-58840 Groups - can't navigate to invalid URL", () => {
+        // # Visit the invalid URL.
+        cy.visit('/admin_console/user_management/groups/invalid');
+
+        // * Verify that the user is seeing the listing (subroute not matched)
+        cy.findByText('AD/LDAP Groups').should('be.visible');
     });
 
     describe('adding a team', () => {
@@ -386,8 +394,10 @@ describe('group configuration', () => {
             // # Save settings
             savePage();
 
-            // * Check the groupteam via the API to ensure its role wasn't updated
+            // * Check the groupteam via the API to ensure the team was
+            // removed (delete_at != 0) and its role wasn't updated.
             cy.apiGetGroupTeam(groupID, testTeam.id).then(({body}) => {
+                expect(body.delete_at).to.not.eq(0);
                 expect(body.scheme_admin).to.eq(false);
             });
         });
@@ -511,8 +521,10 @@ describe('group configuration', () => {
             // # Save settings
             savePage();
 
-            // * Check the groupteam via the API to ensure its role wasn't updated
+            // * Check the groupteam via the API to ensure the channel was
+            // removed (delete_at != 0) and its role wasn't updated.
             cy.apiGetGroupChannel(groupID, testChannel.id).then(({body}) => {
+                expect(body.delete_at).to.not.eq(0);
                 expect(body.scheme_admin).to.eq(false);
             });
         });

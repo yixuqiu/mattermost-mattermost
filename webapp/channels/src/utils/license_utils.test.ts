@@ -2,10 +2,46 @@
 // See LICENSE.txt for license information.
 
 import {LicenseSkus} from 'utils/constants';
-import {isLicenseExpired, isLicenseExpiring, isLicensePastGracePeriod, isEnterpriseOrE20License} from 'utils/license_utils';
+import {isLicenseExpired, isLicenseExpiring, isLicensedForDelegatedAdministration, isLicensePastGracePeriod} from 'utils/license_utils';
 
 describe('license_utils', () => {
     const millisPerDay = 24 * 60 * 60 * 1000;
+
+    describe('isLicensedForDelegatedAdministration', () => {
+        it('should return true for an Enterprise license with LDAPGroups enabled', () => {
+            const license = {IsLicensed: 'true', LDAPGroups: 'true', SkuShortName: LicenseSkus.Enterprise};
+
+            expect(isLicensedForDelegatedAdministration(license)).toBe(true);
+        });
+
+        it('should return true for an Enterprise Advanced license with LDAPGroups enabled', () => {
+            const license = {IsLicensed: 'true', LDAPGroups: 'true', SkuShortName: LicenseSkus.EnterpriseAdvanced};
+
+            expect(isLicensedForDelegatedAdministration(license)).toBe(true);
+        });
+
+        it('should return false for an Entry license even with LDAPGroups enabled', () => {
+            const license = {IsLicensed: 'true', LDAPGroups: 'true', SkuShortName: LicenseSkus.Entry};
+
+            expect(isLicensedForDelegatedAdministration(license)).toBe(false);
+        });
+
+        it('should return false when LDAPGroups is not enabled', () => {
+            const license = {IsLicensed: 'true', LDAPGroups: 'false', SkuShortName: LicenseSkus.Professional};
+
+            expect(isLicensedForDelegatedAdministration(license)).toBe(false);
+        });
+
+        it('should return false when not licensed', () => {
+            const license = {IsLicensed: 'false', LDAPGroups: 'true', SkuShortName: LicenseSkus.Enterprise};
+
+            expect(isLicensedForDelegatedAdministration(license)).toBe(false);
+        });
+
+        it('should return false when license is undefined', () => {
+            expect(isLicensedForDelegatedAdministration(undefined)).toBe(false);
+        });
+    });
     describe('isLicenseExpiring', () => {
         it('should return false if cloud expiring in 5 days', () => {
             const license = {Id: '1234', IsLicensed: 'true', Cloud: 'true', ExpiresAt: `${Date.now() + (5 * millisPerDay)}`};
@@ -44,26 +80,6 @@ describe('license_utils', () => {
             const license = {Id: '1234', IsLicensed: 'true', Cloud: 'false', ExpiresAt: `${Date.now() - (11 * millisPerDay)}`};
 
             expect(isLicensePastGracePeriod(license)).toBeTruthy();
-        });
-    });
-
-    describe('isEnterpriseOrE20License', () => {
-        it('should return False if not Enterprise or E20', () => {
-            const license = {Id: '1234', IsLicensed: 'true', Cloud: 'false', SkuShortName: LicenseSkus.Starter};
-
-            expect(isEnterpriseOrE20License(license)).toBeFalsy();
-        });
-
-        it('should return True if Enterprise', () => {
-            const license = {Id: '1234', IsLicensed: 'true', Cloud: 'false', SkuShortName: LicenseSkus.Enterprise};
-
-            expect(isEnterpriseOrE20License(license)).toBeTruthy();
-        });
-
-        it('should return True if E20', () => {
-            const license = {Id: '1234', IsLicensed: 'true', Cloud: 'false', SkuShortName: LicenseSkus.E20};
-
-            expect(isEnterpriseOrE20License(license)).toBeTruthy();
         });
     });
 });

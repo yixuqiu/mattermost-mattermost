@@ -2,9 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback} from 'react';
-import {FormattedMessage, FormattedList, useIntl} from 'react-intl';
+import {FormattedMessage, FormattedList, defineMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {GlobalState} from '@mattermost/types/store';
 import type {UserProfile} from '@mattermost/types/users';
 
@@ -13,21 +14,24 @@ import {getTeam} from 'mattermost-redux/selectors/entities/teams';
 import AlertBanner from 'components/alert_banner';
 import AtMention from 'components/at_mention';
 import type {Value} from 'components/multiselect/multiselect';
-import SimpleTooltip from 'components/widgets/simple_tooltip';
 
-import {t} from 'utils/i18n';
+import type {KindMessages} from 'utils/channel_kind';
+
+import type {ChannelKind} from 'types/store/plugins';
 
 type UserProfileValue = Value & UserProfile;
 
 export type Props = {
     teamId: string;
+    channelKind?: ChannelKind;
     users: UserProfileValue[];
     guests: UserProfileValue[];
-}
+};
 
 const TeamWarningBanner = (props: Props) => {
     const {
         teamId,
+        channelKind = 'channel',
         users,
         guests,
     } = props;
@@ -52,10 +56,7 @@ const TeamWarningBanner = (props: Props) => {
         if (guests.length > 10) {
             return (
                 formatMessage(
-                    {
-                        id: t('channel_invite.invite_team_members.guests.messageOverflow'),
-                        defaultMessage: '{firstUser} and {others} are guest users and need to first be invited to the team before you can add them to the channel. Once they\'ve joined the team, you can add them to this channel.',
-                    },
+                    messages.guestsOverflow[channelKind],
                     {
                         firstUser: (
                             <AtMention
@@ -64,9 +65,8 @@ const TeamWarningBanner = (props: Props) => {
                             />
                         ),
                         others: (
-                            <SimpleTooltip
-                                id={'usernames-overflow'}
-                                content={commaSeparatedUsernames.replace(`@${firstName}, `, '')}
+                            <WithTooltip
+                                title={commaSeparatedUsernames.replace(`@${firstName}, `, '')}
                             >
                                 <span
                                     className='add-others-link'
@@ -79,7 +79,7 @@ const TeamWarningBanner = (props: Props) => {
                                         }}
                                     />
                                 </span>
-                            </SimpleTooltip>
+                            </WithTooltip>
                         ),
                     },
                 )
@@ -97,10 +97,7 @@ const TeamWarningBanner = (props: Props) => {
 
         return (
             formatMessage(
-                {
-                    id: t('channel_invite.invite_team_members.guests.message'),
-                    defaultMessage: '{count, plural, =1 {{firstUser} is a guest user and needs} other {{users} are guest users and need}} to first be invited to the team before you can add them to the channel. Once they\'ve joined the team, you can add them to this channel.',
-                },
+                messages.guests[channelKind],
                 {
                     count: guests.length,
                     users: (<FormattedList value={guestsList}/>),
@@ -110,11 +107,10 @@ const TeamWarningBanner = (props: Props) => {
                             mentionName={firstName}
                         />
                     ),
-                    team: (<strong>{team?.display_name}</strong>),
                 },
             )
         );
-    }, [guests, formatMessage, getCommaSeparatedUsernames, team?.display_name]);
+    }, [guests, formatMessage, getCommaSeparatedUsernames, team?.display_name, channelKind]);
 
     const getMessage = useCallback(() => {
         const commaSeparatedUsernames = getCommaSeparatedUsernames(users);
@@ -122,10 +118,7 @@ const TeamWarningBanner = (props: Props) => {
 
         if (users.length > 10) {
             return formatMessage(
-                {
-                    id: t('channel_invite.invite_team_members.messageOverflow'),
-                    defaultMessage: 'You can add {firstUser} and {others} to this channel once they are members of the {team} team.',
-                },
+                messages.usersOverflow[channelKind],
                 {
                     firstUser: (
                         <AtMention
@@ -134,9 +127,8 @@ const TeamWarningBanner = (props: Props) => {
                         />
                     ),
                     others: (
-                        <SimpleTooltip
-                            id={'usernames-overflow'}
-                            content={commaSeparatedUsernames.replace(`@${firstName}, `, '')}
+                        <WithTooltip
+                            title={commaSeparatedUsernames.replace(`@${firstName}, `, '')}
                         >
                             <span
                                 className='add-others-link'
@@ -149,7 +141,7 @@ const TeamWarningBanner = (props: Props) => {
                                     }}
                                 />
                             </span>
-                        </SimpleTooltip>
+                        </WithTooltip>
                     ),
                     team: (<strong>{team?.display_name}</strong>),
                 },
@@ -167,10 +159,7 @@ const TeamWarningBanner = (props: Props) => {
 
         return (
             formatMessage(
-                {
-                    id: t('channel_invite.invite_team_members.message'),
-                    defaultMessage: 'You can add {count, plural, =1 {{firstUser}} other {{users}}} to this channel once they are members of the {team} team.',
-                },
+                messages.users[channelKind],
                 {
                     count: users.length,
                     users: (<FormattedList value={usersList}/>),
@@ -184,7 +173,7 @@ const TeamWarningBanner = (props: Props) => {
                 },
             )
         );
-    }, [users, getCommaSeparatedUsernames, team, formatMessage]);
+    }, [users, getCommaSeparatedUsernames, team, formatMessage, channelKind]);
 
     return (
         <>
@@ -216,5 +205,50 @@ const TeamWarningBanner = (props: Props) => {
         </>
     );
 };
+
+/* eslint-disable formatjs/enforce-placeholders -- values are passed where each message is rendered */
+const messages = {
+    guestsOverflow: {
+        channel: defineMessage({
+            id: 'channel_invite.invite_team_members.guests.messageOverflow',
+            defaultMessage: '{firstUser} and {others} are guest users and need to first be invited to the team before you can add them to the channel. Once they\'ve joined the team, you can add them to this channel.',
+        }),
+        board: defineMessage({
+            id: 'channel_invite.invite_team_members.guests.messageOverflow.board',
+            defaultMessage: '{firstUser} and {others} are guest users and need to first be invited to the team before you can add them to the board. Once they\'ve joined the team, you can add them to this board.',
+        }),
+    },
+    guests: {
+        channel: defineMessage({
+            id: 'channel_invite.invite_team_members.guests.message',
+            defaultMessage: "{count, plural, =1 {{firstUser} is a guest user and needs} other {{users} are guest users and need}} to first be invited to the team before you can add them to the channel. Once they've joined the team, you can add them to this channel.",
+        }),
+        board: defineMessage({
+            id: 'channel_invite.invite_team_members.guests.message.board',
+            defaultMessage: "{count, plural, =1 {{firstUser} is a guest user and needs} other {{users} are guest users and need}} to first be invited to the team before you can add them to the board. Once they've joined the team, you can add them to this board.",
+        }),
+    },
+    usersOverflow: {
+        channel: defineMessage({
+            id: 'channel_invite.invite_team_members.messageOverflow',
+            defaultMessage: 'You can add {firstUser} and {others} to this channel once they are members of the {team} team.',
+        }),
+        board: defineMessage({
+            id: 'channel_invite.invite_team_members.messageOverflow.board',
+            defaultMessage: 'You can add {firstUser} and {others} to this board once they are members of the {team} team.',
+        }),
+    },
+    users: {
+        channel: defineMessage({
+            id: 'channel_invite.invite_team_members.message',
+            defaultMessage: 'You can add {count, plural, =1 {{firstUser}} other {{users}}} to this channel once they are members of the {team} team.',
+        }),
+        board: defineMessage({
+            id: 'channel_invite.invite_team_members.message.board',
+            defaultMessage: 'You can add {count, plural, =1 {{firstUser}} other {{users}}} to this board once they are members of the {team} team.',
+        }),
+    },
+} satisfies Record<string, KindMessages>;
+/* eslint-enable formatjs/enforce-placeholders */
 
 export default React.memo(TeamWarningBanner);

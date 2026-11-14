@@ -1,10 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import type {CSSProperties} from 'react';
+import React, {useEffect, useState, memo, useCallback} from 'react';
 import {FormattedMessage, defineMessages} from 'react-intl';
 
+import {RefreshIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import type {Audit} from '@mattermost/types/audits';
 
 import type {ActionResult} from 'mattermost-redux/types/actions';
@@ -12,7 +14,7 @@ import type {ActionResult} from 'mattermost-redux/types/actions';
 import ComplianceReports from 'components/admin_console/compliance_reports';
 import AuditTable from 'components/audit_table';
 import LoadingScreen from 'components/loading_screen';
-import ReloadIcon from 'components/widgets/icons/fa_reload_icon';
+import AdminPanel from 'components/widgets/admin_console/admin_panel';
 
 type Props = {
     isLicensed: boolean;
@@ -23,103 +25,83 @@ type Props = {
     };
 };
 
-type State = {
-    loadingAudits: boolean;
-};
-
 const messages = defineMessages({
+    title: {id: 'admin.complianceMonitoring.userActivityLogsTitle', defaultMessage: 'User Activity Logs'},
     reload: {id: 'admin.audits.reload', defaultMessage: 'Reload User Activity Logs'},
 });
 
 export const searchableStrings = [
+    messages.title,
     messages.reload,
 ];
 
-export default class Audits extends React.PureComponent<Props, State> {
-    public constructor(props: Props) {
-        super(props);
+const Audits = ({
+    isLicensed,
+    audits,
+    isDisabled,
+    actions,
+}: Props) => {
+    const [isLoadingAudits, setIsLoadingAudits] = useState(true);
 
-        this.state = {
-            loadingAudits: true,
-        };
-    }
+    useEffect(() => {
+        actions.getAudits().then(() => setIsLoadingAudits(false));
 
-    public componentDidMount() {
-        this.props.actions.getAudits().then(
-            () => this.setState({loadingAudits: false}),
-        );
-    }
+        /* eslint-disable-next-line react-hooks/exhaustive-deps --
+         * This 'useEffect' should only run once during mount.
+         **/
+    }, []);
 
-    private reload = () => {
-        this.setState({loadingAudits: true});
-        this.props.actions.getAudits().then(
-            () => this.setState({loadingAudits: false}),
-        );
-    };
+    const reload = useCallback(() => {
+        setIsLoadingAudits(true);
+        actions.getAudits().then(() => setIsLoadingAudits(false));
+    }, [actions]);
 
-    private activityLogHeader = () => {
-        const h4Style: CSSProperties = {
-            display: 'inline-block',
-            marginBottom: '6px',
-        };
-        const divStyle: CSSProperties = {
-            clear: 'both',
-        };
-        return (
-            <div style={divStyle}>
-                <h4 style={h4Style}>
-                    <FormattedMessage
-                        id='admin.complianceMonitoring.userActivityLogsTitle'
-                        defaultMessage='User Activity Logs'
-                    />
-                </h4>
-                <button
-                    type='submit'
-                    className='btn btn-tertiary pull-right'
-                    onClick={this.reload}
-                >
-                    <ReloadIcon/>
-                    <FormattedMessage {...messages.reload}/>
-                </button>
-            </div>
-        );
-    };
-
-    private renderComplianceReports = () => {
-        if (!this.props.isLicensed) {
+    const renderComplianceReports = () => {
+        if (!isLicensed) {
             return <div/>;
         }
-        return <ComplianceReports readOnly={this.props.isDisabled}/>;
+        return <ComplianceReports readOnly={isDisabled}/>;
     };
 
-    public render() {
-        let content = null;
+    let content = null;
 
-        if (this.state.loadingAudits) {
-            content = <LoadingScreen/>;
-        } else {
-            content = (
-                <div>
-                    <AuditTable
-                        audits={this.props.audits}
-                        showUserId={true}
-                        showIp={true}
-                        showSession={true}
-                    />
-                </div>
-            );
-        }
-
-        return (
-            <div>
-                {this.renderComplianceReports()}
-                <div className='panel compliance-panel'>
-                    {this.activityLogHeader()}
-                    <div className='compliance-panel__table'>
-                        {content}
-                    </div>
-                </div>
-            </div>
+    if (isLoadingAudits) {
+        content = <LoadingScreen/>;
+    } else {
+        content = (
+            <AuditTable
+                audits={audits}
+                showUserId={true}
+                showIp={true}
+                showSession={true}
+            />
         );
     }
-}
+
+    return (
+        <>
+            {renderComplianceReports()}
+            <AdminPanel
+                id='user_activity_logs'
+                className='compliance-panel'
+                title={messages.title}
+                button={
+                    <Button
+                        type='button'
+                        emphasis='tertiary'
+                        onClick={reload}
+                        leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
+                    >
+                        <FormattedMessage {...messages.reload}/>
+                    </Button>
+                }
+            >
+                <div className='compliance-panel__table'>
+                    {content}
+                </div>
+            </AdminPanel>
+        </>
+    );
+};
+
+export default memo(Audits);

@@ -1,19 +1,19 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {type JSX} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 
-import IconButton from '@mattermost/compass-components/components/icon-button'; // eslint-disable-line no-restricted-imports
+import {BookmarkOutlineIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {closeRightHandSide, showFlaggedPosts} from 'actions/views/rhs';
 import {getRhsState} from 'selectors/rhs';
 
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
-
-import Constants, {RHSStates} from 'utils/constants';
+import {RHSStates} from 'utils/constants';
 
 import type {GlobalState} from 'types/store';
 
@@ -31,34 +31,28 @@ const SavedPostsButton = (): JSX.Element | null => {
         }
     };
 
-    const tooltip = (
-        <Tooltip id='recentMentions'>
-            <FormattedMessage
-                id='channel_header.flagged'
-                defaultMessage='Saved messages'
-            />
-        </Tooltip>
-    );
-
     return (
-        <OverlayTrigger
-            trigger={['hover', 'focus']}
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            placement='bottom'
-            overlay={tooltip}
+        <WithTooltip
+            title={
+                <FormattedMessage
+                    id='channel_header.flagged'
+                    defaultMessage='Saved messages'
+                />
+            }
+            forcedPlacement='bottom'
         >
             <IconButton
-                size={'sm'}
-                icon={'bookmark-outline'}
+                style='inverted'
+                size='small'
+                padding='compact'
+                icon={<Icon glyph={<BookmarkOutlineIcon/>}/>}
                 toggled={rhsState === RHSStates.FLAG}
                 onClick={savedPostsButtonClick}
-                inverted={true}
-                compact={true}
                 aria-expanded={rhsState === RHSStates.FLAG}
-                aria-controls='searchContainer' // Must be changed if the ID of the container changes
+                aria-controls='searchContainer'
                 aria-label={formatMessage({id: 'channel_header.flagged', defaultMessage: 'Saved messages'})}
             />
-        </OverlayTrigger>
+        </WithTooltip>
     );
 };
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {FormattedMessage} from 'react-intl';
 import {useDispatch} from 'react-redux';
 import {CSSTransition} from 'react-transition-group';
@@ -35,14 +35,8 @@ export const LAUNCHING_WORKSPACE_FULLSCREEN_Z_INDEX = 1001;
 function LaunchingWorkspace(props: Props) {
     const [hasEntered, setHasEntered] = useState(false);
     const dispatch = useDispatch();
-    useEffect(() => {
-        // This component is showed in both the preparing workspace route as an outro (!fullscreen)
-        // and in the main webapp as an intro (fullscreen)
-        // We only want to track the page view once
-        if (!props.fullscreen && props.show) {
-            props.onPageView();
-        }
-    }, [props.show, props.fullscreen]);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const fullscreenRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (hasEntered) {
@@ -66,7 +60,10 @@ function LaunchingWorkspace(props: Props) {
         bodyClass += ' LaunchingWorkspace-body--non-fullscreen';
     }
     const body = (
-        <div className={bodyClass}>
+        <div
+            ref={bodyRef}
+            className={bodyClass}
+        >
             <div className='LaunchingWorkspace__spinner'>
                 <img
                     src={loadingIcon}
@@ -92,6 +89,7 @@ function LaunchingWorkspace(props: Props) {
         content = (
             <CSSTransition
                 in={props.show && !hasEntered}
+                nodeRef={fullscreenRef}
                 timeout={TRANSITION_DURATION}
                 classNames={'LaunchingWorkspaceFullscreenWrapper'}
                 exit={true}
@@ -100,6 +98,7 @@ function LaunchingWorkspace(props: Props) {
                 unmountOnExit={true}
             >
                 <div
+                    ref={fullscreenRef}
                     className='LaunchingWorkspaceFullscreenWrapper-body'
                     style={{
                         zIndex: props.zIndex,
@@ -117,6 +116,7 @@ function LaunchingWorkspace(props: Props) {
         content = (
             <CSSTransition
                 in={props.show}
+                nodeRef={bodyRef}
                 timeout={Animations.PAGE_SLIDE}
                 classNames={mapAnimationReasonToClass('LaunchingWorkspace', props.transitionDirection)}
                 mountOnEnter={true}

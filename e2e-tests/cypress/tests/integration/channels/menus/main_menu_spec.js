@@ -33,17 +33,16 @@ describe('Main menu', () => {
         cy.apiLogin(testUser);
         cy.visit(`/${testTeam.name}/channels/town-square`);
 
-        cy.uiOpenUserMenu();
-
-        cy.findByRole('menu').should('exist').find('.menu-divider:visible').last().click();
-        cy.findByRole('menu').should('exist');
+        cy.uiOpenUserMenu().within(() => {
+            cy.findAllByRole('separator').last().click();
+        });
     });
 
     it('should show integrations option for system administrator', () => {
         cy.apiAdminLogin();
         cy.visit(`/${testTeam.name}/channels/town-square`);
 
-        cy.uiOpenProductMenu();
+        cy.uiOpenSwitchProductMenu();
 
         cy.findByRole('menu').findByText('Integrations').should('be.visible');
     });
@@ -52,7 +51,7 @@ describe('Main menu', () => {
         cy.apiLogin(testUser);
         cy.visit(`/${testTeam.name}/channels/town-square`);
 
-        cy.uiOpenProductMenu();
+        cy.uiOpenSwitchProductMenu();
 
         cy.findByRole('menu').findByText('Integrations').should('not.exist');
     });

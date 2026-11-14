@@ -40,7 +40,7 @@ function PersistNotificationConfirmModal({
     let confirmBtn: React.ReactNode = '';
     let handleConfirm = () => {};
 
-    const getMentionCount = useMemo(makeGetUserOrGroupMentionCountFromMessage, []);
+    const getMentionCount = useMemo(() => makeGetUserOrGroupMentionCountFromMessage(), []);
     const maxRecipients = useSelector(getPersistentNotificationMaxRecipients);
     const interval = useSelector(getPersistentNotificationIntervalMinutes);
     const count = useSelector((state: GlobalState) => getMentionCount(state, message));
@@ -60,7 +60,7 @@ function PersistNotificationConfirmModal({
                 values={{
                     interval,
                     username: currentChannelTeammateUsername,
-                    b: (chunks: string) => <b>{chunks}</b>,
+                    b: (chunks) => <b>{chunks}</b>,
                 }}
             />
         );
@@ -85,7 +85,7 @@ function PersistNotificationConfirmModal({
         body = (
             <FormattedMessage
                 id='persist_notification.too_few.description'
-                defaultMessage='There are no recipients mentioned in your message. You’ll need add mentions to be able to send persistent notifications.'
+                defaultMessage='There are no recipients mentioned in your message. You’ll need to add mentions to be able to send persistent notifications.'
             />
         );
         confirmBtn = (
@@ -108,7 +108,7 @@ function PersistNotificationConfirmModal({
                 values={{
                     max: maxRecipients,
                     count,
-                    b: (chunks: string) => <b>{chunks}</b>,
+                    b: (chunks) => <b>{chunks}</b>,
                 }}
             />
         );
@@ -154,7 +154,6 @@ function PersistNotificationConfirmModal({
             handleCancel={() => {}}
             handleConfirm={handleConfirm}
             handleEnterKeyPress={handleConfirm}
-            isDeleteModal={false}
             modalHeaderText={title}
             onExited={onExited}
         >

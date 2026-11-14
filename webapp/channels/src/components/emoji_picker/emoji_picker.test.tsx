@@ -38,20 +38,12 @@ describe('components/emoji_picker/EmojiPicker', () => {
         },
     };
 
-    test('should match snapshot', () => {
-        const {asFragment} = renderWithContext(
-            <EmojiPicker {...baseProps}/>,
-        );
-
-        expect(asFragment()).toMatchSnapshot();
-    });
-
     test('Recent category should not exist if there are no recent emojis', () => {
         renderWithContext(
             <EmojiPicker {...baseProps}/>,
         );
 
-        expect(screen.queryByLabelText('emoji_picker.recent')).toBeNull();
+        expect(screen.queryByLabelText('Recent')).toBeNull();
     });
 
     test('Recent category should exist if there are recent emojis', () => {
@@ -64,7 +56,7 @@ describe('components/emoji_picker/EmojiPicker', () => {
             <EmojiPicker {...props}/>,
         );
 
-        expect(screen.queryByLabelText('emoji_picker.recent')).not.toBeNull();
+        expect(screen.queryByLabelText('Recently Used')).not.toBeNull();
     });
 
     test('First emoji should be selected on search', () => {
@@ -78,5 +70,31 @@ describe('components/emoji_picker/EmojiPicker', () => {
         );
 
         expect(screen.queryByText('Preview for wave emoji')).not.toBeNull();
+    });
+
+    test('Categories should be hidden when filter has text', () => {
+        const props = {
+            ...baseProps,
+            filter: 'smile',
+        };
+
+        renderWithContext(
+            <EmojiPicker {...props}/>,
+        );
+
+        expect(screen.queryByTestId('emojiPickerCategories')).toBeNull();
+    });
+
+    test('Categories should be visible when filter is empty', () => {
+        const props = {
+            ...baseProps,
+            filter: '',
+        };
+
+        renderWithContext(
+            <EmojiPicker {...props}/>,
+        );
+
+        expect(screen.queryByTestId('emojiPickerCategories')).not.toBeNull();
     });
 });

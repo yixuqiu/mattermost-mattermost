@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"bytes"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -95,18 +95,11 @@ func (pluginAPI *mockPluginAPI) KVList(page, count int) ([]string, *model.AppErr
 	}
 
 	// have to sort, because we're paging below
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	start := min(page*count, len(keys))
 	end := min((page+1)*count, len(keys))
 	return keys[start:end], nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func (pluginAPI *mockPluginAPI) KVSetWithOptions(key string, value []byte, options model.PluginKVSetOptions) (bool, *model.AppError) {
@@ -136,14 +129,14 @@ func (pluginAPI *mockPluginAPI) KVSetWithOptions(key string, value []byte, optio
 	return true, nil
 }
 
-func (pluginAPI *mockPluginAPI) LogError(msg string, keyValuePairs ...interface{}) {
+func (pluginAPI *mockPluginAPI) LogError(msg string, keyValuePairs ...any) {
 	if pluginAPI.t == nil {
 		return
 	}
 
 	pluginAPI.t.Helper()
 
-	params := []interface{}{msg}
+	params := []any{msg}
 	params = append(params, keyValuePairs...)
 
 	pluginAPI.t.Log(params...)

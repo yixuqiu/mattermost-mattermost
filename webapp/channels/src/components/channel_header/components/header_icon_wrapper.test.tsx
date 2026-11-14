@@ -1,17 +1,14 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import HeaderIconWrapper from 'components/channel_header/components/header_icon_wrapper';
-import FlagIcon from 'components/widgets/icons/flag_icon';
 import MentionsIcon from 'components/widgets/icons/mentions_icon';
-import PinIcon from 'components/widgets/icons/pin_icon';
-import SearchIcon from 'components/widgets/icons/search_icon';
+
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 
 describe('components/channel_header/components/HeaderIconWrapper', () => {
-    function emptyFunction() {} //eslint-disable-line no-empty-function
     const mentionsIcon = (
         <MentionsIcon
             className='icon icon__mentions'
@@ -20,103 +17,78 @@ describe('components/channel_header/components/HeaderIconWrapper', () => {
     );
 
     const baseProps = {
-        iconComponent: mentionsIcon,
+        children: mentionsIcon,
         buttonClass: 'button_class',
         buttonId: 'button_id',
-        onClick: emptyFunction,
-        tooltipKey: 'recentMentions',
+        onClick: jest.fn(),
+        tooltip: 'Recent mentions',
     };
 
-    test('should match snapshot, on MentionsIcon', () => {
-        const wrapper = shallow(
-            <HeaderIconWrapper {...baseProps}/>,
+    test('should be accessible', async () => {
+        renderWithContext(
+            <HeaderIconWrapper
+                {...baseProps}
+            />,
         );
 
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByLabelText('Recent mentions')).toBeVisible();
+        expect(screen.queryByText('Recent mentions')).not.toBeInTheDocument();
+
+        await userEvent.hover(screen.getByLabelText('Recent mentions'));
+
+        await waitFor(() => {
+            expect(screen.queryByText('Recent mentions')).toBeInTheDocument();
+        });
     });
 
-    test('should match snapshot, on FlagIcon', () => {
-        const flagIcon = (
-            <FlagIcon
-                className='icon icon__flag'
-                aria-hidden='true'
-            />
+    test('should forward active to IconButton', () => {
+        renderWithContext(
+            <HeaderIconWrapper
+                {...baseProps}
+                active={true}
+            />,
         );
 
-        const props = {...baseProps, iconComponent: flagIcon, tooltipKey: 'flaggedPosts'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
+        expect(screen.getByLabelText('Recent mentions')).toHaveAttribute('data-active', 'true');
     });
 
-    test('should match snapshot, on PinIcon', () => {
-        const pinIcon = (
-            <PinIcon
-                className='icon icon__pin'
-                aria-hidden='true'
-            />
+    test('should forward count to IconButton and apply countId', () => {
+        renderWithContext(
+            <HeaderIconWrapper
+                {...baseProps}
+                count={12}
+                countId='channelMemberCountText'
+            />,
         );
 
-        const props = {...baseProps, iconComponent: pinIcon, tooltipKey: 'pinnedPosts', buttonClass: 'pinned_posts_class'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
+        const countEl = document.getElementById('channelMemberCountText');
+        expect(countEl).toBeVisible();
+        expect(countEl).toHaveTextContent('12');
+        expect(screen.getByLabelText('Recent mentions').contains(countEl)).toBe(true);
     });
 
-    test('should match snapshot, on ChannelFilesIcon', () => {
-        const channelFilesIcon = <i className='icon icon-file-document-outline'/>;
-
-        const props = {...baseProps, iconComponent: channelFilesIcon, tooltipKey: 'channelFiles', buttonClass: 'channel_files_class'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
+    test('should show the shortcut in its tooltip', async () => {
+        renderWithContext(
+            <HeaderIconWrapper
+                {...baseProps}
+                tooltipShortcut={{default: ['a', 'b', 'c']}}
+            />,
         );
 
-        expect(wrapper).toMatchSnapshot();
-    });
+        expect(screen.getByLabelText('Recent mentions')).toBeVisible();
+        expect(screen.queryByText('Recent mentions')).not.toBeInTheDocument();
+        expect(screen.queryByText('a')).not.toBeInTheDocument();
+        expect(screen.queryByText('b')).not.toBeInTheDocument();
+        expect(screen.queryByText('c')).not.toBeInTheDocument();
 
-    test('should match snapshot, on SearchIcon', () => {
-        const searchIcon = (
-            <SearchIcon
-                className='icon icon__search'
-                aria-hidden='true'
-            />
-        );
+        await userEvent.hover(screen.getByLabelText('Recent mentions'));
 
-        const props = {...baseProps, iconComponent: searchIcon, tooltipKey: 'search', buttonClass: 'search_class'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
-        );
+        await waitFor(() => {
+            expect(screen.queryByText('Recent mentions')).toBeInTheDocument();
 
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on PluginIcon with tooltipText', () => {
-        const pluginIcon = (
-            <i className='fa fa-anchor'/>
-        );
-
-        const props = {...baseProps, iconComponent: pluginIcon, tooltipKey: 'plugin', tooltipText: 'plugin_tooltip_text'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on PluginIcon without tooltipText', () => {
-        const pluginIcon = (
-            <i className='fa fa-anchor'/>
-        );
-
-        const props = {...baseProps, iconComponent: pluginIcon, tooltipKey: 'plugin'};
-        const wrapper = shallow(
-            <HeaderIconWrapper {...props}/>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
+            expect(screen.queryByText('a')).toBeVisible();
+            expect(screen.queryByText('b')).toBeVisible();
+            expect(screen.queryByText('c')).toBeVisible();
+        });
     });
 });

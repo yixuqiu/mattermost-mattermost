@@ -20,6 +20,7 @@ build-v4: node_modules playbooks
 	@cat $(V4_SRC)/posts.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/preferences.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/files.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/recaps.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/uploads.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/jobs.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/system.yaml >> $(V4_YAML)
@@ -34,33 +35,47 @@ build-v4: node_modules playbooks
 	@cat $(V4_SRC)/commands.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/oauth.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/elasticsearch.yaml >> $(V4_YAML)
-	@cat $(V4_SRC)/bleve.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/dataretention.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/plugins.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/roles.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/schemes.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/service_terms.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/remoteclusters.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/sharedchannels.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/reactions.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/actions.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/bots.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/cloud.yaml >> $(V4_YAML)
-	@cat $(V4_SRC)/usage.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/permissions.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/imports.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/exports.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/ip_filters.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/bookmarks.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/boards.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/views.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/reports.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/limits.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/logs.yaml >> $(V4_YAML)
 	@cat $(V4_SRC)/outgoing_oauth_connections.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/metrics.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/scheduled_post.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/custom_profile_attributes.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/audit_logging.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/ephemeral_mode.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/access_control.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/content_flagging.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/delivery_tracking.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/health.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/agents.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/scheduled_recaps.yaml >> $(V4_YAML)
+	@cat $(V4_SRC)/properties.yaml >> $(V4_YAML)
 	@if [ -r $(PLAYBOOKS_SRC)/paths.yaml ]; then cat $(PLAYBOOKS_SRC)/paths.yaml >> $(V4_YAML); fi
 	@if [ -r $(PLAYBOOKS_SRC)/merged-definitions.yaml ]; then cat $(PLAYBOOKS_SRC)/merged-definitions.yaml >> $(V4_YAML); else cat $(V4_SRC)/definitions.yaml >> $(V4_YAML); fi
 	@echo Extracting code samples
 	cd server && go run . $(V4_YAML)
 
 	@node_modules/.bin/swagger-cli validate $(V4_YAML)
-	@node_modules/.bin/redoc-cli -t ./v4/html/ssr_template.hbs build ./v4/html/static/mattermost-openapi-v4.yaml -o ./v4/html/index.html --options.noAutoAuth  --options.suppressWarnings
+	@cp ./v4/html/ssr_template.hbs ./v4/html/index.html
 	@echo Complete
 
 node_modules: package.json $(wildcard package-lock.json)
@@ -70,9 +85,8 @@ node_modules: package.json $(wildcard package-lock.json)
 	touch $@
 
 run:
-	@echo Starting redoc server
-
-	@node_modules/.bin/redoc-cli -t ./v4/html/ssr_template.hbs serve ./v4/html/static/mattermost-openapi-v4.yaml --options.noAutoAuth  --options.suppressWarnings  --ssr
+	@echo Starting local server
+	python3 -m http.server 8080 --directory ./v4/html
 
 clean:
 	@echo Cleaning

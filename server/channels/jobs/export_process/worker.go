@@ -9,16 +9,16 @@ import (
 	"path/filepath"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/configservice"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/jobs"
-	"github.com/mattermost/mattermost/server/v8/platform/services/configservice"
 )
 
 type AppIface interface {
 	configservice.ConfigService
 	WriteExportFileContext(ctx context.Context, fr io.Reader, path string) (int64, *model.AppError)
-	BulkExport(ctx request.CTX, writer io.Writer, outPath string, job *model.Job, opts model.BulkExportOpts) *model.AppError
+	BulkExport(rctx request.CTX, writer io.Writer, outPath string, job *model.Job, opts model.BulkExportOpts) *model.AppError
 	Log() *mlog.Logger
 }
 
@@ -51,6 +51,21 @@ func MakeWorker(jobServer *jobs.JobServer, app AppIface) *jobs.SimpleWorker {
 		includeRolesAndSchemes, ok := job.Data["include_roles_and_schemes"]
 		if ok && includeRolesAndSchemes == "true" {
 			opts.IncludeRolesAndSchemes = true
+		}
+
+		includeCustomEmoji, ok := job.Data["include_custom_emoji"]
+		if ok && includeCustomEmoji == "true" {
+			opts.IncludeCustomEmoji = true
+		}
+
+		teamName, ok := job.Data["team_name"]
+		if ok && teamName != "" {
+			opts.TeamName = teamName
+		}
+
+		channelName, ok := job.Data["channel_name"]
+		if ok && channelName != "" {
+			opts.ChannelName = channelName
 		}
 
 		outPath := *app.Config().ExportSettings.Directory

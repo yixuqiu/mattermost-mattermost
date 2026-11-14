@@ -5,7 +5,6 @@ import classNames from 'classnames';
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
 
-import type {CloudUsage, Limits} from '@mattermost/types/cloud';
 import type {Post} from '@mattermost/types/posts';
 import type {UserProfile} from '@mattermost/types/users';
 
@@ -15,15 +14,16 @@ import type {emitShortcutReactToLastPostFrom} from 'actions/post_actions';
 
 import CenterMessageLock from 'components/center_message_lock';
 import PostComponent from 'components/post';
-import ChannelIntroMessage from 'components/post_view/channel_intro_message/';
+import ChannelIntroMessage from 'components/post_view/channel_intro_message';
 import CombinedUserActivityPost from 'components/post_view/combined_user_activity_post';
 import DateSeparator from 'components/post_view/date_separator';
 import NewMessageSeparator from 'components/post_view/new_message_separator/new_message_separator';
+import LoadingSpinner from 'components/widgets/loading/loading_spinner';
 
 import {PostListRowListIds, Locations} from 'utils/constants';
 import {isIdNotPost} from 'utils/post_utils';
 
-import type {PluginComponent} from 'types/store/plugins';
+import type {NewMessagesSeparatorActionComponent} from 'types/store/plugins';
 
 export type PostListRowProps = {
     listId: string;
@@ -51,15 +51,13 @@ export type PostListRowProps = {
      */
     loadingNewerPosts: boolean;
     loadingOlderPosts: boolean;
-
-    usage: CloudUsage;
-    limits: Limits;
-    limitsLoaded: boolean;
     exceededLimitChannelId?: string;
     firstInaccessiblePostTime?: number;
     channelId: string;
 
-    newMessagesSeparatorActions: PluginComponent[];
+    newMessagesSeparatorActions: NewMessagesSeparatorActionComponent[];
+
+    isChannelAutotranslated: boolean;
 
     actions: {
 
@@ -68,7 +66,7 @@ export type PostListRowProps = {
           */
         emitShortcutReactToLastPostFrom: typeof emitShortcutReactToLastPostFrom;
     };
-}
+};
 
 export default class PostListRow extends React.PureComponent<PostListRowProps> {
     blockShortcutReactToLastPostForNonMessages(listId: string) {
@@ -125,10 +123,7 @@ export default class PostListRow extends React.PureComponent<PostListRowProps> {
 
         if (this.props.exceededLimitChannelId) {
             return (
-                <CenterMessageLock
-                    channelId={this.props.exceededLimitChannelId}
-                    firstInaccessiblePostTime={this.props.firstInaccessiblePostTime}
-                />
+                <CenterMessageLock/>
             );
         }
 
@@ -146,7 +141,7 @@ export default class PostListRow extends React.PureComponent<PostListRowProps> {
                 >
                     <FormattedMessage
                         id='posts_view.loadMore'
-                        defaultMessage='Load More Messages'
+                        defaultMessage='Load more messages'
                     />
                 </button>
             );
@@ -162,9 +157,7 @@ export default class PostListRow extends React.PureComponent<PostListRowProps> {
                     className='loading-screen'
                 >
                     <div className={classNames('loading__content', {hideAnimation: shouldHideAnimation})}>
-                        <div className='round round-1'/>
-                        <div className='round round-2'/>
-                        <div className='round round-3'/>
+                        <LoadingSpinner/>
                     </div>
                 </div>
             );
@@ -182,15 +175,22 @@ export default class PostListRow extends React.PureComponent<PostListRowProps> {
                 <CombinedUserActivityPost
                     location={Locations.CENTER}
                     combinedId={listId}
+                    isChannelAutotranslated={this.props.isChannelAutotranslated}
                     {...postProps}
                 />
             );
+        }
+
+        // Don't render if post has been deleted/removed
+        if (!this.props.post) {
+            return null;
         }
 
         return (
             <PostComponent
                 post={this.props.post}
                 location={Locations.CENTER}
+                isChannelAutotranslated={this.props.isChannelAutotranslated}
                 {...postProps}
             />
         );

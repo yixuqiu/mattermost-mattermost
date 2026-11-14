@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStatus(t *testing.T) {
-	status := Status{NewId(), StatusOnline, true, 0, "123", 0, ""}
+	status := Status{NewId(), StatusOutOfOffice, true, 0, "123", 0, ""}
 	js, err := status.ToJSON()
 	assert.NoError(t, err)
 	var status2 Status
@@ -26,14 +27,16 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusListToJSON(t *testing.T) {
-	statuses := []*Status{{NewId(), StatusOnline, true, 0, "123", 0, ""}, {NewId(), StatusOffline, true, 0, "", 0, ""}}
+	statuses := []*Status{
+		{NewId(), StatusOutOfOffice, true, 0, "123", 0, ""},
+		{NewId(), StatusOffline, true, 0, "", 0, ""},
+	}
 	jsonStatuses, err := StatusListToJSON(statuses)
 	assert.NoError(t, err)
 
 	var dat []map[string]any
-	if err := json.Unmarshal(jsonStatuses, &dat); err != nil {
-		panic(err)
-	}
+	err = json.Unmarshal(jsonStatuses, &dat)
+	require.NoError(t, err)
 
 	assert.Len(t, dat, 2)
 

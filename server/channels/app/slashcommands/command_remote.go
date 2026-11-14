@@ -4,13 +4,15 @@
 package slashcommands
 
 import (
-	"encoding/base64"
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/i18n"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/app"
 )
@@ -24,6 +26,7 @@ type RemoteProvider struct {
 
 // ensure RemoteProvider implements AutocompleteDynamicArgProvider
 var _ app.AutocompleteDynamicArgProvider = (*RemoteProvider)(nil)
+var _ app.AutocompleteQuotedArgProvider = (*RemoteProvider)(nil)
 
 const (
 	CommandTriggerRemote = "secure-connection"
@@ -71,15 +74,18 @@ func (rp *RemoteProvider) GetCommand(a *app.App, T i18n.TranslateFunc) *model.Co
 	}
 }
 
-func (rp *RemoteProvider) DoCommand(a *app.App, c request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
-	if !a.HasPermissionTo(args.UserId, model.PermissionManageSecureConnections) {
-		return responsef(args.T("api.command_remote.permission_required", map[string]any{"Permission": "manage_secure_connections"}))
+func (rp *RemoteProvider) DoCommand(a *app.App, rctx request.CTX, args *model.CommandArgs, message string) *model.CommandResponse {
+	if !a.HasPermissionTo(rctx, args.UserId, model.PermissionManageSecureConnections) {
+		return response(args.T("api.command_remote.permission_required", map[string]any{"Permission": "manage_secure_connections"}))
 	}
 
-	margs := parseNamedArgs(args.Command)
+	margs, err := parseNamedArgs(args.T, args.Command)
+	if err != nil {
+		return response(err.Error())
+	}
 	action, ok := margs[ActionKey]
 	if !ok {
-		return responsef(args.T("api.command_remote.missing_command", map[string]any{"Actions": AvailableRemoteActions}))
+		return response(args.T("api.command_remote.missing_command", map[string]any{"Actions": AvailableRemoteActions}))
 	}
 
 	switch action {
@@ -93,11 +99,15 @@ func (rp *RemoteProvider) DoCommand(a *app.App, c request.CTX, args *model.Comma
 		return rp.doStatus(a, args, margs)
 	}
 
-	return responsef(args.T("api.command_remote.unknown_action", map[string]any{"Action": action}))
+	return response(args.T("api.command_remote.unknown_action", map[string]any{"Action": action}))
 }
 
-func (rp *RemoteProvider) GetAutoCompleteListItems(c request.CTX, a *app.App, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error) {
-	if !a.HasPermissionTo(commandArgs.UserId, model.PermissionManageSecureConnections) {
+func (rp *RemoteProvider) SplitQuotedArg(in string) (string, bool, bool) {
+	return splitQuotedArg(in)
+}
+
+func (rp *RemoteProvider) GetAutoCompleteListItems(rctx request.CTX, a *app.App, commandArgs *model.CommandArgs, arg *model.AutocompleteArg, parsed, toBeParsed string) ([]model.AutocompleteListItem, error) {
+	if !a.HasPermissionTo(rctx, commandArgs.UserId, model.PermissionManageSecureConnections) {
 		return nil, errors.New("You require `manage_secure_connections` permission to manage secure connections.")
 	}
 
@@ -112,12 +122,12 @@ func (rp *RemoteProvider) GetAutoCompleteListItems(c request.CTX, a *app.App, co
 func (rp *RemoteProvider) doCreate(a *app.App, args *model.CommandArgs, margs map[string]string) *model.CommandResponse {
 	password := margs["password"]
 	if password == "" {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "password"}))
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "password"}))
 	}
 
 	name := margs["name"]
 	if name == "" {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "name"}))
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "name"}))
 	}
 
 	displayname := margs["displayname"]
@@ -127,49 +137,36 @@ func (rp *RemoteProvider) doCreate(a *app.App, args *model.CommandArgs, margs ma
 
 	url := a.GetSiteURL()
 	if url == "" {
-		return responsef(args.T("api.command_remote.site_url_not_set"))
+		return response(args.T("api.command_remote.site_url_not_set"))
 	}
 
 	rc := &model.RemoteCluster{
 		Name:        name,
 		DisplayName: displayname,
 		SiteURL:     model.SiteURLPending + model.NewId(), // require a unique siteurl
-		Token:       model.NewId(),
 		CreatorId:   args.UserId,
 	}
 
-	rcSaved, appErr := a.AddRemoteCluster(rc)
+	_, inviteCode, appErr := a.CreateRemoteClusterWithInvite(rc, url, password)
 	if appErr != nil {
-		return responsef(args.T("api.command_remote.add_remote.error", map[string]any{"Error": appErr.Error()}))
+		msg := translatedAppErrMessage(a, args, "Failed to add secure connection", appErr, mlog.String("name", name))
+		return response(args.T("api.command_remote.add_remote.error", map[string]any{"Error": msg}))
 	}
 
-	// Display the encrypted invitation
-	invite := &model.RemoteClusterInvite{
-		RemoteId:     rcSaved.RemoteId,
-		RemoteTeamId: args.TeamId,
-		SiteURL:      url,
-		Token:        rcSaved.Token,
-	}
-	encrypted, err := invite.Encrypt(password)
-	if err != nil {
-		return responsef(args.T("api.command_remote.encrypt_invitation.error", map[string]any{"Error": err.Error()}))
-	}
-	encoded := base64.URLEncoding.EncodeToString(encrypted)
-
-	return responsef("##### " + args.T("api.command_remote.invitation_created") + "\n" +
-		args.T("api.command_remote.invite_summary", map[string]any{"Command": "/secure-connection accept", "Invitation": encoded, "SiteURL": invite.SiteURL}))
+	return response("##### " + args.T("api.command_remote.invitation_created") + "\n" +
+		args.T("api.command_remote.invite_summary", map[string]any{"Command": "/secure-connection accept", "Invitation": inviteCode, "SiteURL": url}))
 }
 
 // doAccept accepts an invitation generated by a remote site.
 func (rp *RemoteProvider) doAccept(a *app.App, args *model.CommandArgs, margs map[string]string) *model.CommandResponse {
 	password := margs["password"]
 	if password == "" {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "password"}))
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "password"}))
 	}
 
 	name := margs["name"]
 	if name == "" {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "name"}))
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "name"}))
 	}
 
 	displayname := margs["displayname"]
@@ -179,81 +176,110 @@ func (rp *RemoteProvider) doAccept(a *app.App, args *model.CommandArgs, margs ma
 
 	blob := margs["invite"]
 	if blob == "" {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "invite"}))
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "invite"}))
 	}
 
 	// invite is encoded as base64 and encrypted
-	decoded, err := base64.URLEncoding.DecodeString(blob)
-	if err != nil {
-		return responsef(args.T("api.command_remote.decode_invitation.error", map[string]any{"Error": err.Error()}))
-	}
-	invite := &model.RemoteClusterInvite{}
-	err = invite.Decrypt(decoded, password)
-	if err != nil {
-		return responsef(args.T("api.command_remote.incorrect_password.error", map[string]any{"Error": err.Error()}))
+	invite, dErr := a.DecryptRemoteClusterInvite(blob, password)
+	if dErr != nil {
+		msg := translatedAppErrMessage(a, args, "Failed to decode secure connection invitation", dErr)
+		return response(args.T("api.command_remote.decode_invitation.error", map[string]any{"Error": msg}))
 	}
 
 	rcs, _ := a.GetRemoteClusterService()
 	if rcs == nil {
-		return responsef(args.T("api.command_remote.service_not_enabled"))
+		return response(args.T("api.command_remote.service_not_enabled"))
 	}
 
 	url := a.GetSiteURL()
 	if url == "" {
-		return responsef(args.T("api.command_remote.site_url_not_set"))
+		return response(args.T("api.command_remote.site_url_not_set"))
 	}
 
-	rc, err := rcs.AcceptInvitation(invite, name, displayname, args.UserId, args.TeamId, url)
-	if err != nil {
-		return responsef(args.T("api.command_remote.accept_invitation.error", map[string]any{"Error": err.Error()}))
+	rc, appErr := rcs.AcceptInvitation(invite, name, displayname, args.UserId, url, "")
+	if appErr != nil {
+		msg := translatedAppErrMessage(a, args, "Failed to accept secure connection invitation", appErr, mlog.String("remote_id", invite.RemoteId))
+		return response(args.T("api.command_remote.accept_invitation.error", map[string]any{"Error": msg}))
 	}
 
-	return responsef("##### " + args.T("api.command_remote.accept_invitation", map[string]any{"SiteURL": rc.GetSiteURL()}))
+	return response("##### " + args.T("api.command_remote.accept_invitation", map[string]any{"SiteURL": rc.GetSiteURL()}))
 }
 
 // doRemove removes a remote cluster from the database, effectively revoking the trust relationship.
 func (rp *RemoteProvider) doRemove(a *app.App, args *model.CommandArgs, margs map[string]string) *model.CommandResponse {
-	id, ok := margs["connectionID"]
-	if !ok {
-		return responsef(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "remoteId"}))
+	id := margs["connectionID"]
+	if id == "" {
+		return response(args.T("api.command_remote.missing_empty", map[string]any{"Arg": "connectionID"}))
+	}
+	if !model.IsValidId(id) {
+		return response(args.T("api.command_remote.invalid_id", map[string]any{"Arg": "connectionID", "Value": id}))
 	}
 
 	deleted, err := a.DeleteRemoteCluster(id)
 	if err != nil {
-		responsef(args.T("api.command_remote.remove_remote.error", map[string]any{"Error": err.Error()}))
+		msg := translatedAppErrMessage(a, args, "Failed to remove secure connection", err, mlog.String("remote_id", id))
+		return response(args.T("api.command_remote.remove_remote.error", map[string]any{"Error": msg}))
 	}
 
-	result := "removed"
+	result := args.T("api.command_remote.cluster_removed.result_removed")
 	if !deleted {
-		result = "**NOT FOUND**"
+		result = args.T("api.command_remote.cluster_removed.result_not_found")
 	}
-	return responsef("##### " + args.T("api.command_remote.cluster_removed", map[string]any{"RemoteId": id, "Result": result}))
+	return response("##### " + args.T("api.command_remote.cluster_removed", map[string]any{"RemoteId": id, "Result": result}))
 }
 
 // doStatus displays connection status for all remote clusters.
 func (rp *RemoteProvider) doStatus(a *app.App, args *model.CommandArgs, _ map[string]string) *model.CommandResponse {
-	list, err := a.GetAllRemoteClusters(model.RemoteClusterQueryFilter{})
+	list, err := a.GetAllRemoteClusters(0, 999999, model.RemoteClusterQueryFilter{IncludeDeleted: true})
 	if err != nil {
-		responsef(args.T("api.command_remote.fetch_status.error", map[string]any{"Error": err.Error()}))
+		msg := translatedAppErrMessage(a, args, "Failed to fetch secure connections", err)
+		return response(args.T("api.command_remote.fetch_status.error", map[string]any{"Error": msg}))
 	}
 
 	if len(list) == 0 {
-		return responsef("** " + args.T("api.command_remote.remotes_not_found") + " **")
+		return response("** " + args.T("api.command_remote.remotes_not_found") + " **")
 	}
 
+	// Show active connections first, then deleted ones, ordered by creation time within each group.
+	slices.SortStableFunc(list, func(a, b *model.RemoteCluster) int {
+		aDeleted := a.DeleteAt != 0
+		bDeleted := b.DeleteAt != 0
+		if aDeleted != bDeleted {
+			if aDeleted {
+				return 1
+			}
+			return -1
+		}
+		return cmp.Compare(a.CreateAt, b.CreateAt)
+	})
+
 	var sb strings.Builder
-	fmt.Fprintf(&sb, args.T("api.command_remote.remote_table_header")+" \n")
-	// | Secure Connection | Display name | ConnectionID | Site URL | Invite accepted | Online | Last ping  |
-	fmt.Fprintf(&sb, "| :---- | :---- | :---- | :---- | :---- | :---- | :---- | \n")
+	fmt.Fprintf(&sb, "%s \n", args.T("api.command_remote.remote_table_header"))
+	// | Secure Connection | Display name | ConnectionID | Site URL | Default Team | Invite accepted | Online | Last ping | Deleted |
+	fmt.Fprintf(&sb, "| :---- | :---- | :---- | :---- | :---- | :---- | :---- | :---- | :---- |\n")
 
 	for _, rc := range list {
 		accepted := formatBool(args.T, rc.IsConfirmed())
 		online := formatBool(args.T, isOnline(rc.LastPingAt))
 		lastPing := formatTimestamp(rc.LastPingAt)
+		deleted := formatBool(args.T, rc.DeleteAt != 0)
 
-		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s | %s | %s |\n", rc.Name, rc.DisplayName, rc.RemoteId, rc.GetSiteURL(), accepted, online, lastPing)
+		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", rc.Name, rc.DisplayName, rc.RemoteId, rc.GetSiteURL(), rc.DefaultTeamId, accepted, online, lastPing, deleted)
 	}
-	return responsef(sb.String())
+	return response(sb.String())
+}
+
+// translatedAppErrMessage logs appErr in full and returns only its message, translated for the caller.
+// It does not build the reply itself because i18n extract only finds ids passed to T as string literals.
+func translatedAppErrMessage(a *app.App, args *model.CommandArgs, logMsg string, appErr *model.AppError, fields ...mlog.Field) string {
+	level := mlog.LvlWarn
+	if appErr.StatusCode >= 400 && appErr.StatusCode < 500 {
+		level = mlog.LvlDebug
+	}
+	a.Log().Log(level, logMsg, append(fields, mlog.Err(appErr))...)
+
+	appErr.Translate(args.T)
+	return appErr.Message
 }
 
 func isOnline(lastPing int64) bool {
@@ -264,7 +290,7 @@ func getRemoteClusterAutocompleteListItems(a *app.App, includeOffline bool) ([]m
 	filter := model.RemoteClusterQueryFilter{
 		ExcludeOffline: !includeOffline,
 	}
-	clusters, err := a.GetAllRemoteClusters(filter)
+	clusters, err := a.GetAllRemoteClusters(0, 999999, filter)
 	if err != nil || len(clusters) == 0 {
 		return []model.AutocompleteListItem{}, nil
 	}
@@ -285,7 +311,7 @@ func getRemoteClusterAutocompleteListItemsNotInChannel(a *app.App, channelID str
 		ExcludeOffline: !includeOffline,
 		NotInChannel:   channelID,
 	}
-	all, err := a.GetAllRemoteClusters(filter)
+	all, err := a.GetAllRemoteClusters(0, 999999, filter)
 	if err != nil || len(all) == 0 {
 		return []model.AutocompleteListItem{}, nil
 	}

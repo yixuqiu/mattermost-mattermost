@@ -1,12 +1,14 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type {ChangeEvent, FormEvent} from 'react';
+import type {ChangeEvent, FormEvent, JSX} from 'react';
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
 import type {MessageDescriptor} from 'react-intl';
 import {Link} from 'react-router-dom';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Radio} from '@mattermost/compass-ui/components/radio';
 import type {OAuthApp} from '@mattermost/types/integrations';
 import type {Team} from '@mattermost/types/teams';
 
@@ -16,8 +18,6 @@ import BackstageHeader from 'components/backstage/components/backstage_header';
 import FormError from 'components/form_error';
 import SystemPermissionGate from 'components/permissions_gates/system_permission_gate';
 import SpinnerButton from 'components/spinner_button';
-
-import {localizeMessage} from 'utils/utils';
 
 type Props = {
 
@@ -61,7 +61,7 @@ type Props = {
     */
     action: (app: OAuthApp) => Promise<void>;
 
-}
+};
 
 type State = {
     name: string;
@@ -70,6 +70,7 @@ type State = {
     icon_url: string;
     callbackUrls: string;
     is_trusted: boolean;
+    is_public: boolean;
     has_icon: boolean;
     saving: boolean;
     clientError: JSX.Element | null | string;
@@ -77,7 +78,7 @@ type State = {
 
 export default class AbstractOAuthApp extends React.PureComponent<Props, State> {
     private image: HTMLImageElement;
-    private icon_url: React.RefObject<HTMLInputElement>;
+    private icon_url: React.RefObject<HTMLInputElement | null>;
 
     constructor(props: Props) {
         super(props);
@@ -89,6 +90,10 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
     }
 
     getStateFromApp = (app: OAuthApp) => {
+        // Determine if this is a public client by checking if the secret is empty
+        // Only apply this detection if we have an existing app with an ID
+        const isPublicClient = app.id && (!app.client_secret || app.client_secret === '');
+
         return {
             name: app.name || '',
             description: app.description || '',
@@ -96,6 +101,7 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
             icon_url: app.icon_url || '',
             callbackUrls: app.callback_urls ? app.callback_urls.join('\n') : '',
             is_trusted: app.is_trusted || false,
+            is_public: app.is_public ?? (isPublicClient || false),
             has_icon: Boolean(app.icon_url),
             saving: false,
             clientError: null,
@@ -137,7 +143,9 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
             return;
         }
 
-        if (!this.state.description) {
+        const isDynamicallyRegistered = this.props.initialApp?.is_dynamically_registered || false;
+
+        if (!this.state.description && !isDynamicallyRegistered) {
             this.setState({
                 saving: false,
                 clientError: (
@@ -151,7 +159,7 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
             return;
         }
 
-        if (!this.state.homepage) {
+        if (!this.state.homepage && !isDynamicallyRegistered) {
             this.setState({
                 saving: false,
                 clientError: (
@@ -194,6 +202,7 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
             homepage: this.state.homepage,
             description: this.state.description,
             is_trusted: this.state.is_trusted,
+            is_public: this.state.is_public,
             icon_url: this.state.icon_url,
         } as OAuthApp;
 
@@ -209,6 +218,12 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
     updateTrusted = (e: ChangeEvent<HTMLInputElement>) => {
         this.setState({
             is_trusted: e.target.value === 'true',
+        });
+    };
+
+    updatePublic = (e: ChangeEvent<HTMLInputElement>) => {
+        this.setState({
+            is_public: e.target.value === 'true',
         });
     };
 
@@ -268,32 +283,30 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
                         />
                     </label>
                     <div className='col-md-5 col-sm-8'>
-                        <label className='radio-inline'>
-                            <input
-                                type='radio'
+                        <div className='backstage-form__radio-group-inline'>
+                            <Radio
                                 value='true'
                                 name='is_trusted'
                                 checked={this.state.is_trusted}
                                 onChange={this.updateTrusted}
-                            />
-                            <FormattedMessage
-                                id='installed_oauth_apps.trusted.yes'
-                                defaultMessage='Yes'
-                            />
-                        </label>
-                        <label className='radio-inline'>
-                            <input
-                                type='radio'
+                            >
+                                <FormattedMessage
+                                    id='installed_oauth_apps.trusted.yes'
+                                    defaultMessage='Yes'
+                                />
+                            </Radio>
+                            <Radio
                                 value='false'
                                 name='is_trusted'
                                 checked={!this.state.is_trusted}
                                 onChange={this.updateTrusted}
-                            />
-                            <FormattedMessage
-                                id='installed_oauth_apps.trusted.no'
-                                defaultMessage='No'
-                            />
-                        </label>
+                            >
+                                <FormattedMessage
+                                    id='installed_oauth_apps.trusted.no'
+                                    defaultMessage='No'
+                                />
+                            </Radio>
+                        </div>
                         <div className='form__help'>
                             <FormattedMessage
                                 id='add_oauth_app.trusted.help'
@@ -305,13 +318,62 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
             </SystemPermissionGate>
         );
 
+        const isEditing = Boolean(this.props.initialApp?.id);
+        const publicClient = (
+            <div className='form-group'>
+                <label
+                    className='control-label col-sm-4'
+                    htmlFor='is_public'
+                >
+                    <FormattedMessage
+                        id='installed_oauth_apps.public'
+                        defaultMessage='Is Public Client'
+                    />
+                </label>
+                <div className='col-md-5 col-sm-8'>
+                    <div className='backstage-form__radio-group-inline'>
+                        <Radio
+                            value='true'
+                            name='is_public'
+                            checked={this.state.is_public}
+                            onChange={this.updatePublic}
+                            disabled={isEditing}
+                        >
+                            <FormattedMessage
+                                id='installed_oauth_apps.public.yes'
+                                defaultMessage='Yes'
+                            />
+                        </Radio>
+                        <Radio
+                            value='false'
+                            name='is_public'
+                            checked={!this.state.is_public}
+                            onChange={this.updatePublic}
+                            disabled={isEditing}
+                        >
+                            <FormattedMessage
+                                id='installed_oauth_apps.public.no'
+                                defaultMessage='No'
+                            />
+                        </Radio>
+                    </div>
+                    <div className='form__help'>
+                        <FormattedMessage
+                            id='add_oauth_app.public.help'
+                            defaultMessage='If true, the OAuth 2.0 application is a public client (no client secret). Public clients must use PKCE for authorization. If false, the application is a confidential client with a client secret. This setting cannot be changed after the application is created.'
+                        />
+                    </div>
+                </div>
+            </div>
+        );
+
         return (
             <div className='backstage-content'>
                 <BackstageHeader>
                     <Link to={`/${this.props.team.name}/integrations/oauth2-apps`}>
                         <FormattedMessage
                             id='installed_oauth_apps.header'
-                            defaultMessage='Installed OAuth2 Apps'
+                            defaultMessage='OAuth 2.0 Applications'
                         />
                     </Link>
                     <FormattedMessage
@@ -323,6 +385,7 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
                     {icon}
                     <form className='form-horizontal'>
                         {trusted}
+                        {publicClient}
                         <div className='form-group'>
                             <label
                                 className='control-label col-sm-4'
@@ -464,20 +527,21 @@ export default class AbstractOAuthApp extends React.PureComponent<Props, State> 
                                 type='backstage'
                                 errors={[this.props.serverError, this.state.clientError]}
                             />
-                            <Link
-                                className='btn btn-tertiary'
-                                to={`/${this.props.team.name}/integrations/oauth2-apps`}
+                            <Button
+                                asChild={true}
+                                emphasis='tertiary'
                             >
-                                <FormattedMessage
-                                    id='installed_oauth_apps.cancel'
-                                    defaultMessage='Cancel'
-                                />
-                            </Link>
+                                <Link to={`/${this.props.team.name}/integrations/oauth2-apps`}>
+                                    <FormattedMessage
+                                        id='installed_oauth_apps.cancel'
+                                        defaultMessage='Cancel'
+                                    />
+                                </Link>
+                            </Button>
                             <SpinnerButton
-                                className='btn btn-primary'
                                 type='submit'
                                 spinning={this.state.saving}
-                                spinningText={localizeMessage(this.props.loading?.id || '', (this.props.loading?.defaultMessage || '') as string)}
+                                spinningText={this.props.loading}
                                 onClick={this.handleSubmit}
                                 id='saveOauthApp'
                             >

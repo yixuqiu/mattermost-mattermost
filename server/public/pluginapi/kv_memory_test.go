@@ -135,20 +135,17 @@ func TestMemoryStoreSet(t *testing.T) {
 		store := pluginapi.MemoryStore{}
 		var wg sync.WaitGroup
 		const n = 100
-		for i := 0; i < n; i++ {
-			i := i
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for i := range n {
+			wg.Go(func() {
 				ok, err := store.Set(fmt.Sprintf("k_%d", i), []byte("value"))
 				require.NoError(t, err)
 				require.True(t, ok)
-			}()
+			})
 		}
 
 		wg.Wait()
 
-		for i := 0; i < n; i++ {
+		for i := range n {
 			var out []byte
 			err := store.Get(fmt.Sprintf("k_%d", i), &out)
 			assert.NoError(t, err, "i=%d", i)
@@ -189,14 +186,11 @@ func TestMemoryStoreSetAtomicWithRetries(t *testing.T) {
 		store := pluginapi.MemoryStore{}
 		var wg sync.WaitGroup
 		const n = 10
-		for i := 0; i < n; i++ {
-			i := i
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for i := range n {
+			wg.Go(func() {
 				err := store.SetAtomicWithRetries("key", func(oldValue []byte) (any, error) { return fmt.Sprintf("k_%d", i), nil })
 				require.NoError(t, err)
-			}()
+			})
 		}
 
 		wg.Wait()
@@ -219,7 +213,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 	t.Run("zero count", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -231,7 +225,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 	t.Run("negative count", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -243,7 +237,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 	t.Run("negative page", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -255,7 +249,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 	t.Run("single page", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -267,7 +261,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 	t.Run("multiple pages", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 7; i++ {
+		for i := range 7 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -315,7 +309,7 @@ func TestMemoryStoreListKeys(t *testing.T) {
 
 			return i%2 == 0, nil
 		}
-		for i := 0; i < 7; i++ {
+		for i := range 7 {
 			ok, err := store.Set(fmt.Sprintf("k_%d", i), "foo")
 			require.NoError(t, err)
 			require.True(t, ok)
@@ -341,9 +335,104 @@ func TestMemoryStoreListKeys(t *testing.T) {
 		assert.Equal(t, []string{"k_6"}, keys)
 	})
 
+	t.Run("with prefix basic match", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for _, key := range []string{"alpha_1", "alpha_2", "beta_1", "beta_2"} {
+			ok, err := store.Set(key, "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		keys, err := store.ListKeys(0, 200, pluginapi.WithPrefix("alpha_"))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"alpha_1", "alpha_2"}, keys)
+	})
+
+	t.Run("with prefix no match", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for _, key := range []string{"alpha_1", "alpha_2"} {
+			ok, err := store.Set(key, "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		keys, err := store.ListKeys(0, 200, pluginapi.WithPrefix("beta_"))
+		assert.NoError(t, err)
+		assert.Empty(t, keys)
+	})
+
+	t.Run("with prefixes that cannot both match", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for _, key := range []string{"alpha_1", "beta_1"} {
+			ok, err := store.Set(key, "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		keys, err := store.ListKeys(0, 200, pluginapi.WithPrefix("alpha_"), pluginapi.WithPrefix("beta_"))
+		assert.NoError(t, err)
+		assert.Empty(t, keys)
+	})
+
+	t.Run("with nested prefixes", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for _, key := range []string{"user_1", "user_admin_1", "user_admin_2"} {
+			ok, err := store.Set(key, "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		keys, err := store.ListKeys(0, 200, pluginapi.WithPrefix("user_admin_"), pluginapi.WithPrefix("user_"))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"user_admin_1", "user_admin_2"}, keys)
+	})
+
+	t.Run("with prefix and checker", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for _, key := range []string{"p_1", "p_2", "p_3", "other_1"} {
+			ok, err := store.Set(key, "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		check := func(key string) (bool, error) {
+			return key != "p_2", nil
+		}
+
+		keys, err := store.ListKeys(0, 200, pluginapi.WithPrefix("p_"), pluginapi.WithChecker(check))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"p_1", "p_3"}, keys)
+	})
+
+	t.Run("with prefix pagination", func(t *testing.T) {
+		store := pluginapi.MemoryStore{}
+		for i := range 10 {
+			ok, err := store.Set(fmt.Sprintf("p_%02d", i), "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+		for i := range 5 {
+			ok, err := store.Set(fmt.Sprintf("other_%02d", i), "foo")
+			require.NoError(t, err)
+			require.True(t, ok)
+		}
+
+		keys, err := store.ListKeys(0, 4, pluginapi.WithPrefix("p_"))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"p_00", "p_01", "p_02", "p_03"}, keys)
+
+		keys, err = store.ListKeys(1, 4, pluginapi.WithPrefix("p_"))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"p_04", "p_05", "p_06", "p_07"}, keys)
+
+		keys, err = store.ListKeys(2, 4, pluginapi.WithPrefix("p_"))
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"p_08", "p_09"}, keys)
+	})
+
 	t.Run("with expired entries", func(t *testing.T) {
 		store := pluginapi.MemoryStore{}
-		for i := 0; i < 7; i++ {
+		for i := range 7 {
 			var opt pluginapi.KVSetOption
 			if i%2 == 1 {
 				opt = pluginapi.SetExpiry(1 * time.Second)

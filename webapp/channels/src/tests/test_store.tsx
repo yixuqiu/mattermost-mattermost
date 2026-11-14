@@ -6,7 +6,7 @@ import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import type {AnyAction} from 'redux';
 import configureStore from 'redux-mock-store';
-import thunk from 'redux-thunk';
+import {withExtraArgument as thunkWithExtraArgument} from 'redux-thunk';
 import type {ThunkDispatch} from 'redux-thunk';
 
 import type {DeepPartial} from '@mattermost/types/utilities';
@@ -16,10 +16,20 @@ import type {GlobalState} from 'types/store';
 import {defaultIntl} from './helpers/intl-test-helper';
 
 export default function testConfigureStore<State extends GlobalState>(initialState?: DeepPartial<State>) {
-    return configureStore<State, ThunkDispatch<State, Record<string, never>, AnyAction>>([thunk])(initialState as State);
+    return configureStore<State, ThunkDispatch<State, Record<string, never>, AnyAction>>([
+        thunkWithExtraArgument({loaders: {}}),
+    ])(initialState as State);
 }
 
-export function mockStore<State extends GlobalState>(initialState?: DeepPartial<State>, intl = defaultIntl) {
+type MockStoreMountOptions = {
+    wrappingComponent: React.ComponentType<any>;
+    wrappingComponentProps: Record<string, any>;
+};
+
+export function mockStore<State extends GlobalState>(
+    initialState?: DeepPartial<State>,
+    intl = defaultIntl,
+): {store: ReturnType<typeof testConfigureStore<State>>; mountOptions: MockStoreMountOptions} {
     const store = testConfigureStore(initialState);
     return {
         store,

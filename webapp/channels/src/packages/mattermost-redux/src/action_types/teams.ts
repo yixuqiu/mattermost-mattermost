@@ -8,10 +8,6 @@ export default keyMirror({
     GET_TEAMS_SUCCESS: null,
     GET_TEAMS_FAILURE: null,
 
-    MY_TEAMS_REQUEST: null,
-    MY_TEAMS_SUCCESS: null,
-    MY_TEAMS_FAILURE: null,
-
     CREATE_TEAM_REQUEST: null,
     CREATE_TEAM_SUCCESS: null,
     CREATE_TEAM_FAILURE: null,
@@ -53,4 +49,6 @@ export default keyMirror({
     RECEIVED_TEAM_MEMBERS_MINUS_GROUP_MEMBERS: null,
 
     RECEIVED_TOTAL_TEAM_COUNT: null,
+
+    RECEIVED_CONTENT_FLAGGING_STATUS: null,
 });

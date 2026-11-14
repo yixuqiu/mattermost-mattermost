@@ -1,12 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
 
 import type {Channel} from '@mattermost/types/channels';
 
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
 
 import AbstractList from './abstract_list';
@@ -40,7 +40,7 @@ describe('admin_console/team_channel_settings/AbstractList', () => {
             </div>
         </div>);
 
-    test('should match snapshot, no headers', () => {
+    test('should render no headers', async () => {
         const testChannels: Channel[] = [];
 
         const actions = {
@@ -49,22 +49,26 @@ describe('admin_console/team_channel_settings/AbstractList', () => {
             removeGroup: jest.fn(),
         };
 
-        const wrapper = shallow(
+        renderWithContext(
             <AbstractList
+                data={[]}
                 onPageChangedCallback={jest.fn()}
                 total={0}
                 header={header}
                 renderRow={renderRow}
-                emptyListTextId={'test'}
-                emptyListTextDefaultMessage={'test'}
+                emptyListText={{
+                    id: 'test',
+                    defaultMessage: 'test',
+                }}
                 actions={actions}
-            />);
+            />,
+        );
 
-        wrapper.setState({loading: false});
-        expect(wrapper).toMatchSnapshot();
+        await screen.findByText('test');
+        expect(actions.getData).toHaveBeenCalled();
     });
 
-    test('should match snapshot, with data', () => {
+    test('should render with data', async () => {
         const testTeams: TeamWithMembership[] = [TestHelper.getTeamMock({
             id: '123',
             display_name: 'DN',
@@ -76,20 +80,23 @@ describe('admin_console/team_channel_settings/AbstractList', () => {
             removeGroup: jest.fn(),
         };
 
-        const wrapper = shallow(
+        renderWithContext(
             <AbstractList
                 data={testTeams}
                 onPageChangedCallback={jest.fn()}
                 total={testTeams.length}
                 header={header}
                 renderRow={renderRow}
-                emptyListTextId={'test'}
-                emptyListTextDefaultMessage={'test'}
+                emptyListText={{
+                    id: 'test',
+                    defaultMessage: 'test',
+                }}
                 actions={actions}
-            />);
+            />,
+        );
 
-        wrapper.setState({loading: false});
-        expect(wrapper).toMatchSnapshot();
+        await screen.findByText('DN');
+        expect(actions.getData).toHaveBeenCalled();
     });
 
     const renderRow = jest.fn((item) => {

@@ -7,12 +7,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
+
+// IsRootJsonlFile reports whether the given zip entry name refers to a .jsonl
+// file at the root of the archive (no directory component). This is used to
+// locate the import manifest while ignoring .jsonl files that may exist as
+// exported attachments in subdirectories.
+func IsRootJsonlFile(name string) bool {
+	return filepath.Ext(name) == ".jsonl" && filepath.Dir(name) == "."
+}
 
 func ValidateSchemeImportData(data *SchemeImportData) *model.AppError {
 	if data.Scope == nil {
@@ -122,7 +132,7 @@ func ValidateTeamImportData(data *TeamImportData) *model.AppError {
 		return model.NewAppError("BulkImport", "app.import.validate_team_import_data.name_length.error", nil, "", http.StatusBadRequest)
 	} else if model.IsReservedTeamName(*data.Name) {
 		return model.NewAppError("BulkImport", "app.import.validate_team_import_data.name_reserved.error", nil, "", http.StatusBadRequest)
-	} else if !model.IsValidTeamName(*data.Name) {
+	} else if !model.IsValidTeamName(strings.ToLower(*data.Name)) { // uppercase letters are not allowed in team names, but for import path we are more forgiving
 		return model.NewAppError("BulkImport", "app.import.validate_team_import_data.name_characters.error", nil, "", http.StatusBadRequest)
 	}
 
@@ -158,7 +168,7 @@ func ValidateChannelImportData(data *ChannelImportData) *model.AppError {
 		return model.NewAppError("BulkImport", "app.import.validate_channel_import_data.name_missing.error", nil, "", http.StatusBadRequest)
 	} else if len(*data.Name) > model.ChannelNameMaxLength {
 		return model.NewAppError("BulkImport", "app.import.validate_channel_import_data.name_length.error", nil, "", http.StatusBadRequest)
-	} else if !model.IsValidChannelIdentifier(*data.Name) {
+	} else if !model.IsValidChannelIdentifier(strings.ToLower(*data.Name)) { // uppercase letters are not allowed in channel names, but for import path we are more forgiving
 		return model.NewAppError("BulkImport", "app.import.validate_channel_import_data.name_characters.error", nil, "", http.StatusBadRequest)
 	}
 
@@ -191,14 +201,20 @@ func ValidateChannelImportData(data *ChannelImportData) *model.AppError {
 
 func ValidateUserImportData(data *UserImportData) *model.AppError {
 	if data.ProfileImage != nil && data.ProfileImageData == nil {
+		// Check if the resolved path is within the expected base path.
+		if _, valid := ValidateAttachmentPathForImport(*data.ProfileImage, model.ExportDataDir); !valid {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.invalid_image_path.error", map[string]any{"Path": *data.ProfileImage}, "", http.StatusBadRequest)
+		}
 		if _, err := os.Stat(*data.ProfileImage); os.IsNotExist(err) {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.profile_image.error", nil, "", http.StatusNotFound).Wrap(err)
+		} else if err != nil {
 			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.profile_image.error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
 	}
 
 	if data.Username == nil {
 		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.username_missing.error", nil, "", http.StatusBadRequest)
-	} else if !model.IsValidUsername(*data.Username) {
+	} else if !model.IsValidUsername(model.NormalizeUsername(*data.Username)) { // we already lowercase the username while saving and querying so we are more forgiving here
 		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.username_invalid.error", nil, "", http.StatusBadRequest)
 	}
 
@@ -259,6 +275,10 @@ func ValidateUserImportData(data *UserImportData) *model.AppError {
 		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.roles_invalid.error", nil, "", http.StatusBadRequest)
 	}
 
+	if err := validateGuestRoles(*data); err != nil {
+		return err
+	}
+
 	if data.NotifyProps != nil {
 		if data.NotifyProps.Desktop != nil && !isValidUserNotifyLevel(*data.NotifyProps.Desktop) {
 			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.notify_props_desktop_invalid.error", nil, "", http.StatusBadRequest)
@@ -287,6 +307,11 @@ func ValidateUserImportData(data *UserImportData) *model.AppError {
 		if data.NotifyProps.CommentsTrigger != nil && !isValidCommentsNotifyLevel(*data.NotifyProps.CommentsTrigger) {
 			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.notify_props_comments_trigger_invalid.error", nil, "", http.StatusBadRequest)
 		}
+
+		if data.NotifyProps.MentionKeys != nil && model.MentionKeysExceedLimits(*data.NotifyProps.MentionKeys) {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.notify_props_mention_keys_invalid.error",
+				map[string]any{"MaxCount": model.MentionKeysMaxCount, "MaxLength": model.MentionKeysMaxLength}, "", http.StatusBadRequest)
+		}
 	}
 
 	if data.UseMarkdownPreview != nil && !isValidTrueOrFalseString(*data.UseMarkdownPreview) {
@@ -312,6 +337,39 @@ func ValidateUserImportData(data *UserImportData) *model.AppError {
 	return nil
 }
 
+func ValidateBotImportData(data *BotImportData) *model.AppError {
+	if data.ProfileImage != nil && data.ProfileImageData == nil {
+		// Check if the resolved path is within the expected base path.
+		if _, valid := ValidateAttachmentPathForImport(*data.ProfileImage, model.ExportDataDir); !valid {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.invalid_image_path.error", map[string]any{"Path": *data.ProfileImage}, "", http.StatusBadRequest)
+		}
+
+		if _, err := os.Stat(*data.ProfileImage); os.IsNotExist(err) {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.profile_image.error", nil, "", http.StatusNotFound).Wrap(err)
+		} else if err != nil {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.profile_image.error", nil, "", http.StatusBadRequest).Wrap(err)
+		}
+	}
+
+	if data.Username == nil {
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.username_missing.error", nil, "", http.StatusBadRequest)
+	} else if !model.IsValidUsername(model.NormalizeUsername(*data.Username)) { // we already lowercase the username while saving and querying so we are more forgiving here
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.username_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.DisplayName != nil && utf8.RuneCountInString(*data.DisplayName) > model.UserFirstNameMaxRunes {
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.first_name_length.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Owner == nil {
+		return model.NewAppError("BulkImport", "app.import.validate_bot_import_data.owner_missing.error", nil, "", http.StatusBadRequest)
+	} else if !model.IsValidUsername(*data.Owner) {
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.username_invalid.error", nil, "", http.StatusBadRequest)
+	}
+
+	return nil
+}
+
 var validAuthServices = []string{
 	"",
 	model.UserAuthServiceEmail,
@@ -320,16 +378,15 @@ var validAuthServices = []string{
 	model.UserAuthServiceLdap,
 	model.ServiceGoogle,
 	model.ServiceOffice365,
+	model.ServiceOpenid,
 }
 
 func validateAuthService(authService *string) *model.AppError {
 	if authService == nil {
 		return nil
 	}
-	for _, valid := range validAuthServices {
-		if *authService == valid {
-			return nil
-		}
+	if slices.Contains(validAuthServices, *authService) {
+		return nil
 	}
 
 	return model.NewAppError("BulkImport", "app.import.validate_user_teams_import_data.invalid_auth_service.error", map[string]any{"AuthService": *authService}, "", http.StatusBadRequest)
@@ -405,8 +462,11 @@ func ValidateReactionImportData(data *ReactionImportData, parentCreateAt int64) 
 
 	if data.EmojiName == nil {
 		return model.NewAppError("BulkImport", "app.import.validate_reaction_import_data.emoji_name_missing.error", nil, "", http.StatusBadRequest)
-	} else if utf8.RuneCountInString(*data.EmojiName) > model.EmojiNameMaxLength {
-		return model.NewAppError("BulkImport", "app.import.validate_reaction_import_data.emoji_name_length.error", nil, "", http.StatusBadRequest)
+	}
+	// Same empty/length/charset rules as Reaction.IsValid. Do not use IsValidEmojiName —
+	// it rejects system emoji names, which are valid on reactions.
+	if *data.EmojiName == "" || len(*data.EmojiName) > model.EmojiNameMaxLength || !model.IsValidAlphaNumHyphenUnderscorePlus(*data.EmojiName) {
+		return model.NewAppError("BulkImport", "app.import.validate_reaction_import_data.emoji_name_invalid.error", nil, "emoji_name="+*data.EmojiName, http.StatusBadRequest)
 	}
 
 	if data.CreateAt == nil {
@@ -415,6 +475,37 @@ func ValidateReactionImportData(data *ReactionImportData, parentCreateAt int64) 
 		return model.NewAppError("BulkImport", "app.import.validate_reaction_import_data.create_at_zero.error", nil, "", http.StatusBadRequest)
 	} else if *data.CreateAt < parentCreateAt {
 		return model.NewAppError("BulkImport", "app.import.validate_reaction_import_data.create_at_before_parent.error", nil, "", http.StatusBadRequest)
+	}
+
+	return nil
+}
+
+func ValidatePostPriorityImportData(priority *model.PostPriority, acknowledgements *[]PostAcknowledgementImportData, postCreateAt int64) *model.AppError {
+	if priority != nil {
+		if priority.Priority == nil {
+			return model.NewAppError("BulkImport", "app.import.validate_post_priority_import_data.priority_missing.error", nil, "", http.StatusBadRequest)
+		}
+		if model.SafeDereference(priority.PersistentNotifications) && *priority.Priority != model.PostPriorityUrgent {
+			return model.NewAppError("BulkImport", "app.import.validate_post_priority_import_data.persistent_notifications_not_urgent.error", nil, "", http.StatusBadRequest)
+		}
+	}
+
+	acks := model.SafeDereference(acknowledgements)
+	if len(acks) == 0 {
+		return nil
+	}
+
+	if priority == nil || !model.SafeDereference(priority.RequestedAck) {
+		return model.NewAppError("BulkImport", "app.import.validate_post_priority_import_data.acknowledgements_not_requested.error", nil, "", http.StatusBadRequest)
+	}
+
+	for _, ack := range acks {
+		if model.SafeDereference(ack.User) == "" {
+			return model.NewAppError("BulkImport", "app.import.validate_post_priority_import_data.acknowledgement_user_missing.error", nil, "", http.StatusBadRequest)
+		}
+		if ack.AcknowledgedAt == nil || *ack.AcknowledgedAt < postCreateAt {
+			return model.NewAppError("BulkImport", "app.import.validate_post_priority_import_data.acknowledged_at_invalid.error", nil, "", http.StatusBadRequest)
+		}
 	}
 
 	return nil
@@ -437,6 +528,26 @@ func ValidateReplyImportData(data *ReplyImportData, parentCreateAt int64, maxPos
 		return model.NewAppError("BulkImport", "app.import.validate_reply_import_data.create_at_zero.error", nil, "", http.StatusBadRequest)
 	} else if *data.CreateAt < parentCreateAt {
 		mlog.Warn("Reply CreateAt is before parent post CreateAt", mlog.Int("reply_create_at", *data.CreateAt), mlog.Int("parent_create_at", parentCreateAt))
+	}
+
+	if data.Props != nil && utf8.RuneCountInString(model.StringInterfaceToJSON(*data.Props)) > model.PostPropsMaxRunes {
+		return model.NewAppError("BulkImport", "app.import.validate_post_import_data.props_too_large.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.Reactions != nil {
+		for _, reaction := range *data.Reactions {
+			if err := ValidateReactionImportData(&reaction, *data.CreateAt); err != nil {
+				return err
+			}
+		}
+	}
+
+	if data.Attachments != nil {
+		for _, attachment := range *data.Attachments {
+			if err := ValidateAttachmentImportData(&attachment); err != nil {
+				return model.NewAppError("BulkImport", "app.import.validate_reply_import_data.attachment.error", nil, "", http.StatusNotFound).Wrap(err)
+			}
+		}
 	}
 
 	return nil
@@ -469,31 +580,61 @@ func ValidatePostImportData(data *PostImportData, maxPostSize int) *model.AppErr
 
 	if data.Reactions != nil {
 		for _, reaction := range *data.Reactions {
-			reaction := reaction
-			ValidateReactionImportData(&reaction, *data.CreateAt)
+			if err := ValidateReactionImportData(&reaction, *data.CreateAt); err != nil {
+				return err
+			}
 		}
 	}
 
 	if data.Replies != nil {
 		for _, reply := range *data.Replies {
-			reply := reply
-			ValidateReplyImportData(&reply, *data.CreateAt, maxPostSize)
+			if err := ValidateReplyImportData(&reply, *data.CreateAt, maxPostSize); err != nil {
+				return err
+			}
 		}
+	}
+
+	if err := ValidatePostPriorityImportData(data.Priority, data.Acknowledgements, *data.CreateAt); err != nil {
+		return err
 	}
 
 	if data.Props != nil && utf8.RuneCountInString(model.StringInterfaceToJSON(*data.Props)) > model.PostPropsMaxRunes {
 		return model.NewAppError("BulkImport", "app.import.validate_post_import_data.props_too_large.error", nil, "", http.StatusBadRequest)
 	}
 
+	if data.Attachments != nil {
+		for _, attachment := range *data.Attachments {
+			if err := ValidateAttachmentImportData(&attachment); err != nil {
+				return model.NewAppError("BulkImport", "app.import.validate_post_import_data.attachment.error", nil, "", http.StatusNotFound).Wrap(err)
+			}
+		}
+	}
+
+	if data.ThreadFollowers != nil {
+		for _, follower := range *data.ThreadFollowers {
+			if err := ValidateThreadFollowerImportData(&follower); err != nil {
+				return model.NewAppError("BulkImport", "app.import.validate_post_import_data.thread_follower.error", nil, "", http.StatusBadRequest).Wrap(err)
+			}
+		}
+	}
+
 	return nil
 }
 
 func ValidateDirectChannelImportData(data *DirectChannelImportData) *model.AppError {
-	if data.Members == nil {
+	if data.Participants == nil && data.Members == nil {
 		return model.NewAppError("BulkImport", "app.import.validate_direct_channel_import_data.members_required.error", nil, "", http.StatusBadRequest)
 	}
 
-	if len(*data.Members) != 2 {
+	if data.Participants != nil && len(data.Participants) != 2 {
+		if len(data.Participants) < model.ChannelGroupMinUsers {
+			return model.NewAppError("BulkImport", "app.import.validate_direct_channel_import_data.members_too_few.error", nil, "", http.StatusBadRequest)
+		} else if len(data.Participants) > model.ChannelGroupMaxUsers {
+			return model.NewAppError("BulkImport", "app.import.validate_direct_channel_import_data.members_too_many.error", nil, "", http.StatusBadRequest)
+		}
+	}
+
+	if data.Members != nil && len(*data.Members) != 2 {
 		if len(*data.Members) < model.ChannelGroupMinUsers {
 			return model.NewAppError("BulkImport", "app.import.validate_direct_channel_import_data.members_too_few.error", nil, "", http.StatusBadRequest)
 		} else if len(*data.Members) > model.ChannelGroupMaxUsers {
@@ -508,10 +649,15 @@ func ValidateDirectChannelImportData(data *DirectChannelImportData) *model.AppEr
 	if data.FavoritedBy != nil {
 		for _, favoriter := range *data.FavoritedBy {
 			found := false
-			for _, member := range *data.Members {
-				if favoriter == member {
+			for _, member := range data.Participants {
+				if favoriter == *member.Username {
 					found = true
 					break
+				}
+			}
+			if data.Members != nil {
+				if slices.Contains(*data.Members, favoriter) {
+					found = true
 				}
 			}
 			if !found {
@@ -554,13 +700,7 @@ func ValidateDirectPostImportData(data *DirectPostImportData, maxPostSize int) *
 
 	if data.FlaggedBy != nil {
 		for _, flagger := range *data.FlaggedBy {
-			found := false
-			for _, member := range *data.ChannelMembers {
-				if flagger == member {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(*data.ChannelMembers, flagger)
 			if !found {
 				return model.NewAppError("BulkImport", "app.import.validate_direct_post_import_data.unknown_flagger.error", map[string]any{"Username": flagger}, "", http.StatusBadRequest)
 			}
@@ -569,15 +709,37 @@ func ValidateDirectPostImportData(data *DirectPostImportData, maxPostSize int) *
 
 	if data.Reactions != nil {
 		for _, reaction := range *data.Reactions {
-			reaction := reaction
-			ValidateReactionImportData(&reaction, *data.CreateAt)
+			if err := ValidateReactionImportData(&reaction, *data.CreateAt); err != nil {
+				return err
+			}
 		}
 	}
 
 	if data.Replies != nil {
 		for _, reply := range *data.Replies {
-			reply := reply
-			ValidateReplyImportData(&reply, *data.CreateAt, maxPostSize)
+			if err := ValidateReplyImportData(&reply, *data.CreateAt, maxPostSize); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := ValidatePostPriorityImportData(data.Priority, data.Acknowledgements, *data.CreateAt); err != nil {
+		return err
+	}
+
+	if data.Attachments != nil {
+		for _, attachment := range *data.Attachments {
+			if err := ValidateAttachmentImportData(&attachment); err != nil {
+				return model.NewAppError("BulkImport", "app.import.validate_direct_post_import_data.attachment.error", nil, "", http.StatusNotFound).Wrap(err)
+			}
+		}
+	}
+
+	if data.ThreadFollowers != nil {
+		for _, follower := range *data.ThreadFollowers {
+			if err := ValidateThreadFollowerImportData(&follower); err != nil {
+				return model.NewAppError("BulkImport", "app.import.validate_direct_post_import_data.thread_follower.error", nil, "", http.StatusBadRequest).Wrap(err)
+			}
 		}
 	}
 
@@ -599,8 +761,25 @@ func ValidateEmojiImportData(data *EmojiImportData) *model.AppError {
 		return model.NewAppError("BulkImport", "app.import.validate_emoji_import_data.image_missing.error", nil, "", http.StatusBadRequest)
 	}
 
+	// Check if the resolved path is within the expected base path.
+	if _, valid := ValidateAttachmentPathForImport(*data.Image, model.ExportDataDir); !valid {
+		return model.NewAppError("BulkImport", "app.import.validate_emoji_import_data.invalid_image_path.error", map[string]any{"Path": *data.Image}, "", http.StatusBadRequest)
+	}
+
 	if err := model.IsValidEmojiName(*data.Name); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func ValidateThreadFollowerImportData(data *ThreadFollowerImportData) *model.AppError {
+	if data == nil {
+		return model.NewAppError("BulkImport", "app.import.validate_thread_follower_data.empty.error", nil, "", http.StatusBadRequest)
+	}
+
+	if data.User == nil || *data.User == "" {
+		return model.NewAppError("BulkImport", "app.import.validate_thread_follower_data.user_missing.error", nil, "", http.StatusBadRequest)
 	}
 
 	return nil
@@ -632,4 +811,116 @@ func isValidEmailBatchingInterval(emailInterval string) bool {
 	return emailInterval == model.PreferenceEmailIntervalImmediately ||
 		emailInterval == model.PreferenceEmailIntervalFifteen ||
 		emailInterval == model.PreferenceEmailIntervalHour
+}
+
+// validateGuestRoles checks if the user has guest roles consistently across system, team, and channel levels.
+// At this point, we assume that the user has a valid role scheme.
+func validateGuestRoles(data UserImportData) *model.AppError {
+	if data.Roles == nil {
+		return nil
+	}
+	isSystemGuest := model.IsInRole(*data.Roles, model.SystemGuestRoleId)
+
+	// If user has no teams, they can still be a system guest without issue
+	if data.Teams == nil || len(*data.Teams) == 0 {
+		return nil
+	}
+
+	var isTeamGuest, isChannelGuest bool
+	var hasChannels bool // hasChannels indicates if the user has any channels within their teams
+
+	var teamGuestCount, channelGuestCount int
+	var totalTeams, totalChannels int
+
+	totalTeams = len(*data.Teams)
+	for _, team := range *data.Teams {
+		if team.Roles != nil && model.IsInRole(*team.Roles, model.TeamGuestRoleId) {
+			teamGuestCount++
+		}
+
+		if len(model.SafeDereference(team.Channels)) > 0 {
+			hasChannels = true
+			totalChannels += len(*team.Channels)
+
+			for _, channel := range *team.Channels {
+				if channel.Roles != nil && model.IsInRole(*channel.Roles, model.ChannelGuestRoleId) {
+					channelGuestCount++
+				}
+			}
+		}
+	}
+
+	// Set flags based on whether all available teams/channels have guest roles
+	if totalTeams > 0 && teamGuestCount == totalTeams {
+		isTeamGuest = true
+	}
+
+	if hasChannels && channelGuestCount == totalChannels {
+		isChannelGuest = true
+	}
+
+	// If the user is a system guest, they must have consistent guest roles in any teams/channels they belong to
+	if isSystemGuest {
+		// If they have teams, they must be a team guest in all teams
+		if totalTeams > 0 && !isTeamGuest {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.system_guest_missing_team_guest_roles.error", map[string]any{"TeamGuestCount": teamGuestCount, "TotalTeams": totalTeams}, "", http.StatusBadRequest)
+		}
+
+		// If they have channels, they must be a channel guest in all channels
+		if hasChannels && !isChannelGuest {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.system_guest_missing_channel_guest_roles.error", map[string]any{"ChannelGuestCount": channelGuestCount, "TotalChannels": totalChannels}, "", http.StatusBadRequest)
+		}
+
+		return nil
+	}
+
+	// If not a system guest, ensure consistency in the other direction
+	// If they're a team or channel guest, they must be a system guest
+	if (isTeamGuest || isChannelGuest) && !isSystemGuest {
+		if isTeamGuest {
+			return model.NewAppError("BulkImport", "app.import.validate_user_import_data.team_guest_missing_system_guest_role.error", nil, "", http.StatusBadRequest)
+		}
+		return model.NewAppError("BulkImport", "app.import.validate_user_import_data.channel_guest_missing_system_guest_role.error", nil, "", http.StatusBadRequest)
+	}
+
+	return nil
+}
+
+// ValidateAttachmentPathForImport joins 'path' to 'basePath' (defaulting to "." if empty) and ensures
+// the result does not escape the base directory. Returns the cleaned joined path (and true),
+// or an empty string (and false) if the result escapes the base.
+func ValidateAttachmentPathForImport(path, basePath string) (string, bool) {
+	if basePath == "" {
+		basePath = "."
+	}
+
+	joined := filepath.Join(basePath, path)
+
+	// Check if the resolved joined path is within basePath
+	rel, err := filepath.Rel(basePath, joined)
+	if err != nil {
+		return "", false
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+
+	return joined, true
+}
+
+func ValidateAttachmentImportData(data *AttachmentImportData) *model.AppError {
+	if data == nil {
+		return nil
+	}
+
+	if data.Path == nil || *data.Path == "" {
+		return nil
+	}
+
+	// Check if the resolved path is within the expected base path.
+	if _, valid := ValidateAttachmentPathForImport(*data.Path, model.ExportDataDir); !valid {
+		return model.NewAppError("BulkImport", "app.import.validate_attachment_import_data.invalid_path.error", map[string]any{"Path": *data.Path}, "", http.StatusBadRequest)
+	}
+
+	return nil
 }

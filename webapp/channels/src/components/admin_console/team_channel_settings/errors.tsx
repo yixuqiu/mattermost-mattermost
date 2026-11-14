@@ -22,7 +22,7 @@ export const NeedGroupsError = ({warning, isChannel = false}: NeedGroupsErrorPro
     let error = (
         <FormattedMessage
             id='admin.team_channel_settings.need_groups'
-            defaultMessage='You must add at least one group to manage this team by sync group members.'
+            defaultMessage='You must add at least one group to manage this team by syncing group members.'
         />
     );
 
@@ -30,7 +30,7 @@ export const NeedGroupsError = ({warning, isChannel = false}: NeedGroupsErrorPro
         error = (
             <FormattedMessage
                 id='admin.team_channel_settings.need_groups_channel'
-                defaultMessage='You must add at least one group to manage this channel by sync group members.'
+                defaultMessage='You must add at least one group to manage this channel by syncing group members.'
             />
         );
     }
@@ -59,13 +59,13 @@ type UsersWillBeRemovedProps = {
     total: number;
     scope: string;
     scopeId: string;
-}
+};
 
 export const UsersWillBeRemovedError = ({users, total, scope, scopeId}: UsersWillBeRemovedProps) => {
     let error = (
         <FormattedMessage
             id='admin.team_channel_settings.users_will_be_removed'
-            defaultMessage='{amount, number} {amount, plural, one {User} other {Users}} will be removed from this team. They are not in groups linked to this team.'
+            defaultMessage='{amount, number} {amount, plural, one {user} other {users}} will be removed from this team. They are not in groups linked to this team.'
             values={{amount: total}}
         />
     );
@@ -88,7 +88,7 @@ export const UsersWillBeRemovedError = ({users, total, scope, scopeId}: UsersWil
                 <span>
                     {error}
                     <ToggleModalButton
-                        className='btn btn-tertiary'
+                        emphasis='tertiary'
                         modalId={ModalIdentifiers.USERS_TO_BE_REMOVED}
                         dialogType={UsersToBeRemovedModal}
                         dialogProps={{total, users, scope, scopeId}}

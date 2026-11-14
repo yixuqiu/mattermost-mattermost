@@ -7,15 +7,13 @@ import (
 	"context"
 	"errors"
 	"hash/fnv"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
-	"strconv"
-	"time"
+	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
-	"github.com/mattermost/mattermost/server/v8/channels/api4"
 	"github.com/mattermost/mattermost/server/v8/channels/app"
 	"github.com/mattermost/mattermost/server/v8/channels/app/slashcommands"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
@@ -34,29 +32,28 @@ type TestEnvironment struct {
 	Request       *http.Request
 }
 
-// Init adds manualtest endpoint to the API.
-func Init(api4 *api4.API) {
-	api4.BaseRoutes.Root.Handle("/manualtest", api4.APIHandler(manualTest)).Methods("GET")
-}
-
-func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
+func ManualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 	// Let the world know
 	c.Logger.Info("Setting up for manual test...")
 
 	// URL Parameters
 	params, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		c.Err = model.NewAppError("/manual", "manaultesting.manual_test.parse.app_error", nil, "", http.StatusBadRequest)
+		c.Err = model.NewAppError("/manual", "manualtesting.manual_test.parse.app_error", nil, "", http.StatusBadRequest)
 		return
 	}
 
-	// Grab a uuid (if available) to seed the random number generator so we don't get conflicts.
+	// Grab a uid (if available) to seed the random number generator so we don't get conflicts.
+	var rng *rand.Rand
 	uid, ok := params["uid"]
 	if ok {
-		hasher := fnv.New32a()
-		hasher.Write([]byte(uid[0] + strconv.Itoa(int(time.Now().UTC().UnixNano()))))
-		hash := hasher.Sum32()
-		rand.Seed(int64(hash))
+		hasher := fnv.New64a()
+		_, writeErr := hasher.Write([]byte(uid[0]))
+		if writeErr != nil {
+			c.Logger.Error("Failed to write to hasher", mlog.Err(writeErr))
+		}
+		hash := hasher.Sum64()
+		rng = rand.New(rand.NewPCG(hash, hash))
 	} else {
 		c.Logger.Debug("No uid in URL")
 	}
@@ -71,10 +68,15 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 	var userID string
 	if ok1 && ok2 {
 		c.Logger.Info("Creating user and team")
+		teamNameSuffix := utils.RandomName(utils.Range{Begin: 20, End: 20}, utils.LOWERCASE)
+		if rng != nil {
+			teamNameSuffix = randomLowercase(rng, 20)
+		}
+
 		// Create team for testing
 		team := &model.Team{
 			DisplayName: teamDisplayName[0],
-			Name:        "zz" + utils.RandomName(utils.Range{Begin: 20, End: 20}, utils.LOWERCASE),
+			Name:        "zz" + teamNameSuffix,
 			Email:       "success+" + model.NewId() + "simulator.amazonses.com",
 			Type:        model.TeamOpen,
 		}
@@ -121,8 +123,15 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		c.App.Srv().Store().User().VerifyEmail(user.Id, user.Email)
-		c.App.Srv().Store().Team().SaveMember(c.AppContext, &model.TeamMember{TeamId: teamID, UserId: user.Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam)
+		if _, verifyErr := c.App.Srv().Store().User().VerifyEmail(user.Id, user.Email); verifyErr != nil {
+			c.Err = model.NewAppError("manualTest", "app.user.verify_email.app_error", nil, "", http.StatusInternalServerError).Wrap(verifyErr)
+			return
+		}
+
+		if _, saveErr := c.App.Srv().Store().Team().SaveMember(c.AppContext, &model.TeamMember{TeamId: teamID, UserId: user.Id}, *c.App.Config().TeamSettings.MaxUsersPerTeam); saveErr != nil {
+			c.Err = model.NewAppError("manualTest", "app.team.save_member.save.app_error", nil, "", http.StatusInternalServerError).Wrap(saveErr)
+			return
+		}
 
 		userID = user.Id
 
@@ -165,7 +174,7 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 	// Grab the test ID and pick the test
 	testname, ok := params["test"]
 	if !ok {
-		c.Err = model.NewAppError("/manual", "manaultesting.manual_test.parse.app_error", nil, "", http.StatusBadRequest)
+		c.Err = model.NewAppError("/manual", "manualtesting.manual_test.parse.app_error", nil, "", http.StatusBadRequest)
 		return
 	}
 
@@ -177,7 +186,17 @@ func manualTest(c *web.Context, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getChannelID(a app.AppIface, channelname string, teamid string, userid string) (string, bool) {
+// randomLowercase returns a random lowercase string of length n generated
+// from rng.
+func randomLowercase(rng *rand.Rand, n int) string {
+	var sb strings.Builder
+	for range n {
+		sb.WriteByte(utils.LOWERCASE[rng.IntN(len(utils.LOWERCASE))])
+	}
+	return sb.String()
+}
+
+func getChannelID(a *app.App, channelname string, teamid string, userid string) (string, bool) {
 	// Grab all the channels
 	channels, err := a.Srv().Store().Channel().GetChannels(teamid, userid, &model.ChannelSearchOpts{
 		IncludeDeleted: false,
@@ -193,6 +212,6 @@ func getChannelID(a app.AppIface, channelname string, teamid string, userid stri
 			return channel.Id, true
 		}
 	}
-	mlog.Debug("Could not find channel", mlog.String("Channel name", channelname), mlog.Int("Possibilities searched", len(channels)))
+	mlog.Debug("Could not find channel", mlog.String("channel_name", channelname), mlog.Int("possibilities_searched", len(channels)))
 	return "", false
 }

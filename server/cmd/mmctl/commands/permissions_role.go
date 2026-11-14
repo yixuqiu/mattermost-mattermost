@@ -6,7 +6,7 @@ package commands
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -28,7 +28,7 @@ var ShowCmd = &cobra.Command{
 	Use:     "show <role_name>",
 	Short:   "Show the role information",
 	Long:    "Show all the information about a role.",
-	Example: `  permissions show system_user`,
+	Example: `  permissions role show system_user`,
 	Args:    cobra.ExactArgs(1),
 	RunE:    withClient(showRoleCmdF),
 }
@@ -76,7 +76,7 @@ func init() {
 }
 
 func prettyRole(role *model.Role) string {
-	sort.Strings(role.Permissions)
+	slices.Sort(role.Permissions)
 
 	consolePermissionMap := map[string]bool{}
 	for _, perm := range role.Permissions {

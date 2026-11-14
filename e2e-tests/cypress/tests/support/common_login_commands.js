@@ -5,7 +5,7 @@ import * as TIMEOUTS from '../fixtures/timeouts';
 
 Cypress.Commands.add('checkLoginPage', (settings = {}) => {
     // # Remove autofocus from login input
-    cy.get('.login-body-card-content').should('be.visible').focus();
+    cy.get('.login-body-card-title').click();
 
     // * Check elements in the body
     cy.get('#input_loginId', {timeout: TIMEOUTS.ONE_MIN}).should('be.visible').and(($loginTextbox) => {
@@ -53,19 +53,19 @@ Cypress.Commands.add('checkLeftSideBar', (settings = {}) => {
         cy.uiOpenUserMenu().findByText(`@${settings.user.username}`);
 
         // # Close status menu
-        cy.uiGetSetStatusButton().click();
+        cy.get('body').type('{esc}');
     }
 
     if (settings.user.userType === 'Admin' || settings.user.isAdmin) {
         // # Check that user is an admin
-        cy.uiOpenProductMenu().findByText('System Console');
+        cy.uiOpenSwitchProductMenu().findByText('System Console');
     } else {
         // # Check that user is not an admin
-        cy.uiOpenProductMenu().findByText('System Console').should('not.exist');
+        cy.uiOpenSwitchProductMenu().findByText('System Console').should('not.exist');
     }
 
     // # Close product switch menu
-    cy.uiGetProductMenuButton().click();
+    cy.get('body').type('{esc}');
 
     cy.get('#channel_view').should('be.visible');
 });

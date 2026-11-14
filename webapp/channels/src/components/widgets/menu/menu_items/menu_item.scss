@@ -1,4 +1,4 @@
-@import '../../../../sass/utils/module';
+@use 'utils/variables';
 
 .Menu {
     .MenuItem {
@@ -46,8 +46,16 @@
             line-height: 16px;
         }
 
+        div.text{
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         span.MenuItem__primary-text {
             display: inline-flex;
+            max-width: 100%;
+            align-items: center;
             padding: 5px 0;
             line-height: 22px;
             white-space: nowrap;
@@ -95,7 +103,7 @@
                 padding: 0 3px;
                 margin-right: 4px;
                 margin-bottom: 2px;
-                color: rgba(var(--center-channel-color-rgb), 0.72);
+                color: rgba(var(--center-channel-color-rgb), 0.64);
                 vertical-align: middle;
 
                 &::before {
@@ -155,8 +163,6 @@
             }
 
             .MenuItem__icon {
-                position: relative;
-                top: 4px;
                 display: inline-flex;
                 width: 20px;
                 height: 20px;
@@ -211,7 +217,7 @@
 
                 &__icon-section {
                     margin-top: -2px;
-                    color: var(--denim-button-bg);
+                    color: var(--button-bg);
                     font-size: 18px;
                 }
             }
@@ -256,59 +262,6 @@
         }
     }
 
-    .MenuItemCloudLimit {
-        padding: 16px 20px;
-        margin-top: 0;
-        background-color: rgba(var(--mention-highlight-bg-rgb), 0.16);
-
-        &--critical {
-            background-color: rgba(var(--error-text-color-rgb), 0.16);
-        }
-
-        .icon-information-outline {
-            color: var(--denim-button-bg);
-            cursor: pointer;
-        }
-
-        a {
-            // overriding 4 deep selector
-            color: var(--denim-button-bg) !important;
-            font-weight: bold;
-            text-decoration: none;
-
-            &:hover {
-                // overriding 4 deep selector
-                background: inherit !important;
-            }
-        }
-
-        &__title {
-            display: flex;
-            align-items: center;
-            padding-bottom: 5px;
-            color: var(--center-channel-color);
-            font-size: 14px;
-            font-weight: bold;
-        }
-
-        &__description {
-            padding-bottom: 12px;
-            font-size: 12px;
-        }
-
-        &__usage {
-            display: flex;
-            align-items: center;
-        }
-
-        &__usage-label {
-            padding-left: 18px;
-            color: rgba(var(--center-channel-color-rgb), 0.75);
-            font-size: 11px;
-            font-weight: bold;
-        }
-    }
-
     .MenuStartTrial {
         display: flex;
         flex-direction: column;
@@ -333,13 +286,15 @@
             }
         }
 
-        .start_trial_content {
+        .editionText {
             position: relative;
             width: 100%;
-        }
-
-        .editionName {
-            text-transform: capitalize;
+            a {
+                color: var(--link-color);
+                &:hover {
+                    background: none;
+                }
+            }
         }
     }
 }
@@ -385,6 +340,6 @@
 }
 
 .MenuItem__divider {
-    border-top: $border-gray;
+    border-top: variables.$border-gray;
     margin: 8px 0;
 }

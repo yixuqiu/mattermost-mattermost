@@ -5,7 +5,6 @@ package app
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,19 +12,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/mattermost/mattermost/server/public/shared/i18n"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/v8/channels/testlib"
 	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
@@ -38,8 +36,8 @@ func getHashedKey(key string) string {
 }
 
 func TestPluginKeyValueStore(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	pluginID := "testpluginid"
 
@@ -137,9 +135,50 @@ func TestPluginKeyValueStore(t *testing.T) {
 	assert.Equal(t, []string{"key", "key3", "key4", hashedKey2}, list)
 }
 
-func TestPluginKeyValueStoreCompareAndSet(t *testing.T) {
+func TestPluginKeyValueStoreListWithOptions(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
+
+	pluginID := "testpluginid-listopts"
+
+	defer func() {
+		assert.Nil(t, th.App.DeletePluginKey(pluginID, "prefix_a"))
+		assert.Nil(t, th.App.DeletePluginKey(pluginID, "prefix_b"))
+		assert.Nil(t, th.App.DeletePluginKey(pluginID, "other_c"))
+	}()
+
+	assert.Nil(t, th.App.SetPluginKey(pluginID, "prefix_a", []byte("val1")))
+	assert.Nil(t, th.App.SetPluginKey(pluginID, "prefix_b", []byte("val2")))
+	assert.Nil(t, th.App.SetPluginKey(pluginID, "other_c", []byte("val3")))
+
+	// List with prefix filter
+	list, err := th.App.ListPluginKeysWithOptions(pluginID, model.PluginKVListOptions{Prefix: "prefix_"}, 0, 100)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"prefix_a", "prefix_b"}, list)
+
+	// List with prefix that matches nothing
+	list, err = th.App.ListPluginKeysWithOptions(pluginID, model.PluginKVListOptions{Prefix: "nomatch_"}, 0, 100)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{}, list)
+
+	// List with empty prefix (behaves like ListPluginKeys)
+	list, err = th.App.ListPluginKeysWithOptions(pluginID, model.PluginKVListOptions{}, 0, 100)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"other_c", "prefix_a", "prefix_b"}, list)
+
+	// Pagination with prefix
+	list, err = th.App.ListPluginKeysWithOptions(pluginID, model.PluginKVListOptions{Prefix: "prefix_"}, 0, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"prefix_a"}, list)
+
+	list, err = th.App.ListPluginKeysWithOptions(pluginID, model.PluginKVListOptions{Prefix: "prefix_"}, 1, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"prefix_b"}, list)
+}
+
+func TestPluginKeyValueStoreCompareAndSet(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
 
 	pluginID := "testpluginid"
 
@@ -195,11 +234,11 @@ func TestPluginKeyValueStoreCompareAndSet(t *testing.T) {
 }
 
 func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
+	mainHelper.Parallel(t)
 	pluginID := "testpluginid"
 
 	t.Run("storing a value without providing options works", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		result, err := th.App.SetPluginKeyWithOptions(pluginID, "key", []byte("value-1"), model.PluginKVSetOptions{})
 		assert.True(t, result)
@@ -213,7 +252,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("test that setting it atomic when it doesn't match doesn't change anything", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		err := th.App.SetPluginKey(pluginID, "key", []byte("value-1"))
 		require.Nil(t, err)
@@ -233,7 +271,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("test the atomic change with the proper old value", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		err := th.App.SetPluginKey(pluginID, "key", []byte("value-2"))
 		require.Nil(t, err)
@@ -253,7 +290,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("when new value is nil and old value matches with the current, it should delete the currently set value", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		// first set a value.
 		result, err := th.App.SetPluginKeyWithOptions(pluginID, "nil-test-key-2", []byte("value-1"), model.PluginKVSetOptions{})
@@ -275,7 +311,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("when new value is nil and there is a value set for the key already, it should delete the currently set value", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		// first set a value.
 		result, err := th.App.SetPluginKeyWithOptions(pluginID, "nil-test-key-3", []byte("value-1"), model.PluginKVSetOptions{})
@@ -300,7 +335,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("when old value is nil and there is no value set for the key before, it should set the new value", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		result, err := th.App.SetPluginKeyWithOptions(pluginID, "nil-test-key-4", []byte("value-1"), model.PluginKVSetOptions{
 			Atomic:   true,
@@ -316,7 +350,6 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 
 	t.Run("test that value is set and unset with ExpireInSeconds", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		result, err := th.App.SetPluginKeyWithOptions(pluginID, "key", []byte("value-1"), model.PluginKVSetOptions{
 			ExpireInSeconds: 1,
@@ -338,113 +371,9 @@ func TestPluginKeyValueStoreSetWithOptionsJSON(t *testing.T) {
 	})
 }
 
-func TestServePluginRequest(t *testing.T) {
-	th := Setup(t)
-	defer th.TearDown()
-
-	th.App.UpdateConfig(func(cfg *model.Config) { *cfg.PluginSettings.Enable = false })
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/plugins/foo/bar", nil)
-	th.App.ch.ServePluginRequest(w, r)
-	assert.Equal(t, http.StatusNotImplemented, w.Result().StatusCode)
-}
-
-func TestPrivateServePluginRequest(t *testing.T) {
-	th := Setup(t)
-	defer th.TearDown()
-
-	testCases := []struct {
-		Description string
-		ConfigFunc  func(cfg *model.Config)
-		URL         string
-		ExpectedURL string
-	}{
-		{
-			"no subpath",
-			func(cfg *model.Config) {},
-			"/plugins/id/endpoint",
-			"/endpoint",
-		},
-		{
-			"subpath",
-			func(cfg *model.Config) { *cfg.ServiceSettings.SiteURL += "/subpath" },
-			"/subpath/plugins/id/endpoint",
-			"/endpoint",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.Description, func(t *testing.T) {
-			th.App.UpdateConfig(testCase.ConfigFunc)
-			expectedBody := []byte("body")
-			request := httptest.NewRequest(http.MethodGet, testCase.URL, bytes.NewReader(expectedBody))
-			recorder := httptest.NewRecorder()
-
-			handler := func(context *plugin.Context, w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, testCase.ExpectedURL, r.URL.Path)
-
-				body, _ := io.ReadAll(r.Body)
-				assert.Equal(t, expectedBody, body)
-			}
-
-			request = mux.SetURLVars(request, map[string]string{"plugin_id": "id"})
-
-			th.App.ch.servePluginRequest(recorder, request, handler)
-		})
-	}
-}
-
-func TestHandlePluginRequest(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
-
-	th.App.UpdateConfig(func(cfg *model.Config) {
-		*cfg.PluginSettings.Enable = false
-		*cfg.ServiceSettings.EnableUserAccessTokens = true
-	})
-
-	token, err := th.App.CreateUserAccessToken(th.Context, &model.UserAccessToken{
-		UserId: th.BasicUser.Id,
-	})
-	require.Nil(t, err)
-
-	var assertions func(*http.Request)
-	router := mux.NewRouter()
-	router.HandleFunc("/plugins/{plugin_id:[A-Za-z0-9\\_\\-\\.]+}/{anything:.*}", func(_ http.ResponseWriter, r *http.Request) {
-		th.App.ch.servePluginRequest(nil, r, func(_ *plugin.Context, _ http.ResponseWriter, r *http.Request) {
-			assertions(r)
-		})
-	})
-
-	r := httptest.NewRequest("GET", "/plugins/foo/bar", nil)
-	r.Header.Add("Authorization", "Bearer "+token.Token)
-	assertions = func(r *http.Request) {
-		assert.Equal(t, "/bar", r.URL.Path)
-		assert.Equal(t, th.BasicUser.Id, r.Header.Get("Mattermost-User-Id"))
-	}
-	router.ServeHTTP(nil, r)
-
-	r = httptest.NewRequest("GET", "/plugins/foo/bar?a=b&access_token="+token.Token+"&c=d", nil)
-	assertions = func(r *http.Request) {
-		assert.Equal(t, "/bar", r.URL.Path)
-		assert.Equal(t, "a=b&c=d", r.URL.RawQuery)
-		assert.Equal(t, th.BasicUser.Id, r.Header.Get("Mattermost-User-Id"))
-	}
-	router.ServeHTTP(nil, r)
-
-	r = httptest.NewRequest("GET", "/plugins/foo/bar?a=b&access_token=asdf&c=d", nil)
-	assertions = func(r *http.Request) {
-		assert.Equal(t, "/bar", r.URL.Path)
-		assert.Equal(t, "a=b&c=d", r.URL.RawQuery)
-		assert.Empty(t, r.Header.Get("Mattermost-User-Id"))
-	}
-	router.ServeHTTP(nil, r)
-}
-
 func TestGetPluginStatusesDisabled(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	th.App.UpdateConfig(func(cfg *model.Config) {
 		*cfg.PluginSettings.Enable = false
@@ -456,8 +385,8 @@ func TestGetPluginStatusesDisabled(t *testing.T) {
 }
 
 func TestGetPluginStatuses(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	th.App.UpdateConfig(func(cfg *model.Config) {
 		*cfg.PluginSettings.Enable = true
@@ -469,8 +398,14 @@ func TestGetPluginStatuses(t *testing.T) {
 }
 
 func TestPluginSync(t *testing.T) {
-	th := Setup(t)
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	path, _ := fileutils.FindDir("tests")
+
+	th := SetupConfig(t, func(cfg *model.Config) {
+		cfg.PluginSettings.SignaturePublicKeyFiles = []string{
+			filepath.Join(path, "development-private-key.asc"),
+		}
+	})
 
 	testCases := []struct {
 		Description string
@@ -479,7 +414,7 @@ func TestPluginSync(t *testing.T) {
 		{
 			"local",
 			func(cfg *model.Config) {
-				cfg.FileSettings.DriverName = model.NewString(model.ImageDriverLocal)
+				cfg.FileSettings.DriverName = model.NewPointer(model.ImageDriverLocal)
 			},
 		},
 		{
@@ -496,14 +431,14 @@ func TestPluginSync(t *testing.T) {
 				}
 
 				s3Endpoint := fmt.Sprintf("%s:%s", s3Host, s3Port)
-				cfg.FileSettings.DriverName = model.NewString(model.ImageDriverS3)
-				cfg.FileSettings.AmazonS3AccessKeyId = model.NewString(model.MinioAccessKey)
-				cfg.FileSettings.AmazonS3SecretAccessKey = model.NewString(model.MinioSecretKey)
-				cfg.FileSettings.AmazonS3Bucket = model.NewString(model.MinioBucket)
-				cfg.FileSettings.AmazonS3PathPrefix = model.NewString("")
-				cfg.FileSettings.AmazonS3Endpoint = model.NewString(s3Endpoint)
-				cfg.FileSettings.AmazonS3Region = model.NewString("")
-				cfg.FileSettings.AmazonS3SSL = model.NewBool(false)
+				cfg.FileSettings.DriverName = model.NewPointer(model.ImageDriverS3)
+				cfg.FileSettings.AmazonS3AccessKeyId = model.NewPointer(model.MinioAccessKey)
+				cfg.FileSettings.AmazonS3SecretAccessKey = model.NewPointer(model.MinioSecretKey)
+				cfg.FileSettings.AmazonS3Bucket = model.NewPointer(model.MinioBucket)
+				cfg.FileSettings.AmazonS3PathPrefix = new("")
+				cfg.FileSettings.AmazonS3Endpoint = new(s3Endpoint)
+				cfg.FileSettings.AmazonS3Region = new("")
+				cfg.FileSettings.AmazonS3SSL = new(false)
 			},
 		},
 	}
@@ -517,8 +452,6 @@ func TestPluginSync(t *testing.T) {
 
 			env := th.App.GetPluginsEnvironment()
 			require.NotNil(t, env)
-
-			path, _ := fileutils.FindDir("tests")
 
 			t.Run("new bundle in the file store", func(t *testing.T) {
 				th.App.UpdateConfig(func(cfg *model.Config) {
@@ -601,15 +534,10 @@ func TestPluginSync(t *testing.T) {
 					*cfg.PluginSettings.RequirePluginSignature = true
 				})
 
-				key, err := os.Open(filepath.Join(path, "development-private-key.asc"))
-				require.NoError(t, err)
-				appErr := th.App.AddPublicKey("pub_key", key)
-				checkNoError(t, appErr)
-
 				signatureFileReader, err := os.Open(filepath.Join(path, "testplugin.tar.gz.sig"))
 				require.NoError(t, err)
 				defer signatureFileReader.Close()
-				_, appErr = th.App.WriteFile(signatureFileReader, getSignatureStorePath("testplugin"))
+				_, appErr := th.App.WriteFile(signatureFileReader, getSignatureStorePath("testplugin"))
 				checkNoError(t, appErr)
 
 				appErr = th.App.SyncPlugins()
@@ -632,8 +560,8 @@ func TestPluginSync(t *testing.T) {
 
 // See https://github.com/mattermost/mattermost-server/issues/19189
 func TestChannelsPluginsInit(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	runNoPanicTest := func(t *testing.T) {
 		path, _ := fileutils.FindDir("tests")
@@ -661,8 +589,8 @@ func TestChannelsPluginsInit(t *testing.T) {
 }
 
 func TestSyncPluginsActiveState(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	th.App.UpdateConfig(func(cfg *model.Config) {
 		*cfg.PluginSettings.Enable = true
@@ -720,9 +648,9 @@ func TestSyncPluginsActiveState(t *testing.T) {
 }
 
 func TestPluginPanicLogs(t *testing.T) {
+	mainHelper.Parallel(t)
 	t.Run("should panic", func(t *testing.T) {
-		th := Setup(t).InitBasic()
-		defer th.TearDown()
+		th := Setup(t).InitBasic(t)
 
 		tearDown, _, _ := SetAppEnvironmentWithPlugins(t, []string{
 			`
@@ -754,7 +682,7 @@ func TestPluginPanicLogs(t *testing.T) {
 			Message:   "message_",
 			CreateAt:  model.GetMillis() - 10000,
 		}
-		_, err := th.App.CreatePost(th.Context, post, th.BasicChannel, false, true)
+		_, _, err := th.App.CreatePost(th.Context, post, th.BasicChannel, model.CreatePostFlags{SetOnline: true})
 		assert.Nil(t, err)
 
 		th.TestLogger.Flush()
@@ -763,14 +691,14 @@ func TestPluginPanicLogs(t *testing.T) {
 		th.App.ch.ShutDownPlugins()
 		tearDown()
 
-		testlib.AssertLog(t, th.LogBuffer, mlog.LvlDebug.Name, "panic: some text from panic")
+		testlib.AssertLog(t, th.LogBuffer, mlog.LvlError.Name, "panic: some text from panic")
 	})
 }
 
 func TestPluginStatusActivateError(t *testing.T) {
+	mainHelper.Parallel(t)
 	t.Run("should return error from OnActivate in plugin statuses", func(t *testing.T) {
-		th := Setup(t).InitBasic()
-		defer th.TearDown()
+		th := Setup(t).InitBasic(t)
 
 		pluginSource := `
 		package main
@@ -818,27 +746,21 @@ func (a pluginStatusById) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a pluginStatusById) Less(i, j int) bool { return a[i].PluginId < a[j].PluginId }
 
 func TestProcessPrepackagedPlugins(t *testing.T) {
-	// Find the tests folder before we change directories to the temporary workspace.
-	testsPath, _ := fileutils.FindDir("tests")
+	mainHelper.Parallel(t)
+	testsPath, found := fileutils.FindDir("tests")
+	require.True(t, found, "failed to find tests directory")
 
 	setup := func(t *testing.T) *TestHelper {
 		t.Helper()
 
-		th := Setup(t)
-		t.Cleanup(th.TearDown)
-
-		wd, err := os.Getwd()
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err = os.Chdir(wd)
-			require.NoError(t, err)
+		th := SetupConfig(t, func(cfg *model.Config) {
+			cfg.PluginSettings.SignaturePublicKeyFiles = []string{
+				filepath.Join(testsPath, "development-private-key.asc"),
+			}
 		})
 
-		err = os.Chdir(th.tempWorkspace)
-		require.NoError(t, err)
-
 		// Make a prepackaged_plugins directory for use with the tests.
-		err = os.Mkdir(prepackagedPluginsDir, os.ModePerm)
+		err := os.Mkdir(filepath.Join(th.tempWorkspace, prepackagedPluginsDir), os.ModePerm)
 		require.NoError(t, err)
 
 		th.App.UpdateConfig(func(cfg *model.Config) {
@@ -855,7 +777,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		appErr := th.App.ch.syncPlugins()
 		require.Nil(t, appErr)
 
-		err := th.App.ch.processPrepackagedPlugins(prepackagedPluginsDir)
+		err := th.App.ch.processPrepackagedPlugins(filepath.Join(th.tempWorkspace, prepackagedPluginsDir))
 		require.NoError(t, err)
 
 		env := th.App.GetPluginsEnvironment()
@@ -865,22 +787,22 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		return plugins, transitionalPlugins
 	}
 
-	copyAsPrepackagedPlugin := func(t *testing.T, filename string) {
+	copyAsPrepackagedPlugin := func(t *testing.T, th *TestHelper, filename string) {
 		t.Helper()
 
-		err := testlib.CopyFile(filepath.Join(testsPath, filename), filepath.Join(prepackagedPluginsDir, filename))
+		err := testlib.CopyFile(filepath.Join(testsPath, filename), filepath.Join(th.tempWorkspace, prepackagedPluginsDir, filename))
 		require.NoError(t, err)
 
-		err = testlib.CopyFile(filepath.Join(testsPath, fmt.Sprintf("%s.sig", filename)), filepath.Join(prepackagedPluginsDir, fmt.Sprintf("%s.sig", filename)))
+		err = testlib.CopyFile(filepath.Join(testsPath, fmt.Sprintf("%s.sig", filename)), filepath.Join(th.tempWorkspace, prepackagedPluginsDir, fmt.Sprintf("%s.sig", filename)))
 		require.NoError(t, err)
 	}
 
-	copyAsFilestorePlugin := func(t *testing.T, bundleFilename, pluginID string) {
+	copyAsFilestorePlugin := func(t *testing.T, th *TestHelper, bundleFilename, pluginID string) {
 		t.Helper()
 
-		err := testlib.CopyFile(filepath.Join(testsPath, bundleFilename), filepath.Join(fmt.Sprintf("data/plugins/%s.tar.gz", pluginID)))
+		err := testlib.CopyFile(filepath.Join(testsPath, bundleFilename), filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz", pluginID)))
 		require.NoError(t, err)
-		err = testlib.CopyFile(filepath.Join(testsPath, fmt.Sprintf("%s.sig", bundleFilename)), filepath.Join(fmt.Sprintf("data/plugins/%s.tar.gz.sig", pluginID)))
+		err = testlib.CopyFile(filepath.Join(testsPath, fmt.Sprintf("%s.sig", bundleFilename)), filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz.sig", pluginID)))
 		require.NoError(t, err)
 	}
 
@@ -888,17 +810,17 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		t.Helper()
 
 		require.Equal(t, pluginID, actual.Manifest.Id)
-		require.NotEmpty(t, actual.Signature, "testplugin has no signature")
+		require.NotEmpty(t, actual.SignaturePath, "testplugin has no signature")
 		require.Equal(t, version, actual.Manifest.Version)
 	}
 
-	expectPluginInFilestore := func(t *testing.T, pluginID, version string) {
+	expectPluginInFilestore := func(t *testing.T, th *TestHelper, pluginID, version string) {
 		t.Helper()
 
-		bundlePath := fmt.Sprintf("data/plugins/%s.tar.gz", pluginID)
+		bundlePath := filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz", pluginID))
 
 		require.FileExists(t, bundlePath)
-		require.FileExists(t, fmt.Sprintf("data/plugins/%s.tar.gz.sig", pluginID))
+		require.FileExists(t, filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz.sig", pluginID)))
 
 		// Verify the version recorded in the Manifest
 		f, err := os.Open(bundlePath)
@@ -930,11 +852,11 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Equal(t, version, manifest.Version)
 	}
 
-	expectPluginNotInFilestore := func(t *testing.T, pluginID string) {
+	expectPluginNotInFilestore := func(t *testing.T, th *TestHelper, pluginID string) {
 		t.Helper()
 
-		require.NoFileExists(t, fmt.Sprintf("data/plugins/%s.tar.gz", pluginID))
-		require.NoFileExists(t, fmt.Sprintf("data/plugins/%s.tar.gz.sig", pluginID))
+		require.NoFileExists(t, filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz", pluginID)))
+		require.NoFileExists(t, filepath.Join(*th.App.Config().FileSettings.Directory, fmt.Sprintf("plugins/%s.tar.gz.sig", pluginID)))
 	}
 
 	expectPluginStatus := func(t *testing.T, pluginID, version string, actual *model.PluginStatus) {
@@ -953,7 +875,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 1, "expected one prepackaged plugin")
@@ -965,7 +887,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin", "0.0.1", pluginStatus[0])
 
-		expectPluginNotInFilestore(t, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin")
 	})
 
 	t.Run("single plugin, not automatically installed since not enabled", func(t *testing.T) {
@@ -976,7 +898,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			*cfg.PluginSettings.AutomaticPrepackagedPlugins = true
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 1, "expected one prepackaged plugin")
@@ -987,7 +909,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, pluginStatus, 0)
 
-		expectPluginNotInFilestore(t, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin")
 	})
 
 	t.Run("single plugin, not automatically installed despite enabled since automatic prepackaged plugins disabled", func(t *testing.T) {
@@ -999,7 +921,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 1, "expected one prepackaged plugin")
@@ -1010,7 +932,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, pluginStatus, 0)
 
-		expectPluginNotInFilestore(t, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin")
 	})
 
 	t.Run("multiple plugins, some automatically installed since enabled", func(t *testing.T) {
@@ -1022,8 +944,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1037,8 +959,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin2", "1.2.3", pluginStatus[0])
 
-		expectPluginNotInFilestore(t, "testplugin")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginNotInFilestore(t, th, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("multiple plugins, one previously installed, all now installed", func(t *testing.T) {
@@ -1049,15 +971,15 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			*cfg.PluginSettings.AutomaticPrepackagedPlugins = true
 		})
 
-		copyAsFilestorePlugin(t, "testplugin.tar.gz", "testplugin")
+		copyAsFilestorePlugin(t, th, "testplugin.tar.gz", "testplugin")
 
 		th.App.UpdateConfig(func(cfg *model.Config) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1075,8 +997,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		expectPluginStatus(t, "testplugin", "0.0.1", pluginStatus[0])
 		expectPluginStatus(t, "testplugin2", "1.2.3", pluginStatus[1])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.1")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.1")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("multiple plugins, one previously installed and now upgraded, all now installed", func(t *testing.T) {
@@ -1087,18 +1009,18 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			*cfg.PluginSettings.AutomaticPrepackagedPlugins = true
 		})
 
-		copyAsFilestorePlugin(t, "testplugin.tar.gz", "testplugin")
+		copyAsFilestorePlugin(t, th, "testplugin.tar.gz", "testplugin")
 
 		th.App.UpdateConfig(func(cfg *model.Config) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin-v0.0.2.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin-v0.0.2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
-		err := th.App.ch.processPrepackagedPlugins(prepackagedPluginsDir)
+		err := th.App.ch.processPrepackagedPlugins(filepath.Join(th.tempWorkspace, prepackagedPluginsDir))
 		require.NoError(t, err)
 
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1116,8 +1038,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		expectPluginStatus(t, "testplugin", "0.0.2", pluginStatus[0])
 		expectPluginStatus(t, "testplugin2", "1.2.3", pluginStatus[1])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.1")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.1")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("multiple plugins, one previously installed but prepackaged is older, all now installed", func(t *testing.T) {
@@ -1128,15 +1050,15 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			*cfg.PluginSettings.AutomaticPrepackagedPlugins = true
 		})
 
-		copyAsFilestorePlugin(t, "testplugin-v0.0.2.tar.gz", "testplugin")
+		copyAsFilestorePlugin(t, th, "testplugin-v0.0.2.tar.gz", "testplugin")
 
 		th.App.UpdateConfig(func(cfg *model.Config) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1154,8 +1076,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		expectPluginStatus(t, "testplugin", "0.0.2", pluginStatus[0])
 		expectPluginStatus(t, "testplugin2", "1.2.3", pluginStatus[1])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.2")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.2")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("multiple plugins, not automatically installed despite enabled since automatic prepackaged plugins disabled", func(t *testing.T) {
@@ -1168,8 +1090,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1182,8 +1104,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, pluginStatus, 0)
 
-		expectPluginNotInFilestore(t, "testplugin")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginNotInFilestore(t, th, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("removing a prepackaged plugin leaves it disabled", func(t *testing.T) {
@@ -1196,8 +1118,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin2"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
-		copyAsPrepackagedPlugin(t, "testplugin2.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Len(t, plugins, 2, "expected two prepackaged plugins")
@@ -1235,8 +1157,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin2", "1.2.3", pluginStatus[0])
 
-		expectPluginNotInFilestore(t, "testplugin")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginNotInFilestore(t, th, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("single transitional plugin automatically installed and persisted since enabled", func(t *testing.T) {
@@ -1254,7 +1176,7 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Empty(t, plugins)
@@ -1266,8 +1188,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin", "0.0.1", pluginStatus[0])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.1")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.1")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("single transitional plugin not persisted since already in filestore", func(t *testing.T) {
@@ -1285,8 +1207,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsFilestorePlugin(t, "testplugin.tar.gz", "testplugin")
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsFilestorePlugin(t, th, "testplugin.tar.gz", "testplugin")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Empty(t, plugins)
@@ -1297,8 +1219,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin", "0.0.1", pluginStatus[0])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.1")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.1")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("single transitional plugin persisted since newer than filestore", func(t *testing.T) {
@@ -1316,8 +1238,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsFilestorePlugin(t, "testplugin.tar.gz", "testplugin")
-		copyAsPrepackagedPlugin(t, "testplugin-v0.0.2.tar.gz")
+		copyAsFilestorePlugin(t, th, "testplugin.tar.gz", "testplugin")
+		copyAsPrepackagedPlugin(t, th, "testplugin-v0.0.2.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Empty(t, plugins)
@@ -1329,8 +1251,8 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 		require.Len(t, pluginStatus, 1)
 		expectPluginStatus(t, "testplugin", "0.0.2", pluginStatus[0])
 
-		expectPluginInFilestore(t, "testplugin", "0.0.2")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginInFilestore(t, th, "testplugin", "0.0.2")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 
 	t.Run("transitional plugins persisted only once", func(t *testing.T) {
@@ -1348,14 +1270,15 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 			cfg.PluginSettings.PluginStates["testplugin"] = &model.PluginState{Enable: true}
 		})
 
-		copyAsPrepackagedPlugin(t, "testplugin.tar.gz")
+		copyAsPrepackagedPlugin(t, th, "testplugin.tar.gz")
 
 		plugins, transitionalPlugins := initPlugins(t, th)
 		require.Empty(t, plugins)
 		require.Len(t, transitionalPlugins, 1)
 		expectPrepackagedPlugin(t, "testplugin", "0.0.1", transitionalPlugins[0])
 
-		th.App.ch.RemovePlugin("testplugin")
+		appErr := th.App.ch.RemovePlugin("testplugin")
+		require.Nil(t, appErr)
 
 		pluginStatus, err := env.Statuses()
 		require.NoError(t, err)
@@ -1363,94 +1286,344 @@ func TestProcessPrepackagedPlugins(t *testing.T) {
 
 		th.App.ch.persistTransitionallyPrepackagedPlugins()
 
-		expectPluginNotInFilestore(t, "testplugin")
-		expectPluginNotInFilestore(t, "testplugin2")
+		expectPluginNotInFilestore(t, th, "testplugin")
+		expectPluginNotInFilestore(t, th, "testplugin2")
 	})
 }
 
+const (
+	testAddOnPluginID = "testaddonplugin"
+	testAddOn         = "test-addon"
+)
+
 func TestGetPluginStateOverride(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
+
+	manifestFor := func(id string) *model.Manifest {
+		return &model.Manifest{Id: id}
+	}
+
+	addOnManifest := &model.Manifest{Id: testAddOnPluginID, RequiredAddOn: testAddOn}
 
 	t.Run("no override", func(t *testing.T) {
-		overrides, value := th.App.ch.getPluginStateOverride("focalboard")
+		overrides, value := th.App.ch.getPluginStateOverride(manifestFor("focalboard"))
 		require.False(t, overrides)
 		require.False(t, value)
 	})
 
-	t.Run("calls override", func(t *testing.T) {
-		t.Run("on-prem", func(t *testing.T) {
-			overrides, value := th.App.ch.getPluginStateOverride("com.mattermost.calls")
-			require.False(t, overrides)
-			require.False(t, value)
-		})
-
-		t.Run("Cloud, without enabled flag", func(t *testing.T) {
-			os.Setenv("MM_CLOUD_INSTALLATION_ID", "test")
-			defer os.Unsetenv("MM_CLOUD_INSTALLATION_ID")
-			overrides, value := th.App.ch.getPluginStateOverride("com.mattermost.calls")
-			require.False(t, overrides)
-			require.False(t, value)
-		})
-
-		t.Run("Cloud, with enabled flag set to true", func(t *testing.T) {
-			os.Setenv("MM_CLOUD_INSTALLATION_ID", "test")
-			defer os.Unsetenv("MM_CLOUD_INSTALLATION_ID")
-			os.Setenv("MM_FEATUREFLAGS_CALLSENABLED", "true")
-			defer os.Unsetenv("MM_FEATUREFLAGS_CALLSENABLED")
-
-			th2 := Setup(t)
-			defer th2.TearDown()
-
-			overrides, value := th2.App.ch.getPluginStateOverride("com.mattermost.calls")
-			require.False(t, overrides)
-			require.False(t, value)
-		})
-
-		t.Run("Cloud, with enabled flag set to false", func(t *testing.T) {
-			os.Setenv("MM_CLOUD_INSTALLATION_ID", "test")
-			defer os.Unsetenv("MM_CLOUD_INSTALLATION_ID")
-			os.Setenv("MM_FEATUREFLAGS_CALLSENABLED", "false")
-			defer os.Unsetenv("MM_FEATUREFLAGS_CALLSENABLED")
-
-			th2 := Setup(t)
-			defer th2.TearDown()
-
-			overrides, value := th2.App.ch.getPluginStateOverride("com.mattermost.calls")
-			require.True(t, overrides)
-			require.False(t, value)
-		})
-
-		t.Run("On-prem, with enabled flag set to false", func(t *testing.T) {
-			os.Setenv("MM_FEATUREFLAGS_CALLSENABLED", "false")
-			defer os.Unsetenv("MM_FEATUREFLAGS_CALLSENABLED")
-
-			th2 := Setup(t)
-			defer th2.TearDown()
-
-			overrides, value := th2.App.ch.getPluginStateOverride("com.mattermost.calls")
-			require.True(t, overrides)
-			require.False(t, value)
-		})
-	})
-
 	t.Run("apps override", func(t *testing.T) {
 		t.Run("without enabled flag", func(t *testing.T) {
-			overrides, value := th.App.ch.getPluginStateOverride("com.mattermost.apps")
+			overrides, value := th.App.ch.getPluginStateOverride(manifestFor("com.mattermost.apps"))
+			require.True(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("with enabled flag set to true", func(t *testing.T) {
+			// AppsEnabled is retired and forced off on config load (MM-69643), so this
+			// override path can no longer be reached at runtime. Kept skipped rather
+			// than deleted so it is removed alongside the rest of the Apps code.
+			t.Skip("AppsEnabled feature flag is retired (MM-69643)")
+
+			mainHelper.Parallel(t)
+			th2 := SetupConfig(t, func(cfg *model.Config) {
+				cfg.FeatureFlags.AppsEnabled = true
+			})
+
+			overrides, value := th2.App.ch.getPluginStateOverride(manifestFor("com.mattermost.apps"))
 			require.False(t, overrides)
 			require.False(t, value)
 		})
 
 		t.Run("with enabled flag set to false", func(t *testing.T) {
-			os.Setenv("MM_FEATUREFLAGS_APPSENABLED", "false")
-			defer os.Unsetenv("MM_FEATUREFLAGS_APPSENABLED")
+			mainHelper.Parallel(t)
+			th2 := SetupConfig(t, func(cfg *model.Config) {
+				cfg.FeatureFlags.AppsEnabled = false
+			})
 
-			th2 := Setup(t)
-			defer th2.TearDown()
-
-			overrides, value := th2.App.ch.getPluginStateOverride("com.mattermost.apps")
+			overrides, value := th2.App.ch.getPluginStateOverride(manifestFor("com.mattermost.apps"))
 			require.True(t, overrides)
 			require.False(t, value)
 		})
+	})
+
+	t.Run("add-on override", func(t *testing.T) {
+		t.Run("without a license", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			require.Nil(t, th2.App.Srv().RemoveLicense())
+
+			overrides, value := th2.App.ch.getPluginStateOverride(addOnManifest)
+			require.True(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("with a license that does not grant the add-on", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			th2.App.Srv().SetLicense(model.NewTestLicense())
+
+			overrides, value := th2.App.ch.getPluginStateOverride(addOnManifest)
+			require.True(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("with a license granting a different add-on", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			th2.App.Srv().SetLicense(model.NewTestLicenseWithAddOns("some-other-addon"))
+
+			overrides, value := th2.App.ch.getPluginStateOverride(addOnManifest)
+			require.True(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("with a license granting the add-on", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			th2.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+
+			overrides, value := th2.App.ch.getPluginStateOverride(addOnManifest)
+			require.False(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("plugins that declare no add-on are unaffected by add-on entitlements", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			th2.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+
+			overrides, value := th2.App.ch.getPluginStateOverride(manifestFor("testplugin"))
+			require.False(t, overrides)
+			require.False(t, value)
+		})
+
+		t.Run("a mixed-case add-on name still matches the entitlement", func(t *testing.T) {
+			mainHelper.Parallel(t)
+			th2 := Setup(t)
+			th2.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+
+			for _, addOn := range []string{"Test-AddOn", "TEST-ADDON"} {
+				manifest := &model.Manifest{Id: testAddOnPluginID, RequiredAddOn: addOn}
+				overrides, value := th2.App.ch.getPluginStateOverride(manifest)
+				require.False(t, overrides, "expected %q to be satisfied by the licensed add-on", addOn)
+				require.False(t, value)
+			}
+		})
+	})
+}
+
+func TestAddOnEntitlementsEqual(t *testing.T) {
+	mainHelper.Parallel(t)
+
+	withAddOns := func(addOns ...string) *model.License {
+		return &model.License{AddOns: addOns}
+	}
+
+	testCases := []struct {
+		description string
+		oldLicense  *model.License
+		newLicense  *model.License
+		expected    bool
+	}{
+		{"both nil", nil, nil, true},
+		{"nil and no add-ons", nil, withAddOns(), true},
+		{"nil and an add-on", nil, withAddOns("crossguard"), false},
+		{"an add-on and nil", withAddOns("crossguard"), nil, false},
+		{"identical", withAddOns("crossguard"), withAddOns("crossguard"), true},
+		{"differing case", withAddOns("crossguard"), withAddOns("CrossGuard"), true},
+		{"differing order", withAddOns("a", "b"), withAddOns("b", "a"), true},
+		{"duplicates only", withAddOns("a"), withAddOns("a", "a"), true},
+		{"added", withAddOns("a"), withAddOns("a", "b"), false},
+		{"removed", withAddOns("a", "b"), withAddOns("a"), false},
+		{"replaced", withAddOns("a"), withAddOns("b"), false},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.description, func(t *testing.T) {
+			require.Equal(t, testCase.expected, addOnEntitlementsEqual(testCase.oldLicense, testCase.newLicense))
+		})
+	}
+}
+
+// Covers activation as the license changes with no accompanying config change,
+// which no config listener would ever fire for.
+func TestAddOnPluginLicenseGate(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Enable = true
+		*cfg.PluginSettings.RequirePluginSignature = false
+	})
+
+	env := th.App.GetPluginsEnvironment()
+	require.NotNil(t, env)
+
+	// Without a server or webapp component the plugin parks in
+	// PluginStateFailedToStart and never reaches the gate.
+	bundlePath := "webapp/testaddon_bundle.js"
+	manifest := &model.Manifest{
+		Id:            testAddOnPluginID,
+		Version:       "0.0.1",
+		RequiredAddOn: testAddOn,
+		Webapp:        &model.ManifestWebapp{BundlePath: bundlePath},
+	}
+	manifestJSON, jsonErr := json.Marshal(manifest)
+	require.NoError(t, jsonErr)
+
+	_, appErr := th.App.ch.installPluginLocally(
+		makeInMemoryGzipTarFile(t, []testFile{
+			{"plugin.json", string(manifestJSON)},
+			{bundlePath, "console.log('testaddon');"},
+		}),
+		installPluginLocallyOnlyIfNew,
+	)
+	checkNoError(t, appErr)
+
+	requireState := func(t *testing.T, expected int) {
+		t.Helper()
+
+		statuses, err := env.Statuses()
+		require.NoError(t, err)
+		require.Len(t, statuses, 1)
+		require.Equal(t, testAddOnPluginID, statuses[0].PluginId)
+		require.Equal(t, expected, statuses[0].State)
+	}
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		cfg.PluginSettings.PluginStates[testAddOnPluginID] = &model.PluginState{Enable: true}
+	})
+	require.Nil(t, th.App.Srv().RemoveLicense())
+
+	t.Run("enabled in config but unlicensed stays inactive", func(t *testing.T) {
+		requireState(t, model.PluginStateNotRunning)
+	})
+
+	t.Run("a license without the add-on leaves it inactive", func(t *testing.T) {
+		th.App.Srv().SetLicense(model.NewTestLicense())
+		requireState(t, model.PluginStateNotRunning)
+	})
+
+	t.Run("granting the add-on activates it with no config change", func(t *testing.T) {
+		th.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+		requireState(t, model.PluginStateRunning)
+	})
+
+	t.Run("removing the license deactivates it", func(t *testing.T) {
+		require.Nil(t, th.App.Srv().RemoveLicense())
+		requireState(t, model.PluginStateNotRunning)
+	})
+
+	t.Run("re-granting the add-on reactivates it", func(t *testing.T) {
+		th.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+		requireState(t, model.PluginStateRunning)
+	})
+}
+
+// Covers the activation check in installExtractedPlugin, which runs when a plugin
+// is installed while config already has it enabled.
+func TestInstallAddOnPluginUnlicensed(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Enable = true
+		*cfg.PluginSettings.RequirePluginSignature = false
+		cfg.PluginSettings.PluginStates[testAddOnPluginID] = &model.PluginState{Enable: true}
+	})
+	require.Nil(t, th.App.Srv().RemoveLicense())
+
+	env := th.App.GetPluginsEnvironment()
+	require.NotNil(t, env)
+
+	bundlePath := "webapp/testaddon_bundle.js"
+	manifest := &model.Manifest{
+		Id:            testAddOnPluginID,
+		Version:       "0.0.1",
+		RequiredAddOn: testAddOn,
+		Webapp:        &model.ManifestWebapp{BundlePath: bundlePath},
+	}
+	manifestJSON, jsonErr := json.Marshal(manifest)
+	require.NoError(t, jsonErr)
+
+	_, appErr := th.App.ch.installPluginLocally(
+		makeInMemoryGzipTarFile(t, []testFile{
+			{"plugin.json", string(manifestJSON)},
+			{bundlePath, "console.log('testaddon');"},
+		}),
+		installPluginLocallyOnlyIfNew,
+	)
+	checkNoError(t, appErr)
+
+	statuses, err := env.Statuses()
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.Equal(t, testAddOnPluginID, statuses[0].PluginId)
+	require.Equal(t, model.PluginStateNotRunning, statuses[0].State)
+}
+
+func TestEnablePluginAddOnLicenseCheck(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
+
+	th.App.UpdateConfig(func(cfg *model.Config) {
+		*cfg.PluginSettings.Enable = true
+		*cfg.PluginSettings.RequirePluginSignature = false
+	})
+
+	bundlePath := "webapp/testaddon_bundle.js"
+	manifest := &model.Manifest{
+		Id:            testAddOnPluginID,
+		Version:       "0.0.1",
+		RequiredAddOn: testAddOn,
+		Webapp:        &model.ManifestWebapp{BundlePath: bundlePath},
+	}
+	manifestJSON, jsonErr := json.Marshal(manifest)
+	require.NoError(t, jsonErr)
+
+	_, appErr := th.App.ch.installPluginLocally(
+		makeInMemoryGzipTarFile(t, []testFile{
+			{"plugin.json", string(manifestJSON)},
+			{bundlePath, "console.log('testaddon');"},
+		}),
+		installPluginLocallyOnlyIfNew,
+	)
+	checkNoError(t, appErr)
+
+	t.Run("rejects an unlicensed add-on instead of reporting success", func(t *testing.T) {
+		require.Nil(t, th.App.Srv().RemoveLicense())
+
+		appErr := th.App.EnablePlugin(testAddOnPluginID)
+		require.NotNil(t, appErr)
+		require.Equal(t, "app.plugin.addon_not_licensed.app_error", appErr.Id)
+		require.Equal(t, http.StatusForbidden, appErr.StatusCode)
+
+		// A stale Enable: true would activate the plugin on the next license change.
+		state := th.App.Config().PluginSettings.PluginStates[testAddOnPluginID]
+		require.True(t, state == nil || !state.Enable)
+
+		// An add-on name need not match the plugin id, so it is what tells the admin
+		// what to buy.
+		// A missing {{.AddOn}} placeholder drops the param silently.
+		appErr.Translate(i18n.GetUserTranslations("en"))
+		require.Contains(t, appErr.Message, testAddOn)
+	})
+
+	t.Run("allows a licensed add-on", func(t *testing.T) {
+		th.App.Srv().SetLicense(model.NewTestLicenseWithAddOns(testAddOn))
+
+		appErr := th.App.EnablePlugin(testAddOnPluginID)
+		require.Nil(t, appErr)
+		require.True(t, th.App.Config().PluginSettings.PluginStates[testAddOnPluginID].Enable)
+	})
+
+	t.Run("disabling still works after the license lapses", func(t *testing.T) {
+		require.Nil(t, th.App.Srv().RemoveLicense())
+
+		// The gate must not block disabling, or a stale Enable: true is unclearable.
+		appErr := th.App.DisablePlugin(testAddOnPluginID)
+		require.Nil(t, appErr)
+		require.False(t, th.App.Config().PluginSettings.PluginStates[testAddOnPluginID].Enable)
 	})
 }

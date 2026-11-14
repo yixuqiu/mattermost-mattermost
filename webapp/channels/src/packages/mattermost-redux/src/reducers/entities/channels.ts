@@ -7,6 +7,8 @@ import {combineReducers} from 'redux';
 
 import type {
     Channel,
+    ChannelJoinRequest,
+    ChannelJoinRequestsState,
     ChannelMembership,
     ChannelStats,
     ChannelMemberCountByGroup,
@@ -22,6 +24,7 @@ import type {
     IDMappedObjects,
 } from '@mattermost/types/utilities';
 
+import type {MMReduxAction} from 'mattermost-redux/action_types';
 import {AdminTypes, ChannelTypes, UserTypes, SchemeTypes, GroupTypes, PostTypes} from 'mattermost-redux/action_types';
 import {General} from 'mattermost-redux/constants';
 import {MarkUnread} from 'mattermost-redux/constants/channels';
@@ -60,7 +63,7 @@ function removeChannelFromSet(state: RelationOneToManyUnique<Team, Channel>, act
     };
 }
 
-function currentChannelId(state = '', action: AnyAction) {
+function currentChannelId(state = '', action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.SELECT_CHANNEL:
         return action.data;
@@ -71,7 +74,7 @@ function currentChannelId(state = '', action: AnyAction) {
     }
 }
 
-function channels(state: IDMappedObjects<Channel> = {}, action: AnyAction) {
+function channels(state: IDMappedObjects<Channel> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNEL: {
         const channel: Channel = toClientChannel(action.data);
@@ -221,7 +224,7 @@ function toClientChannel(serverChannel: ServerChannel): Channel {
     return channel;
 }
 
-function channelsInTeam(state: ChannelsState['channelsInTeam'] = {}, action: AnyAction) {
+function channelsInTeam(state: ChannelsState['channelsInTeam'] = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNEL: {
         const nextSet = new Set(state[action.data.team_id]);
@@ -247,7 +250,7 @@ function channelsInTeam(state: ChannelsState['channelsInTeam'] = {}, action: Any
     }
 }
 
-export function myMembers(state: RelationOneToOne<Channel, ChannelMembership> = {}, action: AnyAction) {
+export function myMembers(state: RelationOneToOne<Channel, ChannelMembership> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_MY_CHANNEL_MEMBER: {
         const channelMember: ChannelMembership = action.data;
@@ -499,6 +502,19 @@ function receiveChannelMember(state: RelationOneToOne<Channel, ChannelMembership
             urgent_mention_count: Math.min(existingChannelMember.urgent_mention_count, received.urgent_mention_count),
             mention_count_root: Math.min(existingChannelMember.mention_count_root, received.mention_count_root),
         };
+    } else if (existingChannelMember &&
+               updatedChannelMember.last_viewed_at === existingChannelMember.last_viewed_at &&
+               updatedChannelMember.mention_count < existingChannelMember.mention_count) {
+        // A WS event (e.g. channel_member_updated after IncrementMentionCount) may have set
+        // mention_count to 1 before this REST response arrived with mention_count=0. Since
+        // last_viewed_at hasn't changed (the user hasn't read the channel), the server cannot
+        // have legitimately decremented mention_count — preserve the higher value.
+        updatedChannelMember = {
+            ...received,
+            mention_count: existingChannelMember.mention_count,
+            mention_count_root: Math.max(existingChannelMember.mention_count_root, received.mention_count_root),
+            urgent_mention_count: Math.max(existingChannelMember.urgent_mention_count, received.urgent_mention_count),
+        };
     }
 
     return {
@@ -507,7 +523,7 @@ function receiveChannelMember(state: RelationOneToOne<Channel, ChannelMembership
     };
 }
 
-function membersInChannel(state: RelationOneToOne<Channel, Record<string, ChannelMembership>> = {}, action: AnyAction) {
+function membersInChannel(state: RelationOneToOne<Channel, Record<string, ChannelMembership>> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_MY_CHANNEL_MEMBER:
     case ChannelTypes.RECEIVED_CHANNEL_MEMBER: {
@@ -580,21 +596,27 @@ function membersInChannel(state: RelationOneToOne<Channel, Record<string, Channe
     }
 }
 
-function stats(state: RelationOneToOne<Channel, ChannelStats> = {}, action: AnyAction) {
+function stats(state: RelationOneToOne<Channel, ChannelStats> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNEL_STATS: {
-        const nextState = {...state};
-        const stat = action.data;
-        nextState[stat.channel_id] = stat;
+        const stat: ChannelStats = action.data;
 
-        return nextState;
+        if (isEqual(state[stat.channel_id], stat)) {
+            return state;
+        }
+
+        return {
+            ...state,
+            [stat.channel_id]: stat,
+        };
     }
     case ChannelTypes.ADD_CHANNEL_MEMBER_SUCCESS: {
         const nextState = {...state};
         const id = action.id;
+        const receivedCount = action.count ? action.count : 1;
         const nextStat = nextState[id];
         if (nextStat) {
-            const count = nextStat.member_count + 1;
+            const count = nextStat.member_count + receivedCount;
             return {
                 ...nextState,
                 [id]: {
@@ -681,7 +703,7 @@ function stats(state: RelationOneToOne<Channel, ChannelStats> = {}, action: AnyA
     }
 }
 
-function channelsMemberCount(state: Record<string, number> = {}, action: AnyAction) {
+function channelsMemberCount(state: Record<string, number> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNELS_MEMBER_COUNT: {
         const memberCount = action.data;
@@ -697,7 +719,7 @@ function channelsMemberCount(state: Record<string, number> = {}, action: AnyActi
     }
 }
 
-function groupsAssociatedToChannel(state: any = {}, action: AnyAction) {
+function groupsAssociatedToChannel(state: any = {}, action: MMReduxAction) {
     switch (action.type) {
     case GroupTypes.RECEIVED_ALL_GROUPS_ASSOCIATED_TO_CHANNELS_IN_TEAM: {
         const {groupsByChannelId} = action.data;
@@ -791,7 +813,7 @@ function updateChannelMemberSchemeRoles(state: any, action: AnyAction) {
     return state;
 }
 
-function totalCount(state = 0, action: AnyAction) {
+function totalCount(state = 0, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_TOTAL_CHANNEL_COUNT: {
         return action.data;
@@ -801,7 +823,7 @@ function totalCount(state = 0, action: AnyAction) {
     }
 }
 
-export function manuallyUnread(state: RelationOneToOne<Channel, boolean> = {}, action: AnyAction) {
+export function manuallyUnread(state: RelationOneToOne<Channel, boolean> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.REMOVE_MANUALLY_UNREAD: {
         if (state[action.data.channelId]) {
@@ -825,7 +847,7 @@ export function manuallyUnread(state: RelationOneToOne<Channel, boolean> = {}, a
     }
 }
 
-export function channelModerations(state: any = {}, action: AnyAction) {
+export function channelModerations(state: any = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNEL_MODERATIONS: {
         const {channelId, moderations} = action.data;
@@ -839,7 +861,7 @@ export function channelModerations(state: any = {}, action: AnyAction) {
     }
 }
 
-export function channelMemberCountsByGroup(state: any = {}, action: AnyAction) {
+export function channelMemberCountsByGroup(state: any = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_CHANNEL_MEMBER_COUNTS_BY_GROUP: {
         const {channelId, memberCounts} = action.data;
@@ -858,7 +880,7 @@ export function channelMemberCountsByGroup(state: any = {}, action: AnyAction) {
         action.data.forEach((group: Group) => {
             memberCountsByGroup[group.id] = {
                 group_id: group.id,
-                channel_member_count: group.channel_member_count || 0,
+                channel_member_count: group.member_count || 0,
                 channel_member_timezones_count: group.channel_member_timezones_count || 0,
             };
         });
@@ -873,7 +895,7 @@ export function channelMemberCountsByGroup(state: any = {}, action: AnyAction) {
     }
 }
 
-function roles(state: RelationOneToOne<Channel, Set<string>> = {}, action: AnyAction) {
+function roles(state: RelationOneToOne<Channel, Set<string>> = {}, action: MMReduxAction) {
     switch (action.type) {
     case ChannelTypes.RECEIVED_MY_CHANNEL_MEMBER: {
         const channelMember = action.data;
@@ -935,6 +957,182 @@ function roles(state: RelationOneToOne<Channel, Set<string>> = {}, action: AnyAc
     }
 }
 
+function restrictedDMs(state: ChannelsState['restrictedDMs'] = {}, action: MMReduxAction) {
+    switch (action.type) {
+    case ChannelTypes.RECEIVED_IS_DM_RESTRICTED: {
+        return {
+            ...state,
+            [action.data.channelId]: action.data.isRestricted,
+        };
+    }
+    case ChannelTypes.RESTRICTED_DMS_TEAMS_CHANGED:
+    case UserTypes.LOGOUT_SUCCESS:
+        return {};
+    default:
+        return state;
+    }
+}
+
+// Discoverable Private Channels — join requests reducer.
+//
+// One slice tracks four orthogonal projections of the same underlying rows:
+// - myPendingByChannel: the user's own pending row per channel (drives Browse
+//   row state machine + Request to Join modal pending state).
+// - byChannel: full admin-queue listings keyed by channel id (drives the
+//   admin queue UI in PR 4).
+// - countsByChannel: lightweight pending count per channel (drives the
+//   indicator triad).
+// - myList: the user's pending requests across channels (drives the My
+//   Pending Requests tab in PR 4).
+//
+// WebSocket events (channel_join_request_created / _updated) and the local
+// action thunks both feed this slice. Terminal status transitions
+// (approved / denied / withdrawn) clear the myPending entry but keep the row
+// in byChannel so the admin's Past tab can show it.
+const initialJoinRequestsState: ChannelJoinRequestsState = {
+    myPendingByChannel: {},
+    byChannel: {},
+    countsByChannel: {},
+    myList: [],
+};
+
+function isTerminal(status: ChannelJoinRequest['status']) {
+    return status === 'approved' || status === 'denied' || status === 'withdrawn';
+}
+
+export function joinRequests(state: ChannelJoinRequestsState = initialJoinRequestsState, action: MMReduxAction): ChannelJoinRequestsState {
+    switch (action.type) {
+    case ChannelTypes.RECEIVED_MY_CHANNEL_JOIN_REQUEST: {
+        const req: ChannelJoinRequest = action.data;
+        if (isTerminal(req.status)) {
+            const rest = {...state.myPendingByChannel};
+            Reflect.deleteProperty(rest, req.channel_id);
+            return {...state, myPendingByChannel: rest};
+        }
+        return {
+            ...state,
+            myPendingByChannel: {...state.myPendingByChannel, [req.channel_id]: req},
+        };
+    }
+
+    case ChannelTypes.RECEIVED_MY_CHANNEL_JOIN_REQUESTS: {
+        const rows: ChannelJoinRequest[] = action.data.requests ?? [];
+        const myPending: Record<string, ChannelJoinRequest> = {};
+        rows.forEach((req) => {
+            if (req.status === 'pending') {
+                myPending[req.channel_id] = req;
+            }
+        });
+
+        // This is the authoritative full list of the user's requests, so
+        // rebuild myPendingByChannel from it rather than merging — a request
+        // that resolved while the client missed the WebSocket event would
+        // otherwise linger as a stale pending entry.
+        return {
+            ...state,
+            myList: rows,
+            myPendingByChannel: myPending,
+        };
+    }
+
+    case ChannelTypes.RECEIVED_CHANNEL_JOIN_REQUESTS: {
+        const {channel_id: channelId, list} = action.data;
+        return {
+            ...state,
+            byChannel: {...state.byChannel, [channelId]: list.requests ?? []},
+        };
+    }
+
+    case ChannelTypes.RECEIVED_CHANNEL_JOIN_REQUEST_COUNT: {
+        const {channel_id: channelId, count} = action.data;
+        return {
+            ...state,
+            countsByChannel: {...state.countsByChannel, [channelId]: count},
+        };
+    }
+
+    case ChannelTypes.CHANNEL_JOIN_REQUEST_CREATED: {
+        const req: ChannelJoinRequest = action.data;
+        const existing = state.byChannel[req.channel_id] ?? [];
+        const alreadyTracked = existing.some((r) => r.id === req.id);
+        const dedup = existing.filter((r) => r.id !== req.id);
+
+        // Only bump the pending count for a genuinely new pending row. A
+        // re-delivered CREATED event (same id) must not inflate the count.
+        const counts = (alreadyTracked || req.status !== 'pending') ? state.countsByChannel : {
+            ...state.countsByChannel,
+            [req.channel_id]: (state.countsByChannel[req.channel_id] ?? 0) + 1,
+        };
+        return {
+            ...state,
+            byChannel: {...state.byChannel, [req.channel_id]: [req, ...dedup]},
+            countsByChannel: counts,
+        };
+    }
+
+    case ChannelTypes.CHANNEL_JOIN_REQUEST_UPDATED: {
+        const req: ChannelJoinRequest = action.data;
+        const existing = state.byChannel[req.channel_id] ?? [];
+        const prev = existing.find((r) => r.id === req.id);
+
+        // Persist the row even when it wasn't tracked yet, so a re-delivered
+        // terminal event finds it and becomes a terminal -> terminal no-op
+        // rather than decrementing the count a second time.
+        const replaced = prev ?
+            existing.map((r) => (r.id === req.id ? req : r)) :
+            [req, ...existing];
+        const myPending = {...state.myPendingByChannel};
+        if (isTerminal(req.status)) {
+            delete myPending[req.channel_id];
+        }
+        const myList = state.myList.map((r) => (r.id === req.id ? req : r));
+
+        // Adjust the pending count from the actual status transition rather
+        // than the incoming status alone. This keeps the count correct when
+        // the acting admin receives BOTH the optimistic local dispatch and
+        // the server's WebSocket echo for a single approve/deny: the first
+        // dispatch flips the tracked row to terminal, so the echo becomes a
+        // terminal -> terminal no-op. When the row isn't tracked (only the
+        // count is loaded, not the full queue) there is no local echo to
+        // double-count, so fall back to a single decrement on a terminal
+        // update. The floor at 0 guards against any missed CREATED bump.
+        let counts = state.countsByChannel;
+        const leftPending = isTerminal(req.status) && (prev ? prev.status === 'pending' : true);
+        if (leftPending) {
+            const next = (counts[req.channel_id] ?? 0) - 1;
+            counts = {...counts, [req.channel_id]: Math.max(0, next)};
+        }
+        return {
+            ...state,
+            byChannel: {...state.byChannel, [req.channel_id]: replaced},
+            myPendingByChannel: myPending,
+            myList,
+            countsByChannel: counts,
+        };
+    }
+
+    case ChannelTypes.CHANNEL_JOIN_REQUEST_REMOVED: {
+        const {channel_id: channelId, request_id: requestId} = action.data;
+        const rest = {...state.myPendingByChannel};
+        Reflect.deleteProperty(rest, channelId);
+        const filtered = requestId ? (state.byChannel[channelId] ?? []).filter((r) => r.id !== requestId) : state.byChannel[channelId];
+        const myList = requestId ? state.myList.filter((r) => r.id !== requestId) : state.myList;
+        return {
+            ...state,
+            myPendingByChannel: rest,
+            byChannel: filtered ? {...state.byChannel, [channelId]: filtered} : state.byChannel,
+            myList,
+        };
+    }
+
+    case UserTypes.LOGOUT_SUCCESS:
+        return initialJoinRequestsState;
+
+    default:
+        return state;
+    }
+}
+
 export default combineReducers({
 
     // the current selected channel
@@ -976,4 +1174,9 @@ export default combineReducers({
 
     // object where key is the channel id and value is the member count for the channel
     channelsMemberCount,
+
+    restrictedDMs,
+
+    // Discoverable Private Channels — join requests slice
+    joinRequests,
 });

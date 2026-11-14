@@ -14,11 +14,11 @@ import (
 )
 
 func TestGetTermsOfService(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 	client := th.Client
 
-	_, appErr := th.App.CreateTermsOfService("abc", th.BasicUser.Id)
+	_, appErr := th.App.CreateTermsOfService(th.Context, "abc", th.BasicUser.Id)
 	require.Nil(t, appErr)
 
 	termsOfService, _, err := client.GetTermsOfService(context.Background(), "")
@@ -31,8 +31,8 @@ func TestGetTermsOfService(t *testing.T) {
 }
 
 func TestCreateTermsOfService(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 	client := th.Client
 
 	_, _, err := client.CreateTermsOfService(context.Background(), "terms of service new", th.BasicUser.Id)
@@ -40,8 +40,8 @@ func TestCreateTermsOfService(t *testing.T) {
 }
 
 func TestCreateTermsOfServiceAdminUser(t *testing.T) {
-	th := Setup(t).InitBasic()
-	defer th.TearDown()
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
 	client := th.SystemAdminClient
 
 	termsOfService, _, err := client.CreateTermsOfService(context.Background(), "terms of service new", th.SystemAdminUser.Id)

@@ -2,17 +2,17 @@
 // See LICENSE.txt for license information.
 
 import classNames from 'classnames';
-import React, {useCallback, useRef, useState} from 'react';
+import React, {useCallback, useRef, useState, useMemo} from 'react';
 import {FormattedList, FormattedMessage, useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
-import type {ValueType} from 'react-select';
+import type {OnChangeValue} from 'react-select';
 
 import {GenericModal} from '@mattermost/components';
 import type {Post, PostPreviewMetadata} from '@mattermost/types/posts';
 
 import {General, Permissions} from 'mattermost-redux/constants';
-import {makeGetChannel} from 'mattermost-redux/selectors/entities/channels';
-import {haveIChannelPermission} from 'mattermost-redux/selectors/entities/roles';
+import {getMyChannelMember, makeGetChannel} from 'mattermost-redux/selectors/entities/channels';
+import {haveIChannelPermission, haveITeamPermission} from 'mattermost-redux/selectors/entities/roles';
 import {getCurrentTeam} from 'mattermost-redux/selectors/entities/teams';
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
@@ -50,9 +50,9 @@ const ForwardPostModal = ({onExited, post}: Props) => {
     const {formatMessage} = useIntl();
     const dispatch = useDispatch();
 
-    const getChannel = makeGetChannel();
+    const getChannel = useMemo(() => makeGetChannel(), []);
 
-    const channel = useSelector((state: GlobalState) => getChannel(state, {id: post.channel_id}));
+    const channel = useSelector((state: GlobalState) => getChannel(state, post.channel_id));
     const currentTeam = useSelector(getCurrentTeam);
 
     const relativePermaLink = useSelector((state: GlobalState) => (currentTeam ? getPermalinkURL(state, currentTeam.id, post.id) : ''));
@@ -66,17 +66,16 @@ const ForwardPostModal = ({onExited, post}: Props) => {
     const [postError, setPostError] = useState<React.ReactNode>(null);
     const [selectedChannel, setSelectedChannel] = useState<ChannelOption>();
 
-    const bodyRef = useRef<HTMLDivElement>();
+    const bodyRef = useRef<HTMLDivElement>(undefined);
 
-    const measuredRef = useCallback((node) => {
+    const measuredRef = useCallback((node: HTMLDivElement) => {
         if (node !== null) {
             bodyRef.current = node;
             setBodyHeight(node.getBoundingClientRect().height);
         }
     }, []);
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const onHeightChange = (width: number, height: number) => {
+    const onHeightChange = () => {
         if (bodyRef.current) {
             setBodyHeight(bodyRef.current.getBoundingClientRect().height);
         }
@@ -84,11 +83,19 @@ const ForwardPostModal = ({onExited, post}: Props) => {
 
     const selectedChannelId = selectedChannel?.details?.id || '';
 
+    const isSelectedChannelUnjoinedPublic = useSelector((state: GlobalState) => (
+        selectedChannel?.details?.type === Constants.OPEN_CHANNEL && !getMyChannelMember(state, selectedChannelId)
+    ));
+
     const canPostInSelectedChannel = useSelector(
         (state: GlobalState) => {
             const channelId = isPrivateConversation ? post.channel_id : selectedChannelId;
             const isDMChannel = selectedChannel?.details?.type === Constants.DM_CHANNEL;
             const teamId = isPrivateConversation ? currentTeam?.id : selectedChannel?.details?.team_id;
+
+            if (isSelectedChannelUnjoinedPublic) {
+                return Boolean(haveITeamPermission(state, teamId, Permissions.JOIN_PUBLIC_CHANNELS));
+            }
 
             const hasChannelPermission = haveIChannelPermission(
                 state,
@@ -108,7 +115,7 @@ const ForwardPostModal = ({onExited, post}: Props) => {
     }, [onExited]);
 
     const handleChannelSelect = useCallback(
-        (channel: ValueType<ChannelOption>) => {
+        (channel: OnChangeValue<ChannelOption, boolean>) => {
             if (Array.isArray(channel)) {
                 setSelectedChannel(channel[0]);
             }
@@ -162,7 +169,6 @@ const ForwardPostModal = ({onExited, post}: Props) => {
                     defaultMessage='This message is from a private conversation and can only be shared with {participants}'
                     values={{
                         participants: <FormattedList value={participants}/>,
-                        strong: (x: React.ReactNode) => <strong>{x}</strong>,
                     }}
                 />
             );
@@ -205,9 +211,20 @@ const ForwardPostModal = ({onExited, post}: Props) => {
                 return dispatch(openDirectChannelToUserId(userId));
             }
             return {data: false} as ActionResult;
-        }).then(({data}) => {
+        }).then(async ({data}) => {
             if (data) {
                 channelToForward.details.id = data.id;
+            }
+
+            if (isSelectedChannelUnjoinedPublic) {
+                const {error} = await dispatch(joinChannelById(channelToForward.details.id));
+                if (error) {
+                    throw new Error(error.message || formatMessage({
+                        id: 'forward_post_modal.join_error',
+                        defaultMessage: 'Unable to join the channel.',
+                        description: 'Error shown in the Forward Message modal when joining the selected public channel fails without a specific error message.',
+                    }));
+                }
             }
 
             return dispatch(forwardPost(
@@ -215,11 +232,6 @@ const ForwardPostModal = ({onExited, post}: Props) => {
                 channelToForward.details,
                 comment,
             ));
-        }).then(() => {
-            if (type === Constants.MENTION_MORE_CHANNELS && type === Constants.OPEN_CHANNEL) {
-                return dispatch(joinChannelById(channelToForward.details.id));
-            }
-            return {data: false};
         }).then(() => {
             // only switch channels when we are not in a private conversation
             if (!isPrivateConversation) {
@@ -229,7 +241,9 @@ const ForwardPostModal = ({onExited, post}: Props) => {
         }).then(() => {
             onHide();
         }).catch((result) => {
-            if (result?.error) {
+            if (result instanceof Error) {
+                handlePostError(result.message);
+            } else if (result?.error) {
                 handlePostError(result.error);
             }
         });

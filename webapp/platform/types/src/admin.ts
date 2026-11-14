@@ -1,6 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type {AccessControlPolicy} from './access_control';
 import type {Audit} from './audits';
 import type {Compliance} from './compliance';
 import type {AdminConfig, ClientLicense, EnvironmentConfig} from './config';
@@ -10,46 +11,89 @@ import type {PluginRedux, PluginStatusRedux} from './plugins';
 import type {SamlCertificateStatus, SamlMetadataResponse} from './saml';
 import type {Team} from './teams';
 import type {UserAccessToken, UserProfile} from './users';
-import type {RelationOneToOne} from './utilities';
+import type {RelationOneToOne, IDMappedObjects} from './utilities';
 
+// The levels the server writes to its log file
 export enum LogLevelEnum {
-    SILLY = 'silly',
-    DEBUG = 'debug',
-    INFO = 'info',
-    WARN = 'warn',
+    PANIC = 'panic',
+    FATAL = 'fatal',
+    CRITICAL = 'critical',
     ERROR = 'error',
+    WARN = 'warn',
+    INFO = 'info',
+    STDLOG = 'stdlog',
+    DEBUG = 'debug',
+    TRACE = 'trace',
+
+    /** @deprecated The server never logs this level. */
+    SILLY = 'silly',
 }
 
 export type LogServerNames = string[];
 export type LogLevels = LogLevelEnum[];
-export type LogDateFrom = string; // epoch
-export type LogDateTo = string; // epoch
+
+// "YYYY-MM-DD HH:mm:ss.SSS ±hh:mm", the server's LogFilterDateLayout. Empty leaves the range open.
+export type LogDateFrom = string;
+export type LogDateTo = string;
 
 export type LogObject = {
     caller: string;
-    job_id: string;
     level: LogLevelEnum;
     msg: string;
     timestamp: string;
-    worker: string;
-}
+
+    // Only on entries logged by background jobs
+    job_id?: string;
+    worker?: string;
+
+    // Set on the entry the server returns in place of a node it could not reach
+    failed_node?: boolean;
+
+    // Set on the entry the server adds after a node's lines when its log scan stopped at its time
+    // or size limit, so older matching entries may be missing
+    scan_limited?: boolean;
+
+    // On a scan_limited entry, the timestamp of the oldest line the scan read
+    scanned_back_to?: string;
+};
+
+// The node an entry came from. A symbol, so it can't clash with a field the server logged
+// and is left out of JSON.stringify and Object.entries
+export const LogNodeKey: unique symbol = Symbol('node');
+
+export type LogObjectWithNode = LogObject & {
+    [LogNodeKey]: string;
+};
+
+// The POST /logs/query response: each node's entries, keyed by node name
+export type LogsByNode = Record<string, LogObject[]>;
 
 export type LogFilter = {
     serverNames: LogServerNames;
     logLevels: LogLevels;
     dateFrom: LogDateFrom;
     dateTo: LogDateTo;
-}
+
+    // Matched case-insensitively against every field except level and timestamp
+    search?: string;
+
+    // Keeps entries whose top-level field equals one of its values, such as {plugin_id: ['github']}
+    fields?: LogFieldFilters;
+};
 
 export type LogFilterQuery = {
     server_names: LogServerNames;
     log_levels: LogLevels;
     date_from: LogDateFrom;
     date_to: LogDateTo;
-}
+    search?: string;
+    fields?: LogFieldFilters;
+};
+
+export type LogFieldFilters = Record<string, string[]>;
 
 export type AdminState = {
-    logs: LogObject[];
+    logs: LogsByNode;
     plainLogs: string[];
     audits: Record<string, Audit>;
     config: Partial<AdminConfig>;
@@ -69,6 +113,8 @@ export type AdminState = {
     dataRetentionCustomPolicies: DataRetentionCustomPolicies;
     dataRetentionCustomPoliciesCount: number;
     prevTrialLicense: ClientLicense;
+    accessControlPolicies: IDMappedObjects<AccessControlPolicy>;
+    channelsForAccessControlPolicy: Record<string, string[]>;
 };
 
 export type AnalyticsState = {
@@ -87,14 +133,15 @@ export type AnalyticsState = {
     TOTAL_READ_DB_CONNECTIONS?: number;
     DAILY_ACTIVE_USERS?: number;
     MONTHLY_ACTIVE_USERS?: number;
-    TOTAL_FILE_POSTS?: number;
-    TOTAL_HASHTAG_POSTS?: number;
     TOTAL_IHOOKS?: number;
     TOTAL_OHOOKS?: number;
     TOTAL_COMMANDS?: number;
     TOTAL_SESSIONS?: number;
     REGISTERED_USERS?: number;
-}
+    TOTAL_FILE_COUNT?: number;
+    TOTAL_FILE_SIZE?: number;
+    SINGLE_CHANNEL_GUESTS?: number;
+};
 
 export type ClusterInfo = {
     id: string;
@@ -112,13 +159,20 @@ export type AnalyticsRow = {
 
 export type IndexedPluginAnalyticsRow = {
     [key: string]: PluginAnalyticsRow;
+};
+
+export enum AnalyticsVisualizationType {
+    Count = 'count',
+    LineChart = 'line_chart',
+    DoughnutChart = 'doughnut_chart',
 }
 
 export type PluginAnalyticsRow = {
     id: string;
     name: React.ReactNode;
-    icon: string;
-    value: number;
+    icon?: string;
+    value: any;
+    visualizationType?: AnalyticsVisualizationType;
 };
 
 export type SchemaMigration = {
@@ -132,4 +186,27 @@ export type SupportPacketContent = {
     label: string;
     selected: boolean;
     mandatory: boolean;
-}
+};
+
+export type LdapSampleEntry = {
+    dn: string;
+    username?: string;
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    id?: string;
+    display_name?: string;
+    available_attributes?: Record<string, string>;
+};
+
+export type LdapDiagnosticResult = {
+    test_name: string;
+    test_value: string;
+    total_count: number;
+    entries_with_value: number;
+    message?: string;
+    error?: string;
+    sample_results: LdapSampleEntry[];
+};
+
+export type TestLdapFiltersResponse = LdapDiagnosticResult[];

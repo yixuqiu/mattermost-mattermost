@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/disintegration/imaging"
+	"github.com/mattermost/mattermost/server/v8/channels/app/imaging"
 	_ "golang.org/x/image/webp"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -26,6 +26,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
+	"github.com/mattermost/mattermost/server/v8/channels/utils/imgutils"
 )
 
 const (
@@ -34,9 +35,10 @@ const (
 	MaxEmojiHeight         = 128
 	MaxEmojiOriginalWidth  = 1028
 	MaxEmojiOriginalHeight = 1028
+	MaxEmojiGIFFrames      = 70
 )
 
-func (a *App) CreateEmoji(c request.CTX, sessionUserId string, emoji *model.Emoji, multiPartImageData *multipart.Form) (*model.Emoji, *model.AppError) {
+func (a *App) CreateEmoji(rctx request.CTX, sessionUserId string, emoji *model.Emoji, multiPartImageData *multipart.Form) (*model.Emoji, *model.AppError) {
 	if !*a.Config().ServiceSettings.EnableCustomEmoji {
 		return nil, model.NewAppError("CreateEmoji", "api.emoji.disabled.app_error", nil, "", http.StatusForbidden)
 	}
@@ -59,7 +61,7 @@ func (a *App) CreateEmoji(c request.CTX, sessionUserId string, emoji *model.Emoj
 		return nil, model.NewAppError("CreateEmoji", "api.emoji.create.other_user.app_error", nil, "", http.StatusForbidden)
 	}
 
-	if existingEmoji, err := a.Srv().Store().Emoji().GetByName(c, emoji.Name, true); err == nil && existingEmoji != nil {
+	if existingEmoji, err := a.Srv().Store().Emoji().GetByName(rctx, emoji.Name, true); err == nil && existingEmoji != nil {
 		return nil, model.NewAppError("CreateEmoji", "api.emoji.create.duplicate.app_error", nil, "", http.StatusBadRequest).Wrap(err)
 	}
 
@@ -75,7 +77,7 @@ func (a *App) CreateEmoji(c request.CTX, sessionUserId string, emoji *model.Emoj
 	}
 	defer file.Close()
 
-	if appErr := a.uploadEmojiImage(c, emoji.Id, filename, file); appErr != nil {
+	if appErr := a.uploadEmojiImage(rctx, emoji.Id, filename, file); appErr != nil {
 		return nil, appErr
 	}
 
@@ -94,7 +96,7 @@ func (a *App) CreateEmoji(c request.CTX, sessionUserId string, emoji *model.Emoj
 	return emoji, nil
 }
 
-func (a *App) GetEmojiList(c request.CTX, page, perPage int, sort string) ([]*model.Emoji, *model.AppError) {
+func (a *App) GetEmojiList(rctx request.CTX, page, perPage int, sort string) ([]*model.Emoji, *model.AppError) {
 	list, err := a.Srv().Store().Emoji().GetList(page*perPage, perPage, sort)
 	if err != nil {
 		return nil, model.NewAppError("GetEmojiList", "app.emoji.get_list.internal_error", nil, "", http.StatusInternalServerError).Wrap(err)
@@ -103,7 +105,7 @@ func (a *App) GetEmojiList(c request.CTX, page, perPage int, sort string) ([]*mo
 	return list, nil
 }
 
-func (a *App) uploadEmojiImage(c request.CTX, id string, filename string, file io.ReadSeeker) *model.AppError {
+func (a *App) uploadEmojiImage(rctx request.CTX, id string, filename string, file io.ReadSeeker) *model.AppError {
 	// make sure the file is an image and is within the required dimensions
 	config, _, err := image.DecodeConfig(file)
 	if err != nil {
@@ -122,6 +124,24 @@ func (a *App) uploadEmojiImage(c request.CTX, id string, filename string, file i
 		return model.NewAppError("uploadEmojiImage", "api.emoji.upload.seek.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
+	// Enforce the frame limit on every animated GIF, regardless of whether it
+	// needs resizing, so the cap applies to the direct-write path too.
+	isGIF := model.NewInfo(filename).MimeType == "image/gif"
+	if isGIF {
+		frameCount, err := imgutils.CountGIFFrames(file)
+		if err != nil {
+			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.image.app_error", nil, "", http.StatusBadRequest).Wrap(err)
+		}
+		if frameCount > MaxEmojiGIFFrames {
+			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.too_many_frames.app_error", map[string]any{
+				"MaxFrames": MaxEmojiGIFFrames,
+			}, "", http.StatusBadRequest)
+		}
+		if _, err = file.Seek(0, io.SeekStart); err != nil {
+			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.seek.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+		}
+	}
+
 	if config.Width <= MaxEmojiWidth && config.Height <= MaxEmojiHeight {
 		// No need to resize the image
 		_, appErr := a.WriteFile(file, getEmojiImagePath(id))
@@ -131,50 +151,60 @@ func (a *App) uploadEmojiImage(c request.CTX, id string, filename string, file i
 	// Create a buffer for the resized image
 	buf := &bytes.Buffer{}
 
-	info := model.NewInfo(filename)
-	if info.MimeType == "image/gif" {
-		g, err := gif.DecodeAll(file)
+	// Resizing goes through the shared decoder so the work it takes to turn the
+	// source into an emoji is accounted for the same way as for other
+	// user-uploaded images. The decoded data is released as soon as the result
+	// is encoded, so it is not held for the duration of the upload.
+	if isGIF {
+		g, release, err := a.ch.imgDecoder.DecodeAllGIF(file)
 		if err != nil {
+			if errors.Is(err, imaging.ErrResolutionLimit) {
+				return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.too_large_to_process.app_error", nil, "", http.StatusBadRequest).Wrap(err)
+			}
 			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.gif_decode_error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
+		defer release()
 
 		resizeEmojiGif(g)
 		if err := gif.EncodeAll(buf, g); err != nil {
 			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.gif_encode_error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
+		release()
 	} else {
-		img, _, err := image.Decode(file)
+		img, _, release, err := a.ch.imgDecoder.DecodeMemBounded(file)
 		if err != nil {
+			if errors.Is(err, imaging.ErrResolutionLimit) {
+				return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.too_large_to_process.app_error", nil, "", http.StatusBadRequest).Wrap(err)
+			}
 			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.decode_error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
+		defer release()
 
 		resizedImg := resizeEmoji(img, config.Width, config.Height)
 		if err := a.ch.imgEncoder.EncodePNG(buf, resizedImg); err != nil {
 			return model.NewAppError("uploadEmojiImage", "api.emoji.upload.large_image.encode_error", nil, "", http.StatusBadRequest).Wrap(err)
 		}
+		release()
 	}
 
 	_, appErr := a.WriteFile(buf, getEmojiImagePath(id))
 	return appErr
 }
 
-func (a *App) DeleteEmoji(c request.CTX, emoji *model.Emoji) *model.AppError {
+func (a *App) DeleteEmoji(rctx request.CTX, emoji *model.Emoji) *model.AppError {
 	if err := a.Srv().Store().Emoji().Delete(emoji, model.GetMillis()); err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return model.NewAppError("DeleteEmoji", "app.emoji.delete.no_results", nil, "id="+emoji.Id, http.StatusNotFound).Wrap(err)
-		default:
-			return model.NewAppError("DeleteEmoji", "app.emoji.delete.app_error", nil, "id="+emoji.Id, http.StatusInternalServerError).Wrap(err)
 		}
+		return model.NewAppError("DeleteEmoji", "app.emoji.delete.app_error", nil, "id="+emoji.Id, http.StatusInternalServerError).Wrap(err)
 	}
 
-	a.deleteEmojiImage(c, emoji.Id)
-	a.deleteReactionsForEmoji(c, emoji.Name)
+	a.deleteEmojiImage(rctx, emoji.Id)
+	a.deleteReactionsForEmoji(rctx, emoji.Name)
 	return nil
 }
 
-func (a *App) GetEmoji(c request.CTX, emojiId string) (*model.Emoji, *model.AppError) {
+func (a *App) GetEmoji(rctx request.CTX, emojiId string) (*model.Emoji, *model.AppError) {
 	if !*a.Config().ServiceSettings.EnableCustomEmoji {
 		return nil, model.NewAppError("GetEmoji", "api.emoji.disabled.app_error", nil, "", http.StatusForbidden)
 	}
@@ -183,21 +213,18 @@ func (a *App) GetEmoji(c request.CTX, emojiId string) (*model.Emoji, *model.AppE
 		return nil, model.NewAppError("GetEmoji", "api.emoji.storage.app_error", nil, "", http.StatusForbidden)
 	}
 
-	emoji, err := a.Srv().Store().Emoji().Get(c, emojiId, true)
+	emoji, err := a.Srv().Store().Emoji().Get(rctx, emojiId, true)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return emoji, model.NewAppError("GetEmoji", "app.emoji.get.no_result", nil, "", http.StatusNotFound).Wrap(err)
-		default:
-			return emoji, model.NewAppError("GetEmoji", "app.emoji.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		return emoji, model.NewAppError("GetEmoji", "app.emoji.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	return emoji, nil
 }
 
-func (a *App) GetEmojiByName(c request.CTX, emojiName string) (*model.Emoji, *model.AppError) {
+func (a *App) GetEmojiByName(rctx request.CTX, emojiName string) (*model.Emoji, *model.AppError) {
 	if !*a.Config().ServiceSettings.EnableCustomEmoji {
 		return nil, model.NewAppError("GetEmojiByName", "api.emoji.disabled.app_error", nil, "", http.StatusForbidden)
 	}
@@ -206,21 +233,18 @@ func (a *App) GetEmojiByName(c request.CTX, emojiName string) (*model.Emoji, *mo
 		return nil, model.NewAppError("GetEmojiByName", "api.emoji.storage.app_error", nil, "", http.StatusForbidden)
 	}
 
-	emoji, err := a.Srv().Store().Emoji().GetByName(c, emojiName, true)
+	emoji, err := a.Srv().Store().Emoji().GetByName(rctx, emojiName, true)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return emoji, model.NewAppError("GetEmojiByName", "app.emoji.get_by_name.no_result", nil, "", http.StatusNotFound).Wrap(err)
-		default:
-			return emoji, model.NewAppError("GetEmojiByName", "app.emoji.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		return emoji, model.NewAppError("GetEmojiByName", "app.emoji.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	return emoji, nil
 }
 
-func (a *App) GetMultipleEmojiByName(c request.CTX, names []string) ([]*model.Emoji, *model.AppError) {
+func (a *App) GetMultipleEmojiByName(rctx request.CTX, names []string) ([]*model.Emoji, *model.AppError) {
 	if !*a.Config().ServiceSettings.EnableCustomEmoji {
 		return nil, model.NewAppError("GetMultipleEmojiByName", "api.emoji.disabled.app_error", nil, "", http.StatusForbidden)
 	}
@@ -239,24 +263,21 @@ func (a *App) GetMultipleEmojiByName(c request.CTX, names []string) ([]*model.Em
 		return []*model.Emoji{}, nil
 	}
 
-	emoji, err := a.Srv().Store().Emoji().GetMultipleByName(c, names)
+	emoji, err := a.Srv().Store().Emoji().GetMultipleByName(rctx, names)
 	if err != nil {
-		return nil, model.NewAppError("GetMultipleEmojiByName", "app.emoji.get_by_name.app_error", nil, fmt.Sprintf("names=%v, %v", names, err.Error()), http.StatusInternalServerError)
+		return nil, model.NewAppError("GetMultipleEmojiByName", "app.emoji.get_by_name.app_error", nil, fmt.Sprintf("names=%v", names), http.StatusInternalServerError).Wrap(err)
 	}
 
 	return emoji, nil
 }
 
-func (a *App) GetEmojiImage(c request.CTX, emojiId string) ([]byte, string, *model.AppError) {
-	_, storeErr := a.Srv().Store().Emoji().Get(c, emojiId, true)
+func (a *App) GetEmojiImage(rctx request.CTX, emojiId string) ([]byte, string, *model.AppError) {
+	_, storeErr := a.Srv().Store().Emoji().Get(rctx, emojiId, true)
 	if storeErr != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(storeErr, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](storeErr); ok {
 			return nil, "", model.NewAppError("GetEmojiImage", "app.emoji.get.no_result", nil, "", http.StatusNotFound).Wrap(storeErr)
-		default:
-			return nil, "", model.NewAppError("GetEmojiImage", "app.emoji.get.app_error", nil, "", http.StatusInternalServerError).Wrap(storeErr)
 		}
+		return nil, "", model.NewAppError("GetEmojiImage", "app.emoji.get.app_error", nil, "", http.StatusInternalServerError).Wrap(storeErr)
 	}
 
 	img, appErr := a.ReadFile(getEmojiImagePath(emojiId))
@@ -272,14 +293,14 @@ func (a *App) GetEmojiImage(c request.CTX, emojiId string) ([]byte, string, *mod
 	return img, imageType, nil
 }
 
-func (a *App) SearchEmoji(c request.CTX, name string, prefixOnly bool, limit int) ([]*model.Emoji, *model.AppError) {
+func (a *App) SearchEmoji(rctx request.CTX, name string, prefixOnly bool, limit int) ([]*model.Emoji, *model.AppError) {
 	if !*a.Config().ServiceSettings.EnableCustomEmoji {
 		return nil, model.NewAppError("SearchEmoji", "api.emoji.disabled.app_error", nil, "", http.StatusForbidden)
 	}
 
 	list, err := a.Srv().Store().Emoji().Search(name, prefixOnly, limit)
 	if err != nil {
-		return nil, model.NewAppError("SearchEmoji", "app.emoji.get_by_name.app_error", nil, "name="+name+", "+err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SearchEmoji", "app.emoji.get_by_name.app_error", nil, "name="+name, http.StatusInternalServerError).Wrap(err)
 	}
 
 	return list, nil
@@ -287,24 +308,21 @@ func (a *App) SearchEmoji(c request.CTX, name string, prefixOnly bool, limit int
 
 // GetEmojiStaticURL returns a relative static URL for system default emojis,
 // and the API route for custom ones. Errors if not found or if custom and deleted.
-func (a *App) GetEmojiStaticURL(c request.CTX, emojiName string) (string, *model.AppError) {
+func (a *App) GetEmojiStaticURL(rctx request.CTX, emojiName string) (string, *model.AppError) {
 	subPath, _ := utils.GetSubpathFromConfig(a.Config())
 
 	if id, found := model.GetSystemEmojiId(emojiName); found {
 		return path.Join(subPath, "/static/emoji", id+".png"), nil
 	}
 
-	emoji, err := a.Srv().Store().Emoji().GetByName(c, emojiName, true)
+	emoji, err := a.Srv().Store().Emoji().GetByName(rctx, emojiName, true)
 	if err == nil {
 		return path.Join(subPath, "/api/v4/emoji", emoji.Id, "image"), nil
 	}
-	var nfErr *store.ErrNotFound
-	switch {
-	case errors.As(err, &nfErr):
+	if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
 		return "", model.NewAppError("GetEmojiStaticURL", "app.emoji.get_by_name.no_result", nil, "", http.StatusNotFound).Wrap(err)
-	default:
-		return "", model.NewAppError("GetEmojiStaticURL", "app.emoji.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
+	return "", model.NewAppError("GetEmojiStaticURL", "app.emoji.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 }
 
 func resizeEmojiGif(gifImg *gif.GIF) {
@@ -337,7 +355,7 @@ func resizeEmoji(img image.Image, width int, height int) image.Image {
 	if emojiHeight <= MaxEmojiHeight && emojiWidth <= MaxEmojiWidth {
 		return img
 	}
-	return imaging.Fit(img, MaxEmojiWidth, MaxEmojiHeight, imaging.Lanczos)
+	return imaging.Fit(img, MaxEmojiWidth, MaxEmojiHeight)
 }
 
 func imageToPaletted(img image.Image) *image.Paletted {
@@ -354,21 +372,22 @@ func (a *App) deleteEmojiImage(rctx request.CTX, id string) {
 }
 
 func (a *App) deleteReactionsForEmoji(rctx request.CTX, emojiName string) {
-	if err := a.Srv().Store().Reaction().DeleteAllWithEmojiName(emojiName); err != nil {
+	if err := a.Srv().Store().Reaction().DeleteAllWithEmojiName(rctx, emojiName); err != nil {
 		rctx.Logger().Warn("Unable to delete reactions when deleting emoji", mlog.String("emoji_name", emojiName), mlog.Err(err))
 	}
 }
 
-func (a *App) confirmEmojiExists(c request.CTX, emojiName string) *model.AppError {
+func (a *App) confirmEmojiExists(rctx request.CTX, emojiName string) error {
 	if model.IsSystemEmojiName(emojiName) {
 		return nil
 	}
 
-	err := model.IsValidEmojiName(emojiName)
-	if err != nil {
+	if err := model.IsValidEmojiName(emojiName); err != nil {
 		return err
 	}
 
-	_, err = a.GetEmojiByName(c, emojiName)
-	return err
+	if _, err := a.GetEmojiByName(rctx, emojiName); err != nil {
+		return err
+	}
+	return nil
 }

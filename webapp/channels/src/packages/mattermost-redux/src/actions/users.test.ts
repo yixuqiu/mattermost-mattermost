@@ -5,21 +5,23 @@ import fs from 'fs';
 
 import nock from 'nock';
 
+import {CollapsedThreads} from '@mattermost/types/config';
 import type {UserProfile} from '@mattermost/types/users';
 
-import {UserTypes} from 'mattermost-redux/action_types';
+import {GeneralTypes, UserTypes} from 'mattermost-redux/action_types';
 import * as Actions from 'mattermost-redux/actions/users';
 import {Client4} from 'mattermost-redux/client';
+import {General, RequestStatus} from 'mattermost-redux/constants';
 import deepFreeze from 'mattermost-redux/utils/deep_freeze';
 
 import TestHelper from '../../test/test_helper';
 import configureStore from '../../test/test_store';
-import {RequestStatus} from '../constants';
 
 const OK_RESPONSE = {status: 'OK'};
 
 describe('Actions.Users', () => {
     let store = configureStore();
+
     beforeAll(() => {
         TestHelper.initBasic(Client4);
     });
@@ -29,7 +31,7 @@ describe('Actions.Users', () => {
             entities: {
                 general: {
                     config: {
-                        CollapsedThreads: 'always_on',
+                        CollapsedThreads: CollapsedThreads.ALWAYS_ON,
                     },
                 },
             },
@@ -256,21 +258,256 @@ describe('Actions.Users', () => {
         expect(profiles[user.id]).toBeTruthy();
     });
 
-    it('getMissingProfilesByIds', async () => {
-        nock(Client4.getBaseRoute()).
-            post('/users').
-            reply(200, TestHelper.fakeUserWithId());
+    describe('getMissingProfilesByIds', () => {
+        const testUserId1 = 'testUser1';
+        const testUserId2 = 'testUser2';
+        const testUserId3 = 'testUser3';
 
-        const user = await TestHelper.basicClient4!.createUser(TestHelper.fakeUser(), '', '');
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
 
-        nock(Client4.getBaseRoute()).
-            post('/users/ids').
-            reply(200, [user]);
+        afterEach(() => {
+            // Clear all pending timers before checking count
+            jest.clearAllTimers();
+            jest.runAllTimers();
+            expect(jest.getTimerCount()).toBe(0);
+            jest.useRealTimers();
+        });
 
-        await store.dispatch(Actions.getMissingProfilesByIds([user.id]));
-        const {profiles} = store.getState().entities.users;
+        test('should be able to get a single user', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/ids', [testUserId1]).
+                reply(200, [TestHelper.getUserMock({id: testUserId1})]);
+            const statusMock = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', [testUserId1]).
+                reply(200, [{user_id: testUserId1, status: General.ONLINE}]);
 
-        expect(profiles[user.id]).toBeTruthy();
+            const promise = store.dispatch(Actions.getMissingProfilesByIds([testUserId1]));
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(statusMock.isDone()).toBe(true);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+            expect(store.getState().entities.users.statuses[testUserId1]).toEqual(General.ONLINE);
+        });
+
+        test('should be able to get multiple users', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/ids', [testUserId1, testUserId2, testUserId3]).
+                reply(200, [
+                    TestHelper.getUserMock({id: testUserId1}),
+                    TestHelper.getUserMock({id: testUserId2}),
+                    TestHelper.getUserMock({id: testUserId3}),
+                ]);
+            const statusMock = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', [testUserId1, testUserId2, testUserId3]).
+                reply(200, [
+                    {user_id: testUserId1, status: General.ONLINE},
+                    {user_id: testUserId2, status: General.ONLINE},
+                    {user_id: testUserId3, status: General.ONLINE},
+                ]);
+
+            const promise = store.dispatch(Actions.getMissingProfilesByIds([testUserId1, testUserId2, testUserId3]));
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(statusMock.isDone()).toBe(true);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+            expect(store.getState().entities.users.statuses[testUserId1]).toEqual(General.ONLINE);
+            expect(store.getState().entities.users.profiles[testUserId2]).toMatchObject({id: testUserId2});
+            expect(store.getState().entities.users.statuses[testUserId2]).toEqual(General.ONLINE);
+            expect(store.getState().entities.users.profiles[testUserId3]).toMatchObject({id: testUserId3});
+            expect(store.getState().entities.users.statuses[testUserId3]).toEqual(General.ONLINE);
+        });
+
+        test('should batch requests to get users across multiple calls and dedupe IDs', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/ids', [testUserId1, testUserId2, testUserId3]).
+                reply(200, [
+                    TestHelper.getUserMock({id: testUserId1}),
+                    TestHelper.getUserMock({id: testUserId2}),
+                    TestHelper.getUserMock({id: testUserId3}),
+                ]);
+            const statusMock = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', [testUserId1, testUserId2, testUserId3]).
+                reply(200, [
+                    {user_id: testUserId1, status: General.ONLINE},
+                    {user_id: testUserId2, status: General.ONLINE},
+                    {user_id: testUserId3, status: General.ONLINE},
+                ]);
+
+            const promise = Promise.all([
+                store.dispatch(Actions.getMissingProfilesByIds([testUserId1])),
+                store.dispatch(Actions.getMissingProfilesByIds([testUserId2, testUserId3])),
+                store.dispatch(Actions.getMissingProfilesByIds([testUserId2])),
+            ]);
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(statusMock.isDone()).toBe(true);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+            expect(store.getState().entities.users.statuses[testUserId1]).toEqual(General.ONLINE);
+            expect(store.getState().entities.users.profiles[testUserId2]).toMatchObject({id: testUserId2});
+            expect(store.getState().entities.users.statuses[testUserId2]).toEqual(General.ONLINE);
+            expect(store.getState().entities.users.profiles[testUserId3]).toMatchObject({id: testUserId3});
+            expect(store.getState().entities.users.statuses[testUserId3]).toEqual(General.ONLINE);
+        });
+
+        test('should split requests for user IDs into multiple requests when necessary', async () => {
+            const idsPerBatch = Actions.maxUserIdsPerProfilesRequest;
+            const testUserIds: string[] = [];
+            for (let i = 0; i < idsPerBatch * 2.5; i++) {
+                testUserIds.push('testUser' + i);
+            }
+
+            const testUserIds1 = testUserIds.slice(0, idsPerBatch);
+            const testUserIds2 = testUserIds.slice(idsPerBatch, idsPerBatch * 2);
+            const testUserIds3 = testUserIds.slice(idsPerBatch * 2, idsPerBatch * 3);
+
+            const profileMock1 = nock(Client4.getBaseRoute()).
+                post('/users/ids', testUserIds1).
+                reply(200, testUserIds1.map((id) => TestHelper.getUserMock({id})));
+            const statusMock1 = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', testUserIds1).
+                reply(200, testUserIds1.map((id) => ({user_id: id, status: General.ONLINE})));
+            const profileMock2 = nock(Client4.getBaseRoute()).
+                post('/users/ids', testUserIds2).
+                reply(200, testUserIds2.map((id) => TestHelper.getUserMock({id})));
+            const statusMock2 = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', testUserIds2).
+                reply(200, testUserIds2.map((id) => ({user_id: id, status: General.ONLINE})));
+            const profileMock3 = nock(Client4.getBaseRoute()).
+                post('/users/ids', testUserIds3).
+                reply(200, testUserIds3.map((id) => TestHelper.getUserMock({id})));
+            const statusMock3 = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', testUserIds3).
+                reply(200, testUserIds3.map((id) => ({user_id: id, status: General.ONLINE})));
+
+            for (const id of testUserIds) {
+                expect(store.getState().entities.users.profiles[id]).not.toBeDefined();
+                expect(store.getState().entities.users.statuses[id]).not.toEqual(General.ONLINE);
+            }
+
+            const promise = store.dispatch(Actions.getMissingProfilesByIds(testUserIds));
+
+            jest.advanceTimersToNextTimer();
+            jest.advanceTimersToNextTimer();
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            // Ensure that each of those requests were made
+            expect(profileMock1.isDone()).toBe(true);
+            expect(statusMock1.isDone()).toBe(true);
+            expect(profileMock2.isDone()).toBe(true);
+            expect(statusMock2.isDone()).toBe(true);
+            expect(profileMock3.isDone()).toBe(true);
+            expect(statusMock3.isDone()).toBe(true);
+
+            // And that all of the users were loaded
+            for (const id of testUserIds) {
+                expect(store.getState().entities.users.profiles[id]).toBeDefined();
+                expect(store.getState().entities.users.statuses[id]).toEqual(General.ONLINE);
+            }
+        });
+
+        test('should not request statuses when those are disabled', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/ids', [testUserId1]).
+                reply(200, [TestHelper.getUserMock({id: testUserId1})]);
+            const statusMock = nock(Client4.getBaseRoute()).
+                post('/users/status/ids', [testUserId1]).
+                reply(200, [{user_id: testUserId1, status: General.ONLINE}]);
+
+            store.dispatch({
+                type: GeneralTypes.CLIENT_CONFIG_RECEIVED,
+                data: {
+                    EnableUserStatuses: 'false',
+                },
+            });
+
+            const promise = store.dispatch(Actions.getMissingProfilesByIds([testUserId1]));
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(statusMock.isDone()).toBe(false);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+            expect(store.getState().entities.users.statuses[testUserId1]).toBeUndefined();
+        });
+    });
+
+    describe('getMissingProfilesByUsernames', () => {
+        const testUserId1 = 'testUser1';
+        const testUsername1 = 'test_user_1';
+        const testUserId2 = 'testUser2';
+        const testUsername2 = 'test_user_2';
+        const testUserId3 = 'testUser3';
+        const testUsername3 = 'test_user_3';
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            // Clear all pending timers before checking count
+            jest.clearAllTimers();
+            jest.runAllTimers();
+            expect(jest.getTimerCount()).toBe(0);
+            jest.useRealTimers();
+        });
+
+        test('should be able to get a single user', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/usernames', [testUsername1]).
+                reply(200, [TestHelper.getUserMock({id: testUserId1, username: testUsername1})]);
+
+            const promise = store.dispatch(Actions.getMissingProfilesByUsernames([testUsername1]));
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+        });
+
+        test('should be able to get multiple users', async () => {
+            const profileMock = nock(Client4.getBaseRoute()).
+                post('/users/usernames', [testUsername1, testUsername2, testUsername3]).
+                reply(200, [
+                    TestHelper.getUserMock({id: testUserId1, username: testUsername1}),
+                    TestHelper.getUserMock({id: testUserId2, username: testUsername2}),
+                    TestHelper.getUserMock({id: testUserId3, username: testUsername3}),
+                ]);
+
+            const promise = store.dispatch(Actions.getMissingProfilesByUsernames([
+                testUsername1,
+                testUsername2,
+                testUsername3,
+            ]));
+
+            jest.advanceTimersToNextTimer();
+
+            await promise;
+
+            expect(profileMock.isDone()).toBe(true);
+            expect(store.getState().entities.users.profiles[testUserId1]).toMatchObject({id: testUserId1});
+            expect(store.getState().entities.users.profiles[testUserId2]).toMatchObject({id: testUserId2});
+            expect(store.getState().entities.users.profiles[testUserId3]).toMatchObject({id: testUserId3});
+        });
     });
 
     it('getProfilesByUsernames', async () => {
@@ -329,27 +566,6 @@ describe('Actions.Users', () => {
 
         expect(notInTeam).toBeTruthy();
         expect(notInTeam.size > 0).toBeTruthy();
-    });
-
-    it('getProfilesWithoutTeam', async () => {
-        nock(Client4.getBaseRoute()).
-            post('/users').
-            reply(200, TestHelper.fakeUserWithId());
-
-        const user = await TestHelper.basicClient4!.createUser(TestHelper.fakeUser(), '', '');
-
-        nock(Client4.getBaseRoute()).
-            get('/users').
-            query(true).
-            reply(200, [user]);
-
-        await store.dispatch(Actions.getProfilesWithoutTeam(0));
-        const {profilesWithoutTeam, profiles} = store.getState().entities.users;
-
-        expect(profilesWithoutTeam).toBeTruthy();
-        expect(profilesWithoutTeam.size > 0).toBeTruthy();
-        expect(profiles).toBeTruthy();
-        expect(Object.keys(profiles).length > 0).toBeTruthy();
     });
 
     it('getProfilesInChannel', async () => {
@@ -661,18 +877,24 @@ describe('Actions.Users', () => {
             reply(200, TestHelper.basicUser!);
         await TestHelper.basicClient4!.login(TestHelper.basicUser!.email, 'password1');
 
+        // Mock getting sessions with multiple sessions
         nock(Client4.getBaseRoute()).
             get(`/users/${user!.id}/sessions`).
-            reply(200, [{id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'}, {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'}]);
+            reply(200, [
+                {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'},
+                {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'},
+            ]);
+
+        // Get the sessions to populate the store
         await store.dispatch(Actions.getSessions(user!.id));
 
         sessions = store.getState().entities.users.mySessions;
-        expect(sessions.length > 1).toBeTruthy();
+        expect(sessions.length).toBeGreaterThan(1);
 
         nock(Client4.getBaseRoute()).
-            post(`/users/${user!.id}/sessions/revoke/all`).
+            post('/users/sessions/revoke/all').
             reply(200, OK_RESPONSE);
-        const {data} = await store.dispatch(Actions.revokeAllSessionsForUser(user!.id));
+        const {data} = await store.dispatch(Actions.revokeSessionsForAllUsers());
         expect(data).toBe(true);
 
         nock(Client4.getBaseRoute()).
@@ -717,13 +939,19 @@ describe('Actions.Users', () => {
             reply(200, TestHelper.basicUser!);
         await TestHelper.basicClient4!.login(TestHelper.basicUser!.email, 'password1');
 
+        // Mock getting sessions with multiple sessions
         nock(Client4.getBaseRoute()).
             get(`/users/${user!.id}/sessions`).
-            reply(200, [{id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'}, {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'}]);
+            reply(200, [
+                {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'},
+                {id: TestHelper.generateId(), create_at: 1507756921338, expires_at: 1510348921338, last_activity_at: 1507821125630, user_id: TestHelper.basicUser!.id, device_id: '', roles: 'system_admin system_user'},
+            ]);
+
+        // Get the sessions to populate the store
         await store.dispatch(Actions.getSessions(user!.id));
 
         sessions = store.getState().entities.users.mySessions;
-        expect(sessions.length > 1).toBeTruthy();
+        expect(sessions.length).toBeGreaterThan(1);
 
         nock(Client4.getBaseRoute()).
             post('/users/sessions/revoke/all').
@@ -1304,9 +1532,6 @@ describe('Actions.Users', () => {
         expect(userAccessTokensByUser![currentUserId]).toBeTruthy();
         expect(userAccessTokensByUser![currentUserId][data.id]).toBeTruthy();
         expect(!userAccessTokensByUser![currentUserId][data.id].token).toBeTruthy();
-        expect(userAccessTokens).toBeTruthy();
-        expect(userAccessTokens[data.id]).toBeTruthy();
-        expect(!userAccessTokens[data.id].token).toBeTruthy();
 
         nock(Client4.getBaseRoute()).
             post('/users/tokens/revoke').
@@ -1461,6 +1686,28 @@ describe('Actions.Users', () => {
         expect(Object.values(myUserAccessTokens).length === 0).toBeTruthy();
     });
 
+    it('saveCustomProfileAttribute', async () => {
+        TestHelper.mockLogin();
+        store.dispatch({
+            type: UserTypes.LOGIN_SUCCESS,
+        });
+        await store.dispatch(Actions.loadMe());
+
+        const state = store.getState();
+        const currentUser = state.entities.users.profiles[state.entities.users.currentUserId];
+
+        nock(Client4.getUserRoute(currentUser.id) + '/custom_profile_attributes').
+            patch('').
+            query(true).
+            reply(200, {
+                123: 'NewValue',
+            });
+
+        const response = await store.dispatch(Actions.saveCustomProfileAttribute(currentUser.id, '123', 'NewValue'));
+        const data = response.data!;
+        expect(data).toEqual({123: 'NewValue'});
+    });
+
     describe('checkForModifiedUsers', () => {
         test('should request users by IDs that have changed since the last websocket disconnect', async () => {
             const lastDisconnectAt = 1500;
@@ -1520,6 +1767,182 @@ describe('Actions.Users', () => {
 
             const profiles = store.getState().entities.users.profiles;
             expect(profiles).toBe(originalState.entities.users.profiles);
+        });
+    });
+
+    it('getCustomProfileAttributeValues', async () => {
+        const userID = 'user1';
+        nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+            get('').
+            query(true).
+            reply(200, {field1: 'value1', field2: 'value2'});
+
+        const originalState = {
+            entities: {
+                users: {
+                    profiles: {
+                        user1: {id: userID},
+                    },
+                },
+            },
+        };
+        store = configureStore(originalState);
+
+        await store.dispatch(Actions.getCustomProfileAttributeValues(userID));
+        const customProfileAttributeValues = store.getState().entities.users.profiles[userID].custom_profile_attributes;
+
+        // Check a few basic fields since they may change over time
+        expect(Object.keys(customProfileAttributeValues).length).toEqual(2);
+        expect(customProfileAttributeValues.field1).toEqual('value1');
+        expect(customProfileAttributeValues.field2).toEqual('value2');
+    });
+
+    describe('updateUserCustomProfileAttributeValues', () => {
+        const userID = 'bot_user_id';
+
+        test('should send the batch and merge returned values into a loaded profile', async () => {
+            const values = {field1: 'new', field3: ['opt1', 'opt2']};
+            const scope = nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+                patch('', values).
+                query(true).
+                reply(200, values);
+
+            store = configureStore({
+                entities: {
+                    users: {
+                        profiles: {
+                            [userID]: {id: userID, custom_profile_attributes: {field1: 'old', field2: 'keep'}},
+                        },
+                    },
+                },
+            });
+
+            const result = await store.dispatch(Actions.updateUserCustomProfileAttributeValues(userID, values));
+
+            expect(scope.isDone()).toBe(true);
+            expect(result).toEqual({data: values});
+            expect(store.getState().entities.users.profiles[userID].custom_profile_attributes).toEqual({
+                field1: 'new',
+                field2: 'keep',
+                field3: ['opt1', 'opt2'],
+            });
+        });
+
+        test('should store cleared values returned by the server', async () => {
+            const values = {field1: '', field3: []};
+            nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+                patch('', values).
+                query(true).
+                reply(200, values);
+
+            store = configureStore({
+                entities: {
+                    users: {
+                        profiles: {
+                            [userID]: {id: userID, custom_profile_attributes: {field1: 'old', field2: 'keep', field3: ['opt1']}},
+                        },
+                    },
+                },
+            });
+
+            await store.dispatch(Actions.updateUserCustomProfileAttributeValues(userID, values));
+
+            expect(store.getState().entities.users.profiles[userID].custom_profile_attributes).toEqual({
+                field1: '',
+                field2: 'keep',
+                field3: [],
+            });
+        });
+
+        test('should return data without adding a profile when the user is not loaded', async () => {
+            const values = {field1: 'new'};
+            nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+                patch('', values).
+                query(true).
+                reply(200, values);
+
+            store = configureStore({
+                entities: {
+                    users: {
+                        profiles: {},
+                    },
+                },
+            });
+            const profilesBefore = store.getState().entities.users.profiles;
+
+            const result = await store.dispatch(Actions.updateUserCustomProfileAttributeValues(userID, values));
+
+            expect(result).toEqual({data: values});
+            expect(store.getState().entities.users.profiles[userID]).toBeUndefined();
+            expect(store.getState().entities.users.profiles).toBe(profilesBefore);
+        });
+
+        test('should return and log the error and leave the profile unchanged when the request fails', async () => {
+            const scope = nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+                patch('').
+                query(true).
+                reply(403, {
+                    id: 'api.context.permissions.app_error',
+                    message: 'You do not have the appropriate permissions.',
+                    status_code: 403,
+                });
+
+            const originalAttributes = {field1: 'old'};
+            store = configureStore({
+                entities: {
+                    users: {
+                        profiles: {
+                            [userID]: {id: userID, custom_profile_attributes: originalAttributes},
+                        },
+                    },
+                },
+            });
+
+            const result = await store.dispatch(Actions.updateUserCustomProfileAttributeValues(userID, {field1: 'new'}));
+
+            expect(scope.isDone()).toBe(true);
+            expect(result.data).toBeUndefined();
+            expect(result.error).toMatchObject({
+                server_error_id: 'api.context.permissions.app_error',
+                status_code: 403,
+                message: 'You do not have the appropriate permissions.',
+            });
+            expect(store.getState().entities.users.profiles[userID].custom_profile_attributes).toEqual(originalAttributes);
+            expect(store.getState().errors).toHaveLength(1);
+            expect(store.getState().errors[0].error).toMatchObject({
+                server_error_id: 'api.context.permissions.app_error',
+                status_code: 403,
+            });
+        });
+
+        test('should log out the current user when the request is unauthorized', async () => {
+            const scope = nock(Client4.getUserRoute(userID) + '/custom_profile_attributes').
+                patch('').
+                query(true).
+                reply(401, {
+                    id: 'api.context.session_expired.app_error',
+                    message: 'Invalid or expired session, please login again.',
+                    status_code: 401,
+                });
+
+            store = configureStore({
+                entities: {
+                    users: {
+                        currentUserId: 'current_user_id',
+                        profiles: {
+                            current_user_id: {id: 'current_user_id'},
+                            [userID]: {id: userID, custom_profile_attributes: {field1: 'old'}},
+                        },
+                    },
+                },
+            });
+
+            const result = await store.dispatch(Actions.updateUserCustomProfileAttributeValues(userID, {field1: 'new'}));
+
+            expect(scope.isDone()).toBe(true);
+            expect(result.error).toMatchObject({status_code: 401});
+            expect(store.getState().entities.users.currentUserId).toBe('');
+            expect(store.getState().entities.users.profiles).toEqual({});
         });
     });
 });

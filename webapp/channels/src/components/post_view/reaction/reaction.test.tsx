@@ -1,14 +1,26 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {Reaction as ReactionType} from '@mattermost/types/reactions';
 
-import Reaction from 'components/post_view/reaction/reaction';
-
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
+
+import ReactionComponent from './reaction';
+
+jest.mock('./reaction_tooltip', () => {
+    return {
+        __esModule: true,
+        default: ({children, onShow}: any) => (
+            <div
+                data-testid='reaction-tooltip'
+                onMouseEnter={onShow}
+            >{children}</div>
+        ),
+    };
+});
 
 describe('components/post_view/Reaction', () => {
     const post = TestHelper.getPostMock({
@@ -30,12 +42,10 @@ describe('components/post_view/Reaction', () => {
         getMissingProfilesByIds: jest.fn(),
         removeReaction: jest.fn(),
     };
-    const currentUserId = 'user_id_1';
 
     const baseProps = {
         canAddReactions: true,
         canRemoveReactions: true,
-        currentUserId,
         post,
         currentUserReacted: false,
         emojiName,
@@ -45,58 +55,11 @@ describe('components/post_view/Reaction', () => {
         actions,
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow<Reaction>(<Reaction {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
+    test('should have called actions.getMissingProfilesByIds when loadMissingProfiles is called', async () => {
+        renderWithContext(<ReactionComponent {...baseProps}/>);
 
-    test('should match snapshot when a current user reacted to a post', () => {
-        const newReactions = [{
-            user_id: 'user_id_1',
-            post_id: post.id,
-            emoji_name: ':cry:',
-            create_at: 0,
-        }, {
-            user_id: 'user_id_3',
-            post_id: post.id,
-            emoji_name: ':smile:',
-            create_at: 0}];
-        const props = {
-            ...baseProps,
-            currentUserReacted: true,
-            reactions: newReactions,
-        };
-        const wrapper = shallow<Reaction>(<Reaction {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should return null/empty if no emojiImageUrl', () => {
-        const props = {...baseProps, emojiImageUrl: ''};
-        const wrapper = shallow<Reaction>(<Reaction {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should apply read-only class if user does not have permission to add reaction', () => {
-        const props = {...baseProps, canAddReactions: false};
-        const wrapper = shallow<Reaction>(<Reaction {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should apply read-only class if user does not have permission to remove reaction', () => {
-        const newCurrentUserId = 'user_id_2';
-        const props = {
-            ...baseProps,
-            canRemoveReactions: false,
-            currentUserId: newCurrentUserId,
-            currentUserReacted: true,
-        };
-        const wrapper = shallow<Reaction>(<Reaction {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should have called actions.getMissingProfilesByIds when loadMissingProfiles is called', () => {
-        const wrapper = shallow<Reaction>(<Reaction {...baseProps}/>);
-        wrapper.instance().loadMissingProfiles();
+        const tooltipTrigger = screen.getByTestId('reaction-tooltip');
+        await userEvent.hover(tooltipTrigger);
 
         expect(actions.getMissingProfilesByIds).toHaveBeenCalledTimes(1);
         expect(actions.getMissingProfilesByIds).toHaveBeenCalledWith([reactions[0].user_id, reactions[1].user_id]);

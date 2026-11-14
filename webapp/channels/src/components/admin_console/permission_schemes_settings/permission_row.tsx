@@ -9,7 +9,6 @@ import type {Role} from '@mattermost/types/roles';
 
 import PermissionCheckbox from './permission_checkbox';
 import PermissionDescription from './permission_description';
-import type {AdditionalValues} from './permissions_tree/types';
 import {permissionRolesStrings} from './strings/permissions';
 
 type Props = {
@@ -21,8 +20,8 @@ type Props = {
     selectRow: (id: string) => void;
     value: string;
     onChange: (id: string) => void;
-    additionalValues: AdditionalValues;
-}
+    additionalValues: Record<string, any>;
+};
 
 const PermissionRow = ({
     additionalValues,
@@ -43,13 +42,22 @@ const PermissionRow = ({
     }, [readOnly, onChange, id]);
 
     const name = permissionRolesStrings[id] ? <FormattedMessage {...permissionRolesStrings[id].name}/> : id;
-    const description = permissionRolesStrings[id] ? <FormattedMessage {...permissionRolesStrings[id].description}/> : '';
+    let description: React.JSX.Element | string = '';
+    if (permissionRolesStrings[id]) {
+        description = (
+            <FormattedMessage
+                {...permissionRolesStrings[id].description}
+                values={additionalValues}
+            />
+        );
+    }
 
     return (
         <div
             className={classNames('permission-row', {'read-only': readOnly, selected: selected === id})}
             onClick={toggleSelect}
             id={uniqId}
+            data-testid='permissionRow'
         >
             <PermissionCheckbox
                 value={value}

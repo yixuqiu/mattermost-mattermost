@@ -3,11 +3,12 @@
 
 import React from 'react';
 import type {ChangeEvent} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {defineMessage, FormattedMessage} from 'react-intl';
 
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+
+import LocalizedPlaceholderTextarea from 'components/localized_placeholder_textarea';
 import SettingItemMax from 'components/setting_item_max';
-
-import {localizeMessage} from 'utils/utils';
 
 const MESSAGE_MAX_LENGTH = 200;
 
@@ -19,7 +20,7 @@ type Props = {
     submit: () => void;
     saving: boolean;
     error?: string;
-}
+};
 
 export default class ManageAutoResponder extends React.PureComponent<Props> {
     handleAutoResponderChecked = (e: ChangeEvent<HTMLInputElement>) => {
@@ -47,20 +48,18 @@ export default class ManageAutoResponder extends React.PureComponent<Props> {
             <div
                 id='autoResponderCheckbox'
                 key='autoResponderCheckbox'
-                className='checkbox'
+                className='checkbox no-padding'
             >
-                <label>
-                    <input
-                        id='autoResponderActive'
-                        type='checkbox'
-                        checked={autoResponderActive}
-                        onChange={this.handleAutoResponderChecked}
-                    />
+                <Checkbox
+                    id='autoResponderActive'
+                    checked={autoResponderActive}
+                    onChange={this.handleAutoResponderChecked}
+                >
                     <FormattedMessage
                         id='user.settings.notifications.autoResponderEnabled'
                         defaultMessage='Enabled'
                     />
-                </label>
+                </Checkbox>
             </div>
         );
 
@@ -70,12 +69,12 @@ export default class ManageAutoResponder extends React.PureComponent<Props> {
                 key='autoResponderMessage'
             >
                 <div className='pt-2'>
-                    <textarea
-                        style={{resize: 'none'}}
+                    <LocalizedPlaceholderTextarea
+                        style={{resize: 'none', height: 'auto'}}
                         id='autoResponderMessageInput'
                         className='form-control'
                         rows={5}
-                        placeholder={localizeMessage('user.settings.notifications.autoResponderPlaceholder', 'Message')}
+                        placeholder={defineMessage({id: 'user.settings.notifications.autoResponderPlaceholder', defaultMessage: 'Message'})}
                         value={autoResponderMessage}
                         maxLength={MESSAGE_MAX_LENGTH}
                         onChange={this.onMessageChanged}

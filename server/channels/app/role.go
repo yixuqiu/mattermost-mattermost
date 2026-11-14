@@ -4,15 +4,17 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
+	"github.com/mattermost/mattermost/server/public/shared/request"
 
 	"github.com/mattermost/mattermost/server/v8/channels/store"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
@@ -21,13 +23,10 @@ import (
 func (a *App) GetRole(id string) (*model.Role, *model.AppError) {
 	role, err := a.Srv().Store().Role().Get(id)
 	if err != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(err, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
 			return nil, model.NewAppError("GetRole", "app.role.get.app_error", nil, "", http.StatusNotFound).Wrap(err)
-		default:
-			return nil, model.NewAppError("GetRole", "app.role.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		return nil, model.NewAppError("GetRole", "app.role.get.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	appErr := a.Srv().mergeChannelHigherScopedPermissions([]*model.Role{role})
@@ -52,16 +51,13 @@ func (a *App) GetAllRoles() ([]*model.Role, *model.AppError) {
 	return roles, nil
 }
 
-func (s *Server) GetRoleByName(ctx context.Context, name string) (*model.Role, *model.AppError) {
-	role, nErr := s.Store().Role().GetByName(ctx, name)
+func (s *Server) GetRoleByName(rctx request.CTX, name string) (*model.Role, *model.AppError) {
+	role, nErr := s.Store().Role().GetByName(rctx, name)
 	if nErr != nil {
-		var nfErr *store.ErrNotFound
-		switch {
-		case errors.As(nErr, &nfErr):
+		if _, ok := errors.AsType[*store.ErrNotFound](nErr); ok {
 			return nil, model.NewAppError("GetRoleByName", "app.role.get_by_name.app_error", nil, "", http.StatusNotFound).Wrap(nErr)
-		default:
-			return nil, model.NewAppError("GetRoleByName", "app.role.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 		}
+		return nil, model.NewAppError("GetRoleByName", "app.role.get_by_name.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
 	}
 
 	err := s.mergeChannelHigherScopedPermissions([]*model.Role{role})
@@ -72,8 +68,8 @@ func (s *Server) GetRoleByName(ctx context.Context, name string) (*model.Role, *
 	return role, nil
 }
 
-func (a *App) GetRoleByName(ctx context.Context, name string) (*model.Role, *model.AppError) {
-	return a.Srv().GetRoleByName(ctx, name)
+func (a *App) GetRoleByName(rctx request.CTX, name string) (*model.Role, *model.AppError) {
+	return a.Srv().GetRoleByName(rctx, name)
 }
 
 func (a *App) GetRolesByNames(names []string) ([]*model.Role, *model.AppError) {
@@ -88,6 +84,17 @@ func (a *App) GetRolesByNames(names []string) ([]*model.Role, *model.AppError) {
 	}
 
 	return roles, nil
+}
+
+func (a *App) DeleteRole(id string) (*model.Role, *model.AppError) {
+	role, err := a.Srv().Store().Role().Delete(id)
+	if err != nil {
+		if _, ok := errors.AsType[*store.ErrNotFound](err); ok {
+			return nil, model.NewAppError("DeleteRole", "app.role.get.app_error", nil, "", http.StatusNotFound).Wrap(err)
+		}
+		return nil, model.NewAppError("DeleteRole", "app.role.delete.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+	return role, nil
 }
 
 // mergeChannelHigherScopedPermissions updates the permissions based on the role type, whether the permission is
@@ -157,13 +164,10 @@ func (a *App) CreateRole(role *model.Role) (*model.Role, *model.AppError) {
 	var err error
 	role, err = a.Srv().Store().Role().Save(role)
 	if err != nil {
-		var invErr *store.ErrInvalidInput
-		switch {
-		case errors.As(err, &invErr):
+		if _, ok := errors.AsType[*store.ErrInvalidInput](err); ok {
 			return nil, model.NewAppError("CreateRole", "app.role.save.invalid_role.app_error", nil, "", http.StatusBadRequest).Wrap(err)
-		default:
-			return nil, model.NewAppError("CreateRole", "app.role.save.insert.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		return nil, model.NewAppError("CreateRole", "app.role.save.insert.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	return role, nil
@@ -172,13 +176,10 @@ func (a *App) CreateRole(role *model.Role) (*model.Role, *model.AppError) {
 func (a *App) UpdateRole(role *model.Role) (*model.Role, *model.AppError) {
 	savedRole, err := a.Srv().Store().Role().Save(role)
 	if err != nil {
-		var invErr *store.ErrInvalidInput
-		switch {
-		case errors.As(err, &invErr):
+		if _, ok := errors.AsType[*store.ErrInvalidInput](err); ok {
 			return nil, model.NewAppError("UpdateRole", "app.role.save.invalid_role.app_error", nil, "", http.StatusBadRequest).Wrap(err)
-		default:
-			return nil, model.NewAppError("UpdateRole", "app.role.save.insert.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
+		return nil, model.NewAppError("UpdateRole", "app.role.save.insert.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
 
 	builtInChannelRoles := []string{
@@ -261,28 +262,102 @@ func (a *App) CheckRolesExist(roleNames []string) *model.AppError {
 }
 
 func (a *App) sendUpdatedRoleEvent(role *model.Role) *model.AppError {
-	message := model.NewWebSocketEvent(model.WebsocketEventRoleUpdated, "", "", "", nil, "")
 	roleJSON, jsonErr := json.Marshal(role)
 	if jsonErr != nil {
 		return model.NewAppError("sendUpdatedRoleEvent", "api.marshal_error", nil, "", http.StatusInternalServerError).Wrap(jsonErr)
 	}
-	message.Add("role", string(roleJSON))
-	a.Publish(message)
+
+	publishEvent := func(teamID, channelID string) {
+		message := model.NewWebSocketEvent(model.WebsocketEventRoleUpdated, teamID, channelID, "", nil, "")
+		message.Add("role", string(roleJSON))
+		a.Publish(message)
+	}
+
+	// Built-in system roles apply to all users; broadcast globally without a DB lookup.
+	if role.BuiltIn {
+		publishEvent("", "")
+		return nil
+	}
+
+	// Scheme-managed roles: use SchemeId to look up the owning scheme.
+	if role.SchemeId == nil {
+		// No owning scheme — treat as global (e.g. custom non-scheme role).
+		publishEvent("", "")
+		return nil
+	}
+	scheme, err := a.Srv().Store().Scheme().Get(*role.SchemeId)
+	if err != nil {
+		a.Log().Error("Failed to look up scheme for role event; skipping broadcast",
+			mlog.String("role_id", role.Id),
+			mlog.String("scheme_id", *role.SchemeId),
+			mlog.Err(err))
+		return nil
+	}
+
+	const pageSize = 1000
+	const maxBroadcasts = 100000
+	switch scheme.Scope {
+	case model.SchemeScopeTeam:
+		totalBroadcasts := 0
+		offset := 0
+		for {
+			teams, storeErr := a.Srv().Store().Team().GetTeamsByScheme(scheme.Id, offset, pageSize)
+			if storeErr != nil {
+				return model.NewAppError("sendUpdatedRoleEvent", "app.role.send_updated_role_event.app_error", nil, "", http.StatusInternalServerError).Wrap(storeErr)
+			}
+			for _, team := range teams {
+				publishEvent(team.Id, "")
+			}
+			totalBroadcasts += len(teams)
+			if len(teams) < pageSize {
+				break
+			}
+			if totalBroadcasts >= maxBroadcasts {
+				a.Log().Error("sendUpdatedRoleEvent: hit broadcast limit for team scheme",
+					mlog.String("scheme_id", scheme.Id),
+					mlog.Int("total_broadcasts", totalBroadcasts))
+				break
+			}
+			offset += pageSize
+		}
+	case model.SchemeScopeChannel:
+		totalBroadcasts := 0
+		offset := 0
+		for {
+			channels, storeErr := a.Srv().Store().Channel().GetChannelsByScheme(scheme.Id, offset, pageSize)
+			if storeErr != nil {
+				return model.NewAppError("sendUpdatedRoleEvent", "app.role.send_updated_role_event.app_error", nil, "", http.StatusInternalServerError).Wrap(storeErr)
+			}
+			for _, channel := range channels {
+				publishEvent("", channel.Id)
+			}
+			totalBroadcasts += len(channels)
+			if len(channels) < pageSize {
+				break
+			}
+			if totalBroadcasts >= maxBroadcasts {
+				a.Log().Error("sendUpdatedRoleEvent: hit broadcast limit for channel scheme",
+					mlog.String("scheme_id", scheme.Id),
+					mlog.Int("total_broadcasts", totalBroadcasts))
+				break
+			}
+			offset += pageSize
+		}
+	case model.SchemeScopePlaybook, model.SchemeScopeRun:
+		// Playbook/run schemes don't map to teams or channels; broadcast globally.
+		publishEvent("", "")
+	default:
+		return model.NewAppError("sendUpdatedRoleEvent", "app.role.send_updated_role_event.unknown_scope", nil, fmt.Sprintf("unknown scheme scope: %s", scheme.Scope), http.StatusInternalServerError)
+	}
 	return nil
 }
 
-func RemoveRoles(rolesToRemove []string, roles string) string {
+func removeRoles(rolesToRemove []string, roles string) string {
 	roleList := strings.Fields(roles)
 	newRoles := make([]string, 0)
 
 	for _, role := range roleList {
-		shouldRemove := false
-		for _, roleToRemove := range rolesToRemove {
-			if role == roleToRemove {
-				shouldRemove = true
-				break
-			}
-		}
+		shouldRemove := slices.Contains(rolesToRemove, role)
 		if !shouldRemove {
 			newRoles = append(newRoles, role)
 		}

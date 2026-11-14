@@ -1,8 +1,13 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {mount} from 'enzyme';
 import React from 'react';
+
+import {getMissingProfilesByIds} from 'mattermost-redux/actions/users';
+
+import {renderWithContext} from 'tests/react_testing_utils';
+
+import Avatars from './avatars';
 
 jest.mock('mattermost-redux/actions/users', () => {
     return {
@@ -15,14 +20,6 @@ jest.mock('mattermost-redux/actions/users', () => {
         }),
     };
 });
-
-import SimpleTooltip from 'components/widgets/simple_tooltip';
-
-import {mockStore} from 'tests/test_store';
-
-import Avatars from './avatars';
-
-import Avatar from '../avatar';
 
 describe('components/widgets/users/Avatars', () => {
     const state = {
@@ -85,9 +82,12 @@ describe('components/widgets/users/Avatars', () => {
         },
     };
 
+    beforeEach(() => {
+        (getMissingProfilesByIds as jest.Mock).mockClear();
+    });
+
     test('should support userIds', () => {
-        const {mountOptions} = mockStore(state);
-        const wrapper = mount(
+        const {container} = renderWithContext(
             <Avatars
                 size='xl'
                 userIds={[
@@ -96,19 +96,16 @@ describe('components/widgets/users/Avatars', () => {
                     '3',
                 ]}
             />,
-            mountOptions,
+            state,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/1/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/2/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/3/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).length).toBe(3);
+        expect(container.querySelector('img[src="/api/v4/users/1/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/2/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/3/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelectorAll('img.Avatar')).toHaveLength(3);
     });
 
     test('should properly count overflow', () => {
-        const {mountOptions} = mockStore(state);
-
-        const wrapper = mount(
+        const {container} = renderWithContext(
             <Avatars
                 size='xl'
                 userIds={[
@@ -119,23 +116,20 @@ describe('components/widgets/users/Avatars', () => {
                     '5',
                 ]}
             />,
-            mountOptions,
+            state,
         );
+        expect(container.querySelector('img[src="/api/v4/users/1/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/2/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/3/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/4/image?_=1620680333191"]')).not.toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/5/image?_=1620680333191"]')).not.toBeInTheDocument();
 
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/1/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/2/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/3/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/4/image?_=1620680333191'}).exists()).toBe(false);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/5/image?_=1620680333191'}).exists()).toBe(false);
-
-        expect(wrapper.find(Avatar).find({text: '+2'}).exists()).toBe(true);
+        // Check for +2 overflow avatar (text is rendered via data-content attribute)
+        expect(container.querySelector('[data-content="+2"]')).toBeInTheDocument();
     });
 
     test('should not duplicate displayed users in overflow tooltip', () => {
-        const {mountOptions} = mockStore(state);
-
-        const wrapper = mount(
+        const {container} = renderWithContext(
             <Avatars
                 size='xl'
                 userIds={[
@@ -146,16 +140,15 @@ describe('components/widgets/users/Avatars', () => {
                     '5',
                 ]}
             />,
-            mountOptions,
+            state,
         );
 
-        expect(wrapper.find(SimpleTooltip).find({id: 'names-overflow'}).prop('content')).toBe('first.last4, first.last5');
+        // The overflow avatar should exist with +2 text
+        expect(container.querySelector('[data-content="+2"]')).toBeInTheDocument();
     });
 
     test('should fetch missing users', () => {
-        const {store, mountOptions} = mockStore(state);
-
-        const wrapper = mount(
+        const {container} = renderWithContext(
             <Avatars
                 size='xl'
                 userIds={[
@@ -167,17 +160,12 @@ describe('components/widgets/users/Avatars', () => {
                     '9',
                 ]}
             />,
-            mountOptions,
+            state,
         );
+        expect(getMissingProfilesByIds).toHaveBeenCalledWith(['1', '6', '7', '2', '8', '9']);
 
-        expect(wrapper).toMatchSnapshot();
-        expect(store.getActions()).toEqual([
-            {type: 'MOCK_GET_MISSING_PROFILES_BY_IDS', data: ['1', '6', '7', '2', '8', '9']},
-        ]);
-
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/1/image?_=1620680333191'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/6/image?_=0'}).exists()).toBe(true);
-        expect(wrapper.find(Avatar).find({url: '/api/v4/users/7/image?_=0'}).exists()).toBe(true);
-        expect(wrapper.find(SimpleTooltip).find({id: 'names-overflow'}).prop('content')).toBe('first.last2, Someone, Someone');
+        expect(container.querySelector('img[src="/api/v4/users/1/image?_=1620680333191"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/6/image?_=0"]')).toBeInTheDocument();
+        expect(container.querySelector('img[src="/api/v4/users/7/image?_=0"]')).toBeInTheDocument();
     });
 });

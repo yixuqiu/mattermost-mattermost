@@ -1,13 +1,13 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import type {ChannelType} from '@mattermost/types/channels';
 
 import {loadProfilesForSidebar} from 'actions/user_actions';
 
+import {renderWithContext, runPostRenderAct} from 'tests/react_testing_utils';
 import {TestHelper} from 'utils/test_helper';
 
 import DataPrefetch from './data_prefetch';
@@ -28,7 +28,6 @@ describe('/components/data_prefetch', () => {
         currentChannelId: '',
         actions: {
             prefetchChannelPosts: jest.fn(() => Promise.resolve({})),
-            trackPreloadedChannels: jest.fn(),
         },
         prefetchQueueObj: {
             1: [],
@@ -72,46 +71,61 @@ describe('/components/data_prefetch', () => {
 
     beforeEach(() => {
         mockQueue.splice(0, mockQueue.length);
+        jest.clearAllMocks();
     });
 
     test('should fetch posts for current channel on first channel load', async () => {
-        const props = defaultProps;
-        const wrapper = shallow<DataPrefetch>(
+        const props = {...defaultProps};
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        const instance = wrapper.instance();
-        instance.prefetchPosts = jest.fn();
-
         // Change channels and wait for async componentDidUpdate to resolve
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(1);
-        expect(instance.prefetchPosts).not.toHaveBeenCalled();
 
         // Manually run queued tasks
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(1);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('currentChannelId');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(1);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('currentChannelId', undefined);
     });
 
-    test('should fetch profiles for sidebar on first channel load', async () => {
-        const props = defaultProps;
-        const wrapper = shallow<DataPrefetch>(
+    test('should fetch profiles for sidebar on sidebar load', async () => {
+        const props = {
+            ...defaultProps,
+            sidebarLoaded: false,
+        };
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
         expect(loadProfilesForSidebar).not.toHaveBeenCalled();
 
-        // Change channels
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        // Finish loading the sidebar
+        rerender(
+            <DataPrefetch
+                {...props}
+                sidebarLoaded={true}
+            />,
+        );
+        await runPostRenderAct();
 
         expect(loadProfilesForSidebar).toHaveBeenCalledTimes(1);
 
-        // Change channels again
-        wrapper.setProps({currentChannelId: 'anotherChannelId'});
+        // Reload the sidebar - should not call again
+        rerender(
+            <DataPrefetch
+                {...props}
+                sidebarLoaded={true}
+            />,
+        );
         await Promise.resolve(true);
 
         expect(loadProfilesForSidebar).toHaveBeenCalledTimes(1);
@@ -126,38 +140,39 @@ describe('/components/data_prefetch', () => {
                 3: [],
             },
         };
-        const wrapper = shallow<DataPrefetch>(
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        const instance = wrapper.instance();
-        instance.prefetchPosts = jest.fn();
-
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(5); // current channel, mentioned channels, unread channels
-        expect(instance.prefetchPosts).not.toHaveBeenCalled();
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(1);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('currentChannelId');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(1);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('currentChannelId', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(2);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('mentionChannel0');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(2);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel0', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(3);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('mentionChannel1');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(3);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel1', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(4);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('unreadChannel0');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(4);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('unreadChannel0', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(5);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('unreadChannel1');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(5);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('unreadChannel1', undefined);
     });
 
     test('should cancel fetch and requeue channels when prefetch queue changes', async () => {
@@ -168,33 +183,40 @@ describe('/components/data_prefetch', () => {
                 2: ['unreadChannel0', 'unreadChannel1', 'unreadChannel2'],
             },
         };
-        const wrapper = shallow<DataPrefetch>(
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        const instance = wrapper.instance();
-        instance.prefetchPosts = jest.fn();
-
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(4);
-        expect(instance.prefetchPosts).not.toHaveBeenCalled();
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(1);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('currentChannelId');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(1);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('currentChannelId', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(2);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('unreadChannel0');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(2);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('unreadChannel0', undefined);
 
-        wrapper.setProps({
-            prefetchQueueObj: {
-                1: ['mentionChannel0', 'mentionChannel1'],
-                2: ['unreadChannel2', 'unreadChannel3'],
-            },
-        });
+        const newPrefetchQueueObj = {
+            1: ['mentionChannel0', 'mentionChannel1'],
+            2: ['unreadChannel2', 'unreadChannel3'],
+        };
+
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+                prefetchQueueObj={newPrefetchQueueObj}
+            />,
+        );
 
         // Check queue has been cleared and wait for async componentDidUpdate to complete
         expect(mockQueue).toHaveLength(0);
@@ -203,20 +225,20 @@ describe('/components/data_prefetch', () => {
         expect(mockQueue).toHaveLength(4);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(3);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('mentionChannel0');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(3);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel0', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(4);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('mentionChannel1');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(4);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel1', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(5);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('unreadChannel2');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(5);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('unreadChannel2', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(6);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('unreadChannel3');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(6);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('unreadChannel3', undefined);
     });
 
     test('should skip making request for posts if a request was made', async () => {
@@ -230,25 +252,27 @@ describe('/components/data_prefetch', () => {
                 unreadChannel: 'success',
             },
         };
-        const wrapper = shallow<DataPrefetch>(
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        const instance = wrapper.instance();
-        instance.prefetchPosts = jest.fn();
-
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(2);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(1);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('currentChannelId');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(1);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('currentChannelId', undefined);
 
         mockQueue.shift()!();
-        expect(instance.prefetchPosts).toHaveBeenCalledTimes(2);
-        expect(instance.prefetchPosts).toHaveBeenCalledWith('mentionChannel');
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledTimes(2);
+        expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel', undefined);
     });
 
     test('should add delay if last post is made in last min', async () => {
@@ -278,12 +302,17 @@ describe('/components/data_prefetch', () => {
                 last_root_post_at: 12345,
             }],
         };
-        const wrapper = shallow(
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(2);
 
@@ -325,12 +354,17 @@ describe('/components/data_prefetch', () => {
                 last_root_post_at: 12345,
             }],
         };
-        const wrapper = shallow<DataPrefetch>(
+        const {rerender} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
 
-        wrapper.setProps({currentChannelId: 'currentChannelId'});
-        await Promise.resolve(true);
+        rerender(
+            <DataPrefetch
+                {...props}
+                currentChannelId='currentChannelId'
+            />,
+        );
+        await runPostRenderAct();
 
         expect(mockQueue).toHaveLength(2);
 
@@ -345,64 +379,44 @@ describe('/components/data_prefetch', () => {
         expect(props.actions.prefetchChannelPosts).toHaveBeenCalledWith('mentionChannel', undefined);
     });
 
-    test('should load profiles once the current channel and sidebar are both loaded', () => {
+    test('should load profiles once the sidebar is loaded irrespective of the current channel', () => {
         const props = {
             ...defaultProps,
             currentChannelId: '',
             sidebarLoaded: false,
         };
 
-        let wrapper = shallow<DataPrefetch>(
+        const {rerender, unmount} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
-        wrapper.setProps({});
+
+        // Rerender with same props - no sidebar loaded
+        rerender(<DataPrefetch {...props}/>);
 
         expect(loadProfilesForSidebar).not.toHaveBeenCalled();
+
+        unmount();
 
         // With current channel loaded first
-        wrapper = shallow<DataPrefetch>(
+        const {rerender: rerender2} = renderWithContext(
             <DataPrefetch {...props}/>,
         );
-        wrapper.setProps({
-            currentChannelId: 'channel',
-        });
+        rerender2(
+            <DataPrefetch
+                {...props}
+                currentChannelId='channel'
+            />,
+        );
 
         expect(loadProfilesForSidebar).not.toHaveBeenCalled();
 
-        wrapper.setProps({
-            sidebarLoaded: true,
-        });
-
-        expect(loadProfilesForSidebar).toHaveBeenCalled();
-
-        jest.clearAllMocks();
-
-        // With sidebar loaded first
-        wrapper = shallow<DataPrefetch>(
-            <DataPrefetch {...props}/>,
+        rerender2(
+            <DataPrefetch
+                {...props}
+                currentChannelId='channel'
+                sidebarLoaded={true}
+            />,
         );
-        wrapper.setProps({
-            sidebarLoaded: true,
-        });
-
-        expect(loadProfilesForSidebar).not.toHaveBeenCalled();
-
-        wrapper.setProps({
-            currentChannelId: 'channel',
-        });
-
-        expect(loadProfilesForSidebar).toHaveBeenCalled();
-
-        jest.clearAllMocks();
-
-        // With both loaded at once
-        wrapper = shallow<DataPrefetch>(
-            <DataPrefetch {...props}/>,
-        );
-        wrapper.setProps({
-            currentChannelId: 'channel',
-            sidebarLoaded: true,
-        });
 
         expect(loadProfilesForSidebar).toHaveBeenCalled();
     });

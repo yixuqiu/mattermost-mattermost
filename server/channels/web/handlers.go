@@ -6,6 +6,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -15,25 +16,23 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/gzhttp"
-	"github.com/opentracing/opentracing-go"
-	"github.com/opentracing/opentracing-go/ext"
-	spanlog "github.com/opentracing/opentracing-go/log"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/shared/i18n"
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/app"
-	app_opentracing "github.com/mattermost/mattermost/server/v8/channels/app/opentracing"
-	"github.com/mattermost/mattermost/server/v8/channels/store/opentracinglayer"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
-	"github.com/mattermost/mattermost/server/v8/platform/services/tracing"
 )
 
-const (
-	frameAncestors   = "'self' teams.microsoft.com"
-	maxURLCharacters = 2048
-)
+// tokenDigest returns a stable, non-reversible identifier for a token, usable for correlation.
+func tokenDigest(token string) string {
+	if token == "" {
+		return "<none>"
+	}
+
+	return utils.HashSha256(token)[:16]
+}
 
 func GetHandlerName(h func(*Context, http.ResponseWriter, *http.Request)) string {
 	handlerName := runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
@@ -58,9 +57,10 @@ func (w *Web) NewHandler(h func(*Context, http.ResponseWriter, *http.Request)) h
 }
 
 func (w *Web) NewStaticHandler(h func(*Context, http.ResponseWriter, *http.Request)) http.Handler {
-	// Determine the CSP SHA directive needed for subpath support, if any. This value is fixed
-	// on server start and intentionally requires a restart to take effect.
-	subpath, _ := utils.GetSubpathFromConfig(w.srv.Config())
+	// Determine the CSP SHA directives needed for the inline scripts injected into root.html.
+	// These values are fixed on server start and intentionally require a restart to take effect.
+	cfg := w.srv.Config()
+	subpath, _ := utils.GetSubpathFromConfig(cfg)
 
 	return &Handler{
 		Srv:            w.srv,
@@ -71,7 +71,7 @@ func (w *Web) NewStaticHandler(h func(*Context, http.ResponseWriter, *http.Reque
 		RequireMfa:     false,
 		IsStatic:       true,
 
-		cspShaDirective: utils.GetSubpathScriptHash(subpath),
+		cspShaDirective: utils.GetStaticScriptHashes(subpath),
 	}
 }
 
@@ -108,7 +108,7 @@ func generateDevCSP(c Context) string {
 
 	// Add supported flags for debugging during development, even if not on a dev build.
 	if *c.App.Config().ServiceSettings.DeveloperFlags != "" {
-		for _, devFlagKVStr := range strings.Split(*c.App.Config().ServiceSettings.DeveloperFlags, ",") {
+		for devFlagKVStr := range strings.SplitSeq(*c.App.Config().ServiceSettings.DeveloperFlags, ",") {
 			devFlagKVSplit := strings.SplitN(devFlagKVStr, "=", 2)
 			if len(devFlagKVSplit) != 2 {
 				c.Logger.Warn("Unable to parse developer flag", mlog.String("developer_flag", devFlagKVStr))
@@ -144,20 +144,15 @@ func generateDevCSP(c Context) string {
 	return " " + strings.Join(devCSP, " ")
 }
 
-func (h Handler) basicSecurityChecks(w http.ResponseWriter, r *http.Request) *model.AppError {
+func (h Handler) basicSecurityChecks(c *Context, w http.ResponseWriter, r *http.Request) {
+	maxURLCharacters := *c.App.Config().ServiceSettings.MaximumURLLength
 	if len(r.RequestURI) > maxURLCharacters {
-		return model.NewAppError("basicSecurityChecks", "basic_security_check.url.too_long_error", nil, "", http.StatusRequestURITooLong)
+		c.Err = model.NewAppError("basicSecurityChecks", "basic_security_check.url.too_long_error", nil, "", http.StatusRequestURITooLong)
+		return
 	}
-
-	return nil
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if appErr := h.basicSecurityChecks(w, r); appErr != nil {
-		http.Error(w, appErr.Error(), appErr.StatusCode)
-		return
-	}
-
 	w = newWrappedWriter(w)
 	now := time.Now()
 
@@ -169,22 +164,32 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := model.NewId()
-	var statusCode string
+	var rateLimitExceeded bool
 	defer func() {
 		responseLogFields := []mlog.Field{
 			mlog.String("method", r.Method),
 			mlog.String("url", r.URL.Path),
 			mlog.String("request_id", requestID),
 		}
-		// if there is a session then include the user_id
-		if c.AppContext.Session() != nil {
+		// if there is a valid session and userID then include the user_id
+		if c.AppContext.Session() != nil && c.AppContext.Session().UserId != "" {
 			responseLogFields = append(responseLogFields, mlog.String("user_id", c.AppContext.Session().UserId))
+			if c.AppContext.Session().IsUserAccessToken() {
+				responseLogFields = append(responseLogFields, mlog.String("user_access_token_id", c.AppContext.Session().Props[model.SessionPropUserAccessTokenId]))
+			}
 		}
+
+		statusCode := strconv.Itoa(w.(*responseWriterWrapper).StatusCode())
+
 		// Websockets are returning status code 0 to requests after closing the socket
 		if statusCode != "0" {
 			responseLogFields = append(responseLogFields, mlog.String("status_code", statusCode))
 		}
 		mlog.Debug("Received HTTP request", responseLogFields...)
+
+		if !rateLimitExceeded {
+			h.recordMetrics(c, r, now, statusCode)
+		}
 	}()
 
 	t, _ := i18n.GetTranslationsAndLocaleFromRequest(r)
@@ -199,33 +204,17 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t,
 	)
 
+	if connectionId := r.Header.Get(model.ConnectionId); connectionId != "" {
+		c.AppContext = c.AppContext.WithConnectionId(connectionId)
+	}
+
 	c.Params = ParamsFromRequest(r)
 	c.Logger = c.App.Log()
 
-	if *c.App.Config().ServiceSettings.EnableOpenTracing {
-		span, ctx := tracing.StartRootSpanByContext(context.Background(), "web:ServeHTTP")
-		carrier := opentracing.HTTPHeadersCarrier(r.Header)
-		_ = opentracing.GlobalTracer().Inject(span.Context(), opentracing.HTTPHeaders, carrier)
-		ext.HTTPMethod.Set(span, r.Method)
-		ext.HTTPUrl.Set(span, c.AppContext.Path())
-		ext.PeerAddress.Set(span, c.AppContext.IPAddress())
-		span.SetTag("request_id", c.AppContext.RequestId())
-		span.SetTag("user_agent", c.AppContext.UserAgent())
-
-		defer func() {
-			if c.Err != nil {
-				span.LogFields(spanlog.Error(c.Err))
-				ext.HTTPStatusCode.Set(span, uint16(c.Err.StatusCode))
-				ext.Error.Set(span, true)
-			}
-			span.Finish()
-		}()
-		c.AppContext = c.AppContext.WithContext(ctx)
-
-		tmpSrv := *c.App.Srv()
-		tmpSrv.SetStore(opentracinglayer.New(c.App.Srv().Store(), ctx))
-		c.App.SetServer(&tmpSrv)
-		c.App = app_opentracing.NewOpenTracingAppLayer(c.App, ctx)
+	h.basicSecurityChecks(c, w, r)
+	if c.Err != nil {
+		h.handleContextError(c, w, r)
+		return
 	}
 
 	var maxBytes int64
@@ -266,8 +255,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Set content security policy. This is also specified in the root.html of the webapp in a meta tag.
 		w.Header().Set("Content-Security-Policy", fmt.Sprintf(
-			"frame-ancestors %s; script-src 'self' cdn.rudderlabs.com%s%s",
-			frameAncestors,
+			"frame-ancestors 'self' %s; script-src 'self'%s%s",
+			*c.App.Config().ServiceSettings.FrameAncestors,
 			h.cspShaDirective,
 			devCSP,
 		))
@@ -284,33 +273,40 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if token != "" && tokenLocation != app.TokenLocationCloudHeader && tokenLocation != app.TokenLocationRemoteClusterHeader {
 		session, err := c.App.GetSession(token)
-		defer c.App.ReturnSessionToPool(session)
 
 		if err != nil {
-			c.Logger.Info("Invalid session", mlog.Err(err))
+			c.Logger.Info("Invalid session", mlog.String("error", strings.ReplaceAll(err.Error(), token, tokenDigest(token))))
 			if err.StatusCode == http.StatusInternalServerError {
 				c.Err = err
 			} else if h.RequireSession {
 				c.RemoveSessionCookie(w, r)
-				c.Err = model.NewAppError("ServeHTTP", "api.context.session_expired.app_error", nil, "token="+token, http.StatusUnauthorized)
+				c.Err = model.NewAppError("ServeHTTP", "api.context.session_expired.app_error", nil, "token_sha256="+tokenDigest(token), http.StatusUnauthorized)
 			}
 		} else if !session.IsOAuth && tokenLocation == app.TokenLocationQueryString {
-			c.Err = model.NewAppError("ServeHTTP", "api.context.token_provided.app_error", nil, "token="+token, http.StatusUnauthorized)
+			c.Err = model.NewAppError("ServeHTTP", "api.context.token_provided.app_error", nil, "token_sha256="+tokenDigest(token), http.StatusUnauthorized)
 		} else {
 			c.AppContext = c.AppContext.WithSession(session)
 		}
 
 		// Rate limit by UserID
-		if c.App.Srv().RateLimiter != nil && c.App.Srv().RateLimiter.UserIdRateLimit(c.AppContext.Session().UserId, w) {
-			return
+		if c.App.Srv().RateLimiter != nil {
+			rateLimitExceeded = c.App.Srv().RateLimiter.UserIdRateLimit(r.Context(), c.AppContext.Session().UserId, w)
+			if rateLimitExceeded {
+				return
+			}
 		}
 
-		h.checkCSRFToken(c, r, token, tokenLocation, session)
+		csrfChecked, csrfPassed := h.checkCSRFToken(c, r, tokenLocation, session)
+		if csrfChecked && !csrfPassed {
+			c.AppContext = c.AppContext.WithSession(&model.Session{})
+			c.RemoveSessionCookie(w, r)
+			c.Err = model.NewAppError("ServeHTTP", "api.context.session_expired.app_error", nil, "token_sha256="+tokenDigest(token)+" Appears to be a CSRF attempt", http.StatusUnauthorized)
+		}
 	} else if token != "" && c.App.Channels().License().IsCloud() && tokenLocation == app.TokenLocationCloudHeader {
 		// Check to see if this provided token matches our CWS Token
 		session, err := c.App.GetCloudSession(token)
 		if err != nil {
-			c.Logger.Warn("Invalid CWS token", mlog.Err(err))
+			c.Logger.Warn("Invalid CWS token", mlog.String("error", strings.ReplaceAll(err.Error(), token, tokenDigest(token))))
 			c.Err = err
 		} else {
 			c.AppContext = c.AppContext.WithSession(session)
@@ -324,7 +320,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Check the token is correct for the remote cluster id.
 			session, err := c.App.GetRemoteClusterSession(token, remoteId)
 			if err != nil {
-				c.Logger.Warn("Invalid remote cluster token", mlog.Err(err))
+				c.Logger.Warn("Invalid remote cluster token", mlog.String("error", strings.ReplaceAll(err.Error(), token, tokenDigest(token))))
 				c.Err = err
 			} else {
 				c.AppContext = c.AppContext.WithSession(session)
@@ -332,21 +328,26 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	c.Logger = c.App.Log().With(
+	loggerFields := []mlog.Field{
 		mlog.String("path", c.AppContext.Path()),
 		mlog.String("request_id", c.AppContext.RequestId()),
 		mlog.String("ip_addr", c.AppContext.IPAddress()),
 		mlog.String("user_id", c.AppContext.Session().UserId),
 		mlog.String("method", r.Method),
-	)
+	}
+	if c.AppContext.Session().IsUserAccessToken() {
+		loggerFields = append(loggerFields, mlog.String("user_access_token_id", c.AppContext.Session().Props[model.SessionPropUserAccessTokenId]))
+	}
+	c.Logger = c.App.Log().With(loggerFields...)
 	c.AppContext = c.AppContext.WithLogger(c.Logger)
+	c.App.ProcessSessionAttributesRequest(c.AppContext, r)
 
 	if c.Err == nil && h.RequireSession {
 		c.SessionRequired()
 	}
 
 	if c.Err == nil && h.RequireMfa {
-		c.MfaRequired()
+		c.MfaRequired(r.Method)
 	}
 
 	if c.Err == nil && h.DisableWhenBusy && c.App.Srv().Platform().Busy.IsBusy() {
@@ -378,41 +379,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Handle errors that have occurred
 	if c.Err != nil {
-		c.Err.RequestId = c.AppContext.RequestId()
-		c.LogErrorByCode(c.Err)
-		// The locale translation needs to happen after we have logged it.
-		// We don't want the server logs to be translated as per user locale.
-		c.Err.Translate(c.AppContext.T)
-
-		c.Err.Where = r.URL.Path
-
-		// Block out detailed error when not in developer mode
-		if !*c.App.Config().ServiceSettings.EnableDeveloper {
-			c.Err.WipeDetailed()
-		}
-
-		// Sanitize all 5xx error messages in hardened mode
-		if *c.App.Config().ServiceSettings.ExperimentalEnableHardenedMode && c.Err.StatusCode >= 500 {
-			c.Err.Id = ""
-			c.Err.Message = "Internal Server Error"
-			c.Err.WipeDetailed()
-			c.Err.StatusCode = 500
-			c.Err.Where = ""
-		}
-
-		if IsAPICall(c.App, r) || IsWebhookCall(c.App, r) || IsOAuthAPICall(c.App, r) || r.Header.Get("X-Mobile-App") != "" {
-			w.WriteHeader(c.Err.StatusCode)
-			w.Write([]byte(c.Err.ToJSON()))
-		} else {
-			utils.RenderWebAppError(c.App.Config(), w, r, c.Err, c.App.AsymmetricSigningKey())
-		}
-
-		if c.App.Metrics() != nil {
-			c.App.Metrics().IncrementHTTPError()
-		}
+		h.handleContextError(c, w, r)
+		return
 	}
+}
 
-	statusCode = strconv.Itoa(w.(*responseWriterWrapper).StatusCode())
+func (h Handler) recordMetrics(c *Context, r *http.Request, now time.Time, statusCode string) {
 	if c.App.Metrics() != nil {
 		c.App.Metrics().IncrementHTTPRequest()
 
@@ -426,6 +398,72 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			c.App.Metrics().ObserveAPIEndpointDuration(h.HandlerName, r.Method, statusCode, string(GetOriginClient(r)), pageLoadContext, elapsed)
 		}
+	}
+}
+
+func (h Handler) handleContextError(c *Context, w http.ResponseWriter, r *http.Request) {
+	if c.Err == nil {
+		return
+	}
+
+	// We're handling payload limit error here because it needs to be handled globally.
+	var maxBytesErr *http.MaxBytesError
+	// check if error is a MaxBytesError error, which occurs when you read more bytes from buffer than configured
+	if ok := errors.As(c.Err, &maxBytesErr); ok {
+		// replace the context error with this error if so,
+		newErr := model.NewAppError(c.Err.Where, "api.context.request_body_too_large.app_error", nil, "Use the setting `MaximumPayloadSizeBytes` in Mattermost config to configure allowed payload limit. Learn more about this setting in Mattermost docs at https://docs.mattermost.com/configure/environment-configuration-settings.html#maximum-payload-size", http.StatusRequestEntityTooLarge)
+		c.Err = newErr
+	}
+
+	// Detect and fix AppError with missing StatusCode to prevent panics
+	if c.Err.StatusCode == 0 {
+		c.Logger.Error("AppError with zero StatusCode detected",
+			mlog.String("error_id", c.Err.Id),
+			mlog.String("error_message", c.Err.Message),
+			mlog.String("error_where", c.Err.Where),
+			mlog.String("request_path", r.URL.Path),
+			mlog.String("request_method", r.Method),
+			mlog.String("detailed_error", c.Err.DetailedError),
+		)
+		c.Err.StatusCode = http.StatusInternalServerError
+	}
+
+	c.Err.RequestId = c.AppContext.RequestId()
+	c.LogErrorByCode(c.Err)
+	// The locale translation needs to happen after we have logged it.
+	// We don't want the server logs to be translated as per user locale.
+	c.Err.Translate(c.AppContext.T)
+
+	c.Err.Where = r.URL.Path
+
+	// Block out detailed error when not in developer mode
+	if !*c.App.Config().ServiceSettings.EnableDeveloper {
+		c.Err.WipeDetailed()
+	}
+
+	// Sanitize all 5xx error messages in hardened mode
+	if *c.App.Config().ServiceSettings.EnableHardenedMode && c.Err.StatusCode >= 500 {
+		c.Err.Id = ""
+		c.Err.Message = "Internal Server Error"
+		c.Err.WipeDetailed()
+		// Props is always exposed to clients, so scrub it along with the rest of the sanitized 5xx.
+		c.Err.Props = nil
+		c.Err.StatusCode = 500
+		c.Err.Where = ""
+	}
+
+	if IsAPICall(c.App, r) || IsWebhookCall(c.App, r) || IsOAuthAPICall(c.App, r) || r.Header.Get("X-Mobile-App") != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(c.Err.StatusCode)
+		if _, err := w.Write([]byte(c.Err.ToJSON())); err != nil {
+			c.Logger.Warn("Failed to write error response", mlog.Err(err))
+		}
+	} else {
+		utils.RenderWebAppError(c.App.Config(), w, r, c.Err, c.App.AsymmetricSigningKey())
+	}
+
+	if c.App.Metrics() != nil {
+		c.App.Metrics().IncrementHTTPError()
 	}
 }
 
@@ -471,9 +509,9 @@ func GetOriginClient(r *http.Request) OriginClient {
 	return OriginClientWeb
 }
 
-// checkCSRFToken performs a CSRF check on the provided request with the given CSRF token. Returns whether or not
-// a CSRF check occurred and whether or not it succeeded.
-func (h *Handler) checkCSRFToken(c *Context, r *http.Request, token string, tokenLocation app.TokenLocation, session *model.Session) (checked bool, passed bool) {
+// checkCSRFToken performs a CSRF check on the provided request with the given CSRF token. Returns whether
+// a CSRF check occurred and whether it succeeded.
+func (h *Handler) checkCSRFToken(c *Context, r *http.Request, tokenLocation app.TokenLocation, session *model.Session) (checked bool, passed bool) {
 	csrfCheckNeeded := session != nil && c.Err == nil && tokenLocation == app.TokenLocationCookie && !h.TrustRequester && r.Method != "GET"
 	csrfCheckPassed := false
 
@@ -486,19 +524,11 @@ func (h *Handler) checkCSRFToken(c *Context, r *http.Request, token string, toke
 			// ToDo(DSchalla) 2019/01/04: Remove after deprecation period and only allow CSRF Header (MM-13657)
 			csrfErrorMessage := "CSRF Header check failed for request - Please upgrade your web application or custom app to set a CSRF Header"
 
-			sid := ""
-			userId := ""
-
-			if session != nil {
-				sid = session.Id
-				userId = session.UserId
-			}
-
 			fields := []mlog.Field{
 				mlog.String("path", r.URL.Path),
 				mlog.String("ip", r.RemoteAddr),
-				mlog.String("session_id", sid),
-				mlog.String("user_id", userId),
+				mlog.String("session_id", session.Id),
+				mlog.String("user_id", session.UserId),
 			}
 
 			if *c.App.Config().ServiceSettings.ExperimentalStrictCSRFEnforcement {
@@ -507,11 +537,6 @@ func (h *Handler) checkCSRFToken(c *Context, r *http.Request, token string, toke
 				c.Logger.Debug(csrfErrorMessage, fields...)
 				csrfCheckPassed = true
 			}
-		}
-
-		if !csrfCheckPassed {
-			c.AppContext = c.AppContext.WithSession(&model.Session{})
-			c.Err = model.NewAppError("ServeHTTP", "api.context.session_expired.app_error", nil, "token="+token+" Appears to be a CSRF attempt", http.StatusUnauthorized)
 		}
 	}
 
@@ -531,7 +556,7 @@ func (w *Web) APIHandler(h func(*Context, http.ResponseWriter, *http.Request)) h
 		IsStatic:       false,
 		IsLocal:        false,
 	}
-	if *w.srv.Config().ServiceSettings.WebserverMode == "gzip" {
+	if w.srv.Config().ServiceSettings.CompressResponses() {
 		return gzhttp.GzipHandler(handler)
 	}
 	return handler
@@ -551,7 +576,7 @@ func (w *Web) APIHandlerTrustRequester(h func(*Context, http.ResponseWriter, *ht
 		IsStatic:       false,
 		IsLocal:        false,
 	}
-	if *w.srv.Config().ServiceSettings.WebserverMode == "gzip" {
+	if w.srv.Config().ServiceSettings.CompressResponses() {
 		return gzhttp.GzipHandler(handler)
 	}
 	return handler
@@ -570,7 +595,7 @@ func (w *Web) APISessionRequired(h func(*Context, http.ResponseWriter, *http.Req
 		IsStatic:       false,
 		IsLocal:        false,
 	}
-	if *w.srv.Config().ServiceSettings.WebserverMode == "gzip" {
+	if w.srv.Config().ServiceSettings.CompressResponses() {
 		return gzhttp.GzipHandler(handler)
 	}
 	return handler

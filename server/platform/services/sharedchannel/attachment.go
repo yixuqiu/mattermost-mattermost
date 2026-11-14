@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -21,7 +22,7 @@ func (scs *Service) shouldSyncAttachment(fi *model.FileInfo, rc *model.RemoteClu
 	sca, err := scs.server.GetStore().SharedChannel().GetAttachment(fi.Id, rc.RemoteId)
 	if err != nil {
 		if _, ok := err.(errNotFound); !ok {
-			scs.server.Log().Log(mlog.LvlSharedChannelServiceError, "error fetching shared channel attachment",
+			scs.server.Log().LogM(mlog.MlvlSharedChannelServiceError, "error fetching shared channel attachment",
 				mlog.String("file_id", fi.Id),
 				mlog.String("remote_id", rc.RemoteId),
 				mlog.Err(err),
@@ -104,9 +105,9 @@ func (scs *Service) sendAttachmentForRemote(fi *model.FileInfo, post *model.Post
 		}
 
 		if !resp.IsSuccess() {
-			scs.server.Log().Log(mlog.LvlSharedChannelServiceError, "send file failed",
+			scs.server.Log().LogM(mlog.MlvlSharedChannelServiceError, "send file failed",
 				mlog.String("remote", rc.DisplayName),
-				mlog.String("uploadId", usResp.Id),
+				mlog.String("upload_id", usResp.Id),
 				mlog.String("err", resp.Err),
 			)
 			return
@@ -115,9 +116,9 @@ func (scs *Service) sendAttachmentForRemote(fi *model.FileInfo, post *model.Post
 		// response payload should be a model.FileInfo.
 		var fi model.FileInfo
 		if err2 := json.Unmarshal(resp.Payload, &fi); err2 != nil {
-			scs.server.Log().Log(mlog.LvlSharedChannelServiceError, "invalid file info response after send file",
+			scs.server.Log().LogM(mlog.MlvlSharedChannelServiceWarn, "invalid file info response after send file",
 				mlog.String("remote", rc.DisplayName),
-				mlog.String("uploadId", usResp.Id),
+				mlog.String("upload_id", usResp.Id),
 				mlog.Err(err2),
 			)
 			return
@@ -125,9 +126,9 @@ func (scs *Service) sendAttachmentForRemote(fi *model.FileInfo, post *model.Post
 
 		// save file attachment record in SharedChannelAttachments table
 		if err2 := scs.saveSharedAttachment(&fi, rc); err2 != nil {
-			scs.server.Log().Log(mlog.LvlSharedChannelServiceError, "error saving SharedChannelAttachment",
+			scs.server.Log().LogM(mlog.MlvlSharedChannelServiceError, "error saving SharedChannelAttachment",
 				mlog.String("remote", rc.DisplayName),
-				mlog.String("uploadId", usResp.Id),
+				mlog.String("upload_id", usResp.Id),
 				mlog.Err(err2),
 			)
 			return
@@ -135,7 +136,7 @@ func (scs *Service) sendAttachmentForRemote(fi *model.FileInfo, post *model.Post
 
 		scs.server.Log().Log(mlog.LvlSharedChannelServiceDebug, "send file successful",
 			mlog.String("remote", rc.DisplayName),
-			mlog.String("uploadId", usResp.Id),
+			mlog.String("upload_id", usResp.Id),
 		)
 	})
 }
@@ -168,18 +169,57 @@ func (scs *Service) onReceiveUploadCreate(msg model.RemoteClusterMsg, rc *model.
 	}
 
 	// make sure channel is shared for the remote sender
-	if _, err := scs.server.GetStore().SharedChannel().GetRemoteByIds(us.ChannelId, rc.RemoteId); err != nil {
+	hasRemote, err := scs.server.GetStore().SharedChannel().HasRemote(us.ChannelId, rc.RemoteId)
+	if err != nil {
 		return fmt.Errorf("could not validate upload session for remote: %w", err)
+	}
+	if !hasRemote {
+		return model.NewAppError("createUpload", "api.upload.create.upload_channel_not_shared_with_remote.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	// make sure file attachments are enabled
+	if scs.server.Config().FileSettings.EnableFileAttachments == nil || !*scs.server.Config().FileSettings.EnableFileAttachments {
+		return model.NewAppError("ReceiveUploadCreate",
+			"api.file.attachments.disabled.app_error",
+			nil, "", http.StatusNotImplemented)
+	}
+
+	// make sure the file size requested does not exceed local server config - MM server's regular
+	// upload code will ensure the actual bytes sent are within the upload session limit.
+	if scs.server.Config().FileSettings.MaxFileSize == nil || us.FileSize > *scs.server.Config().FileSettings.MaxFileSize {
+		return model.NewAppError("createUpload", "api.upload.create.upload_too_large.app_error",
+			map[string]any{"channelId": us.ChannelId}, "", http.StatusRequestEntityTooLarge)
+	}
+
+	// validate upload type for shared channels - only allow attachments
+	if us.Type != model.UploadTypeAttachment {
+		return model.NewAppError("onReceiveUploadCreate", "api.upload.invalid_type_for_shared_channel.app_error",
+			nil, "", http.StatusBadRequest)
 	}
 
 	us.RemoteId = rc.RemoteId // don't let remotes try to impersonate each other
 
-	// create upload session.
-	usSaved, appErr := scs.app.CreateUploadSession(request.EmptyContext(scs.server.Log()), &us)
+	rctx := request.EmptyContext(scs.server.Log())
+	usSaved, appErr := scs.app.CreateUploadSession(rctx, &us)
 	if appErr != nil {
-		return appErr
+		// The transport can resend this request after the first copy already saved the session.
+		existing, err := scs.server.GetStore().UploadSession().Get(rctx, us.Id)
+		if err != nil || !isSameUploadRequest(existing, &us) {
+			return appErr
+		}
+		usSaved = existing
 	}
 
 	response.SetPayload(usSaved)
 	return nil
+}
+
+func isSameUploadRequest(saved, req *model.UploadSession) bool {
+	return saved.RemoteId == req.RemoteId &&
+		saved.Type == req.Type &&
+		saved.UserId == req.UserId &&
+		saved.ChannelId == req.ChannelId &&
+		saved.Filename == req.Filename &&
+		saved.FileSize == req.FileSize &&
+		saved.ReqFileId == req.ReqFileId
 }

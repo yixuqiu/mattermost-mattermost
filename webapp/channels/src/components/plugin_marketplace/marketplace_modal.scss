@@ -1,8 +1,13 @@
-@import 'utils/variables';
-@import 'utils/mixins';
+@use 'utils/variables';
 
 .marketplace-modal {
     width: 832px;
+
+    // The centered GenericModal layout makes `.modal-content` a flex item, so without an
+    // explicit minimum it cannot shrink below the widest nowrap plugin description.
+    .modal-content {
+        min-width: 0;
+    }
 
     &.streamlined-marketplace {
         .modal-header {
@@ -76,10 +81,10 @@
             }
 
             &.active {
-                border-bottom: 2px solid var(--denim-button-bg);
+                border-bottom: 2px solid var(--button-bg);
 
                 a {
-                    color: var(--denim-button-bg);
+                    color: var(--button-bg);
                 }
             }
 
@@ -143,18 +148,6 @@
                 padding-left: 16px;
                 margin: 0;
 
-                .plugin-configure,
-                .app-installed {
-                    @include secondary-button;
-                    @include button-medium;
-                }
-
-                .plugin-install,
-                .app-install {
-                    @include primary-button;
-                    @include button-medium;
-                }
-
                 a {
                     &:hover,
                     &:focus {
@@ -177,7 +170,7 @@
             align-items: center;
             justify-content: center;
             border-radius: 50%;
-            background-color: $white;
+            background-color: variables.$white;
 
             svg,
             img {
@@ -242,7 +235,7 @@
             display: flex;
             align-items: center;
             padding: 10px 15px;
-            border-bottom: 1px solid $light-gray;
+            border-bottom: 1px solid variables.$light-gray;
 
             &.clickable {
                 cursor: pointer;
@@ -273,9 +266,6 @@
         }
 
         &__action {
-            @include primary-button;
-            @include button-medium;
-
             margin-top: 30px;
         }
 

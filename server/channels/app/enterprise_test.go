@@ -17,6 +17,7 @@ import (
 )
 
 func TestSAMLSettings(t *testing.T) {
+	mainHelper.Parallel(t)
 	tt := []struct {
 		name         string
 		setInterface bool
@@ -62,13 +63,11 @@ func TestSAMLSettings(t *testing.T) {
 
 			th := SetupEnterpriseWithStoreMock(t)
 
-			defer th.TearDown()
-
 			mockStore := th.App.Srv().Store().(*storemocks.Store)
 			mockUserStore := storemocks.UserStore{}
 			mockUserStore.On("Count", mock.Anything).Return(int64(10), nil)
 			mockPostStore := storemocks.PostStore{}
-			mockPostStore.On("GetMaxPostSize").Return(65535, nil)
+			mockPostStore.On("GetMaxPostSize").Return(model.PostMessageMaxBytesV2, nil)
 			mockSystemStore := storemocks.SystemStore{}
 			mockSystemStore.On("GetByName", "UpgradedFromTE").Return(&model.System{Name: "UpgradedFromTE", Value: "false"}, nil)
 			mockSystemStore.On("GetByName", "InstallationDate").Return(&model.System{Name: "InstallationDate", Value: "10"}, nil)

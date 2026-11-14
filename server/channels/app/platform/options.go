@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/v8/channels/store"
 	"github.com/mattermost/mattermost/server/v8/channels/store/localcachelayer"
+	"github.com/mattermost/mattermost/server/v8/channels/store/sqlstore"
 	"github.com/mattermost/mattermost/server/v8/config"
 	"github.com/mattermost/mattermost/server/v8/einterfaces"
 	"github.com/mattermost/mattermost/server/v8/platform/shared/filestore"
@@ -44,16 +45,31 @@ func StoreOverride(override any) Option {
 	}
 }
 
+// StoreOverrideWithCache is a test option to construct the app with the store layer
+// wrapped on top of the store that is passed.
 func StoreOverrideWithCache(override store.Store) Option {
 	return func(ps *PlatformService) error {
 		ps.newStore = func() (store.Store, error) {
-			lcl, err := localcachelayer.NewLocalCacheLayer(override, ps.metricsIFace, ps.clusterIFace, ps.cacheProvider)
+			lcl, err := localcachelayer.NewLocalCacheLayer(override, ps.metricsIFace, ps.clusterIFace, ps.cacheProvider, ps.Log())
 			if err != nil {
 				return nil, err
 			}
+			// Clearing all the caches because the in-mem data
+			// is persisted in case of Redis.
+			lcl.Invalidate()
 			return lcl, nil
 		}
 
+		return nil
+	}
+}
+
+// StoreOption allows passing options when constructing the store.
+//
+// This option has no effect if StoreOverride or StoreOverrideWithCache is also set.
+func StoreOption(option sqlstore.Option) Option {
+	return func(ps *PlatformService) error {
+		ps.storeOptions = append(ps.storeOptions, option)
 		return nil
 	}
 }
@@ -105,6 +121,18 @@ func StartMetrics() Option {
 	}
 }
 
+// DisableGlobalLogger stops this service from claiming the process-wide logging globals:
+// the logger behind package-level mlog calls and the redirected standard library logger.
+// Test binaries run many PlatformService instances concurrently, so without this the last
+// one configured captures package-level mlog calls from unrelated tests (MM-70639).
+func DisableGlobalLogger() Option {
+	return func(ps *PlatformService) error {
+		ps.skipGlobalLogger = true
+
+		return nil
+	}
+}
+
 func SetLogger(logger *mlog.Logger) Option {
 	return func(ps *PlatformService) error {
 		ps.SetLogger(logger)
@@ -116,6 +144,13 @@ func SetLogger(logger *mlog.Logger) Option {
 func SetCluster(cluster einterfaces.ClusterInterface) Option {
 	return func(ps *PlatformService) error {
 		ps.clusterIFace = cluster
+		return nil
+	}
+}
+
+func ForceEnableRedis() Option {
+	return func(ps *PlatformService) error {
+		ps.forceEnableRedis = true
 		return nil
 	}
 }

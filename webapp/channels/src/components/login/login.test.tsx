@@ -2,21 +2,43 @@
 // See LICENSE.txt for license information.
 
 import {createMemoryHistory} from 'history';
+import nock from 'nock';
 import React from 'react';
 
+import {isDesktopApp} from '@mattermost/shared/utils/user_agent';
+
+import {Client4} from 'mattermost-redux/client';
 import {RequestStatus} from 'mattermost-redux/constants';
 
+import * as loginActions from 'actions/views/login';
 import LocalStorageStore from 'stores/local_storage_store';
 
 import Login from 'components/login/login';
 
 import mergeObjects from 'packages/mattermost-redux/test/merge_objects';
-import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
+import TestHelper from 'packages/mattermost-redux/test/test_helper';
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 import Constants, {WindowSizes} from 'utils/constants';
+import DesktopApp from 'utils/desktop_api';
+import {showNotification} from 'utils/notifications';
 
 import type {GlobalState} from 'types/store';
 
+jest.unmock('react-intl');
 jest.unmock('react-router-dom');
+
+jest.mock('utils/notifications', () => ({
+    showNotification: jest.fn(),
+}));
+
+jest.mock('utils/desktop_api', () => ({
+    dispatchNotification: jest.fn(),
+    setSessionExpired: jest.fn(),
+}));
+
+jest.mock('@mattermost/shared/utils/user_agent', () => ({
+    isDesktopApp: jest.fn(),
+}));
 
 describe('components/login/Login', () => {
     const baseState = {
@@ -94,7 +116,13 @@ describe('components/login/Login', () => {
         LocalStorageStore.setWasLoggedIn(false);
     });
 
-    it('should match snapshot', () => {
+    afterEach(() => {
+        // Spied login actions would otherwise leak into the tests that call the real thunks over HTTP
+        jest.restoreAllMocks();
+        nock.cleanAll();
+    });
+
+    it('should render', () => {
         renderWithContext(
             <Login/>,
             baseState,
@@ -104,7 +132,7 @@ describe('components/login/Login', () => {
         expect(screen.queryByText('Log in to your account')).not.toBeInTheDocument();
     });
 
-    it('should match snapshot with base login', () => {
+    it('should render with base login', () => {
         const state = mergeObjects(baseState, {
             entities: {
                 general: {
@@ -126,6 +154,7 @@ describe('components/login/Login', () => {
 
     it('should handle session expired', async () => {
         LocalStorageStore.setWasLoggedIn(true);
+        (showNotification as jest.Mock).mockReturnValue(() => Promise.resolve({status: 'success', callback: () => {}}));
 
         const state = mergeObjects(baseState, {
             entities: {
@@ -143,10 +172,34 @@ describe('components/login/Login', () => {
         );
 
         expect(await screen.findByText('Your session has expired. Please log in again.')).toBeVisible();
+        expect(showNotification).toHaveBeenCalled();
 
-        screen.getByLabelText('Close').click();
+        await userEvent.click(screen.getByLabelText('Close'));
 
         expect(screen.queryByText('Your session has expired. Please log in again.')).not.toBeInTheDocument();
+    });
+
+    it('should call the correct function to show the session expired notification on Desktop App', () => {
+        (isDesktopApp as jest.Mock).mockReturnValue(true);
+        LocalStorageStore.setWasLoggedIn(true);
+        const state = mergeObjects(baseState, {
+            entities: {
+                general: {
+                    config: {
+                        EnableSignInWithEmail: 'true',
+                    },
+                },
+            },
+        });
+
+        renderWithContext(
+            <Login/>,
+            state,
+        );
+
+        expect(showNotification).not.toHaveBeenCalled();
+        expect(DesktopApp.dispatchNotification).toHaveBeenCalled();
+        expect(DesktopApp.setSessionExpired).toHaveBeenCalledWith(true);
     });
 
     it('should handle initializing when logout status success', () => {
@@ -214,7 +267,7 @@ describe('components/login/Login', () => {
 
         expect(await screen.findByText('Sign-in method changed successfully')).toBeVisible();
 
-        screen.getByLabelText('Close').click();
+        await userEvent.click(screen.getByLabelText('Close'));
 
         expect(screen.queryByText('Sign-in method changed successfully')).not.toBeInTheDocument();
     });
@@ -240,12 +293,12 @@ describe('components/login/Login', () => {
         expect(await screen.findByText('Your session has expired. Please log in again.')).toBeVisible();
 
         const emailInput = screen.getByLabelText('Email');
-        userEvent.type(emailInput, 'user1');
+        await userEvent.type(emailInput, 'user1');
 
         const passwordInput = screen.getByLabelText('Password');
-        userEvent.type(passwordInput, 'passw');
+        await userEvent.type(passwordInput, 'passw');
 
-        screen.getByRole('button', {name: 'Log in'}).click();
+        await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
 
         expect(screen.queryByText('Your session has expired. Please log in again.')).not.toBeInTheDocument();
     });
@@ -271,10 +324,37 @@ describe('components/login/Login', () => {
 
         const button = screen.getByRole('link', {name: 'Gitlab Icon GitLab 2'});
 
-        expect(button.style).toMatchObject({
-            color: 'rgb(0, 255, 0)',
-            borderColor: '#00ff00',
+        expect(button.style.color).toBe('rgb(0, 255, 0)');
+        expect(button.style.borderColor).toBe('rgb(0, 255, 0)');
+    });
+
+    it('should focus username field when there is an error', async () => {
+        const state = mergeObjects(baseState, {
+            entities: {
+                general: {
+                    config: {
+                        EnableSignInWithEmail: 'true',
+                    },
+                },
+            },
         });
+
+        renderWithContext(
+            <Login/>,
+            state,
+            {
+                intlMessages: {
+                    'login.noEmail': 'Please enter your email',
+                },
+            },
+        );
+
+        // Try to submit without entering username
+        await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+        // Verify username field is focused
+        const usernameInput = screen.getByLabelText('Email');
+        expect(usernameInput).toHaveFocus();
     });
 
     it('should handle openid text and color props', () => {
@@ -298,10 +378,8 @@ describe('components/login/Login', () => {
 
         const button = screen.getByRole('link', {name: 'OpenID Icon OpenID 2'});
 
-        expect(button.style).toMatchObject({
-            color: 'rgb(0, 255, 0)',
-            borderColor: '#00ff00',
-        });
+        expect(button.style.color).toBe('rgb(0, 255, 0)');
+        expect(button.style.borderColor).toBe('rgb(0, 255, 0)');
     });
 
     it('should redirect on login', async () => {
@@ -338,5 +416,348 @@ describe('components/login/Login', () => {
         );
 
         expect(history.push).toHaveBeenCalledWith(redirectPath);
+    });
+
+    it('should not show dont have an account when open server is disabled', () => {
+        const state = mergeObjects(baseState, {
+            entities: {
+                general: {
+                    config: {
+                        EnableOpenServer: 'false',
+                    },
+                },
+            },
+        });
+
+        renderWithContext(
+            <Login/>,
+            state,
+        );
+
+        expect(screen.queryByText('Don\'t have an account')).not.toBeInTheDocument();
+    });
+
+    describe('EnableGuestMagicLink', () => {
+        // The server only answers the login type pre-check while guest accounts are licensed and enabled
+        const magicLinkState = mergeObjects(baseState, {
+            entities: {
+                general: {
+                    config: {
+                        EnableSignInWithEmail: 'true',
+                        EnableGuestAccounts: 'true',
+                        EnableGuestMagicLink: 'true',
+                    },
+                    license: {
+                        IsLicensed: 'true',
+                        GuestAccounts: 'true',
+                    },
+                },
+            },
+        });
+
+        it('should show password field when EnableGuestMagicLink is false', async () => {
+            const state = mergeObjects(magicLinkState, {
+                entities: {
+                    general: {
+                        config: {
+                            EnableGuestMagicLink: 'false',
+                        },
+                    },
+                },
+            });
+
+            renderWithContext(
+                <Login/>,
+                state,
+            );
+
+            // Password field should be visible
+            expect(screen.getByLabelText('Password')).toBeVisible();
+        });
+
+        it('should hide password field initially when EnableGuestMagicLink is true', async () => {
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            // Password field should not be visible initially
+            expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+        });
+
+        it('should show GuestMagicLinkCard when user login type is guest_magic_link', async () => {
+            // Mock the getUserLoginType to return 'magic_link'
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: Constants.MAGIC_LINK_SERVICE,
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            // Should show the guest magic link success message
+            expect(await screen.findByText('Magic link sent to your email')).toBeVisible();
+            expect(screen.getByText('Check your email for a magic link to log in without a password.')).toBeVisible();
+            expect(screen.getByText('The link expires in five minutes.')).toBeVisible();
+        });
+
+        it('should show password field when user login type requires password', async () => {
+            // Mock the getUserLoginType to return empty string (requires password)
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: '',
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            // Password field should not be visible initially
+            expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            // Password field should now be visible
+            expect(await screen.findByLabelText('Password')).toBeVisible();
+            expect(mockGetUserLoginType).toHaveBeenCalledWith('user@example.com');
+        });
+
+        it('should show the server error when the login type request fails', async () => {
+            TestHelper.initBasic(Client4);
+            nock(Client4.getBaseRoute()).
+                post('/users/login/type').
+                reply(404, {
+                    id: 'api.user.login.guest_magic_link.disabled.error',
+                    message: 'Login with magic link is disabled.',
+                    status_code: 404,
+                });
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            expect(await screen.findByText('Login with magic link is disabled.')).toBeVisible();
+        });
+
+        it('should show an invalid response error when the login type request returns an empty body', async () => {
+            TestHelper.initBasic(Client4);
+            nock(Client4.getBaseRoute()).
+                post('/users/login/type').
+                reply(404, '', {'Content-Type': 'application/json'});
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            expect(await screen.findByText('Received invalid response from the server.')).toBeVisible();
+            expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+        });
+
+        it('should focus password field after it appears when password is required', async () => {
+            // Mock the getUserLoginType to return empty string (requires password)
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: '',
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            // Password field should appear and be focused
+            const passwordField = await screen.findByLabelText('Password');
+            expect(passwordField).toBeVisible();
+
+            await waitFor(() => expect(passwordField).toHaveFocus());
+        });
+
+        it('should submit with password when password field is shown', async () => {
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: '',
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            const mockLogin = jest.fn().mockReturnValue(async () => ({
+                data: true,
+            }));
+            jest.spyOn(loginActions, 'login').mockImplementation(mockLogin);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            // First submit - triggers getUserLoginType
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+            expect(mockGetUserLoginType).toHaveBeenCalledWith('user@example.com');
+
+            // Password field should appear
+            const passwordField = await screen.findByLabelText('Password');
+            await userEvent.type(passwordField, 'password123');
+
+            // Second submit - triggers actual login
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            expect(mockLogin).toHaveBeenCalledWith('user@example.com', 'password123', undefined);
+        });
+
+        it('should not show forgot password link when EnableGuestMagicLink is true and password not required', async () => {
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            // Forgot password link should not be visible when password field is hidden
+            expect(screen.queryByText('Forgot your password?')).not.toBeInTheDocument();
+        });
+
+        it('should show forgot password link when password field is displayed', async () => {
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: '',
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            // After password field appears, forgot password link should be visible
+            await screen.findByLabelText('Password');
+            expect(screen.getByText('Forgot your password?')).toBeVisible();
+        });
+
+        it('should hide password field when user starts typing in login ID after password field appeared', async () => {
+            // Mock the getUserLoginType to return empty string (requires password)
+            const mockGetUserLoginType = jest.fn().mockReturnValue(async () => ({
+                data: {
+                    auth_service: '',
+                    is_deactivated: false,
+                },
+            }));
+            jest.spyOn(loginActions, 'getUserLoginType').mockImplementation(mockGetUserLoginType);
+
+            renderWithContext(
+                <Login/>,
+                magicLinkState,
+            );
+
+            const emailInput = screen.getByLabelText('Email');
+            await userEvent.type(emailInput, 'user@example.com');
+
+            // Click login - password field should appear
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+            expect(await screen.findByLabelText('Password')).toBeVisible();
+
+            // User starts typing in the login ID field again
+            await userEvent.clear(emailInput);
+            await userEvent.type(emailInput, 'different@example.com');
+
+            // Password field should be hidden
+            expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+        });
+
+        // The pre-check response is nocked but left unconsumed on purpose: an untouched
+        // interceptor is what proves the request was never made
+        const expectPasswordLoginWithoutPreCheck = async (state: GlobalState) => {
+            TestHelper.initBasic(Client4);
+            const preCheck = nock(Client4.getBaseRoute()).
+                post('/users/login/type').
+                reply(404, '', {'Content-Type': 'application/json'});
+
+            const mockLogin = jest.fn().mockReturnValue(async () => ({
+                data: true,
+            }));
+            jest.spyOn(loginActions, 'login').mockImplementation(mockLogin);
+
+            renderWithContext(
+                <Login/>,
+                state,
+            );
+
+            await userEvent.type(screen.getByLabelText('Email'), 'user@example.com');
+            await userEvent.type(screen.getByLabelText('Password'), 'password123');
+            await userEvent.click(screen.getByRole('button', {name: 'Log in'}));
+
+            expect(mockLogin).toHaveBeenCalledWith('user@example.com', 'password123', undefined);
+            expect(screen.queryByText('Received invalid response from the server.')).not.toBeInTheDocument();
+            expect(preCheck.isDone()).toBe(false);
+        };
+
+        it('should log in with a password when guest accounts are disabled but EnableGuestMagicLink is true', async () => {
+            await expectPasswordLoginWithoutPreCheck(mergeObjects(magicLinkState, {
+                entities: {
+                    general: {
+                        config: {
+                            EnableGuestAccounts: 'false',
+                        },
+                    },
+                },
+            }));
+        });
+
+        it('should log in with a password when the license does not include guest accounts', async () => {
+            await expectPasswordLoginWithoutPreCheck(mergeObjects(magicLinkState, {
+                entities: {
+                    general: {
+                        license: {
+                            GuestAccounts: 'false',
+                        },
+                    },
+                },
+            }));
+        });
     });
 });

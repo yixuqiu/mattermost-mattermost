@@ -6,8 +6,10 @@ import React from 'react';
 import {Client4} from 'mattermost-redux/client';
 import {isGuest} from 'mattermost-redux/utils/user_utils';
 
+import usePrefixedIds, {joinIds} from 'components/common/hooks/usePrefixedIds';
 import BotTag from 'components/widgets/tag/bot_tag';
 import GuestTag from 'components/widgets/tag/guest_tag';
+import ImportedInactiveTag from 'components/widgets/tag/imported_inactive_tag';
 import Avatar from 'components/widgets/users/avatar';
 
 import * as Utils from 'utils/utils';
@@ -18,8 +20,15 @@ import type {ResultsCallback} from './provider';
 import {SuggestionContainer} from './suggestion';
 import type {SuggestionProps} from './suggestion';
 
-const GenericUserSuggestion = React.forwardRef<HTMLDivElement, SuggestionProps<UserProfile>>((props, ref) => {
-    const {item} = props;
+const GenericUserSuggestion = React.forwardRef<HTMLLIElement, SuggestionProps<UserProfile>>((props, ref) => {
+    const {id, item} = props;
+
+    const ids = usePrefixedIds(id, {
+        name: null,
+        description: null,
+        botTag: null,
+        guestTag: null,
+    });
 
     const username = item.username;
     let description = '';
@@ -36,20 +45,28 @@ const GenericUserSuggestion = React.forwardRef<HTMLDivElement, SuggestionProps<U
         <SuggestionContainer
             ref={ref}
             {...props}
+            aria-labelledby={ids.name}
+            aria-describedby={joinIds(ids.description, ids.botTag, ids.guestTag)}
         >
             <Avatar
                 size='xxs'
                 username={username}
                 url={Client4.getUsersRoute() + '/' + item.id + '/image?_=' + (item.last_picture_update || 0)}
+                alt=''
             />
             <div className='suggestion-list__ellipsis'>
-                <span className='suggestion-list__main'>
+                <span
+                    id={ids.name}
+                    data-testid='suggestion-list__main'
+                    className='suggestion-list__main'
+                >
                     {'@' + username}
                 </span>
-                {description}
+                <span id={ids.description}>{description}</span>
             </div>
-            {item.is_bot && <BotTag/>}
-            {isGuest(item.roles) && <GuestTag/>}
+            {item.is_bot && <span id={ids.botTag}><BotTag/></span>}
+            {isGuest(item.roles) && <span id={ids.guestTag}><GuestTag/></span>}
+            {item.props?.importedInactive === 'true' && <ImportedInactiveTag/>}
         </SuggestionContainer>
     );
 });
@@ -72,7 +89,10 @@ export default class GenericUserProvider extends Provider {
                 return;
             }
 
-            const users = data.users;
+            const users = data?.users;
+            if (!users) {
+                return;
+            }
 
             resultsCallback({
                 matchedPretext: normalizedPretext,

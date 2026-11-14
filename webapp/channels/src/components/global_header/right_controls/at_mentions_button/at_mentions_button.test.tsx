@@ -1,44 +1,105 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
-import IconButton from '@mattermost/compass-components/components/icon-button'; // eslint-disable-line no-restricted-imports
+import {closeRightHandSide, showMentions} from 'actions/views/rhs';
+
+import {renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
+import {RHSStates} from 'utils/constants';
+import {defaultMentionFilters} from 'utils/mention_search';
 
 import type {GlobalState} from 'types/store';
 
 import AtMentionsButton from './at_mentions_button';
 
-const mockDispatch = jest.fn();
-let mockState: GlobalState;
-
-jest.mock('react-redux', () => ({
-    ...jest.requireActual('react-redux') as typeof import('react-redux'),
-    useSelector: (selector: (state: typeof mockState) => unknown) => selector(mockState),
-    useDispatch: () => mockDispatch,
+jest.mock('actions/views/rhs', () => ({
+    closeRightHandSide: jest.fn(() => ({type: 'MOCK_CLOSE_RHS'})),
+    showMentions: jest.fn(() => ({type: 'MOCK_SHOW_MENTIONS'})),
 }));
 
 describe('components/global/AtMentionsButton', () => {
+    const initialState = {
+        views: {
+            rhs: {
+                isSidebarOpen: true,
+            },
+        },
+    } as unknown as GlobalState;
+
     beforeEach(() => {
-        mockState = {views: {rhs: {isSidebarOpen: true}}} as GlobalState;
+        jest.clearAllMocks();
     });
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(
+    test('should show active mentions', async () => {
+        renderWithContext(
             <AtMentionsButton/>,
+            initialState,
         );
-        expect(wrapper).toMatchSnapshot();
+
+        await userEvent.click(screen.getByRole('button', {name: 'Recent mentions'}));
+        expect(showMentions).toHaveBeenCalledTimes(1);
     });
 
-    test('should show active mentions', () => {
-        const wrapper = shallow(
+    test('should close the right-hand side when the unscoped mentions view is already showing', async () => {
+        renderWithContext(
             <AtMentionsButton/>,
+            {
+                views: {
+                    rhs: {
+                        isSidebarOpen: true,
+                        rhsState: RHSStates.MENTION,
+                        searchTeam: null,
+                        mentionFilters: defaultMentionFilters,
+                    },
+                },
+            } as unknown as GlobalState,
         );
 
-        wrapper.find(IconButton).simulate('click', {
-            preventDefault: jest.fn(),
-        });
-        expect(mockDispatch).toHaveBeenCalledTimes(1);
+        await userEvent.click(screen.getByRole('button', {name: 'Recent mentions'}));
+        expect(closeRightHandSide).toHaveBeenCalledTimes(1);
+        expect(showMentions).not.toHaveBeenCalled();
+    });
+
+    test('should reopen all mentions when the mentions view is scoped to a single team', async () => {
+        renderWithContext(
+            <AtMentionsButton/>,
+            {
+                views: {
+                    rhs: {
+                        isSidebarOpen: true,
+                        rhsState: RHSStates.MENTION,
+                        searchTeam: 'team_id',
+                        mentionFilters: defaultMentionFilters,
+                    },
+                },
+            } as unknown as GlobalState,
+        );
+
+        await userEvent.click(screen.getByRole('button', {name: 'Recent mentions'}));
+        expect(showMentions).toHaveBeenCalledTimes(1);
+        expect(closeRightHandSide).not.toHaveBeenCalled();
+    });
+
+    test('should reopen all mentions when the mentions view is filtered but not scoped to a team', async () => {
+        // A channel, type or date filter narrows the view just as a team does, without setting
+        // searchTeam. Closing on it would leave no way back to all mentions from this button.
+        renderWithContext(
+            <AtMentionsButton/>,
+            {
+                views: {
+                    rhs: {
+                        isSidebarOpen: true,
+                        rhsState: RHSStates.MENTION,
+                        searchTeam: null,
+                        mentionFilters: {...defaultMentionFilters, channelIds: ['channel_id']},
+                    },
+                },
+            } as unknown as GlobalState,
+        );
+
+        await userEvent.click(screen.getByRole('button', {name: 'Recent mentions'}));
+        expect(showMentions).toHaveBeenCalledTimes(1);
+        expect(closeRightHandSide).not.toHaveBeenCalled();
     });
 });

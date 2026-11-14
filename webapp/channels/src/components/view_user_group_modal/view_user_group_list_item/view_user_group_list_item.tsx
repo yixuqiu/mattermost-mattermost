@@ -2,16 +2,29 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback} from 'react';
+import {useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
 
-import {GroupSource} from '@mattermost/types/groups';
+import {
+    TrashCanOutlineIcon,
+} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {Group} from '@mattermost/types/groups';
 import type {UserProfile} from '@mattermost/types/users';
 
+import {getStatusForUserId} from 'mattermost-redux/selectors/entities/users';
 import type {ActionResult} from 'mattermost-redux/types/actions';
+import {isSyncableSource} from 'mattermost-redux/utils/group_utils';
 
+import StatusIcon from 'components/status_icon';
 import Avatar from 'components/widgets/users/avatar';
 
+import {UserStatuses} from 'utils/constants';
 import * as Utils from 'utils/utils';
+
+import type {GlobalState} from 'types/store';
 
 export type Props = {
     groupId: string;
@@ -22,9 +35,10 @@ export type Props = {
     actions: {
         removeUsersFromGroup: (groupId: string, userIds: string[]) => Promise<ActionResult>;
     };
-}
+};
 
 const ViewUserGroupListItem = (props: Props) => {
+    const {formatMessage} = useIntl();
     const {
         user,
         group,
@@ -41,19 +55,24 @@ const ViewUserGroupListItem = (props: Props) => {
         });
     }, [user.id, groupId, props.decrementMemberCount, props.actions.removeUsersFromGroup]);
 
+    const status = useSelector((state: GlobalState) => getStatusForUserId(state, user?.id) || UserStatuses.OFFLINE);
+
     return (
         <div
             key={user.id}
             className='group-member-row'
         >
-            <>
+            <span className='status-wrapper'>
                 <Avatar
                     username={user.username}
                     size={'sm'}
                     url={Utils.imageURLForUser(user?.id ?? '')}
                     className={'avatar-post-preview'}
                 />
-            </>
+                <StatusIcon
+                    status={status}
+                />
+            </span>
             <div className='group-member-name'>
                 {Utils.getFullName(user)}
             </div>
@@ -61,17 +80,20 @@ const ViewUserGroupListItem = (props: Props) => {
                 {`@${user.username}`}
             </div>
             {
-                (group.source.toLowerCase() !== GroupSource.Ldap && props.permissionToLeaveGroup) &&
-                <button
-                    type='button'
-                    className='remove-group-member btn btn-icon btn-xs'
-                    aria-label='Close'
-                    onClick={removeUserFromGroup}
-                >
-                    <i
-                        className='icon icon-trash-can-outline'
+                (!isSyncableSource(group.source.toLowerCase()) && props.permissionToLeaveGroup) &&
+                <WithTooltip title={formatMessage({id: 'view_user_group_list_item.removeUserFromGroup', defaultMessage: 'Remove {user} from group'}, {user: Utils.getFullName(user)})}>
+                    <IconButton
+                        size='small'
+                        destructive={true}
+                        className='remove-group-member'
+                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        aria-label={formatMessage({
+                            id: 'view_user_group_list_item.removeUserFromGroup',
+                            defaultMessage: 'Remove {user} from group',
+                        }, {user: Utils.getFullName(user)})}
+                        onClick={removeUserFromGroup}
                     />
-                </button>
+                </WithTooltip>
             }
         </div>
     );

@@ -19,7 +19,7 @@ const professionalPaidFeatures = [
 
 const enterprisePaidFeatures = [
     {sidebarName: 'Groups', featureDiscoveryTitle: 'Active Directory/LDAP groups'},
-    {sidebarName: 'System Roles', featureDiscoveryTitle: 'controlled access to the System Console'},
+    {sidebarName: 'Delegated Granular Administration', featureDiscoveryTitle: 'controlled access to the System Console'},
     {sidebarName: 'Data Retention Policy', featureDiscoveryTitle: 'Create data retention schedules with Mattermost Enterprise'},
     {sidebarName: 'Compliance Export', featureDiscoveryTitle: 'Run compliance exports with Mattermost Enterprise'},
     {sidebarName: 'Custom Terms of Service', featureDiscoveryTitle: 'Create custom terms of service with Mattermost Enterprise'},
@@ -48,7 +48,7 @@ describe('Feature discovery self hosted', () => {
         withTrialBefore('false');
         [...professionalPaidFeatures, ...enterprisePaidFeatures].forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             cy.get('#start_trial_btn').should('exist');
             cy.get('#start_trial_btn').contains('Start trial');
         });
@@ -58,7 +58,7 @@ describe('Feature discovery self hosted', () => {
         withTrialBefore('true');
         professionalPaidFeatures.forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             cy.get('#post_trial_purchase_license').should('contain', 'Purchase a license');
             cy.get('#post_trial_purchase_license').should('be.enabled');
         });
@@ -68,7 +68,7 @@ describe('Feature discovery self hosted', () => {
         withTrialBefore('true');
         enterprisePaidFeatures.forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             cy.get("button[data-testid='featureDiscovery_primaryCallToAction']").should('contain', 'Contact sales');
             cy.get("button[data-testid='featureDiscovery_primaryCallToAction']").should('be.enabled');
         });

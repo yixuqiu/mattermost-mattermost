@@ -2,15 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import ReactDOM from 'react-dom';
-
-import {logError} from 'mattermost-redux/actions/errors';
-
-import store from 'stores/redux_store';
+import ReactDOMClient from 'react-dom/client';
 
 import App from 'components/app';
 
-import {AnnouncementBarTypes} from 'utils/constants';
+import {registerGlobalErrorHandlers} from 'utils/global_error_handler';
 import {setCSRFFromCookie} from 'utils/utils';
 
 // Import our styles
@@ -18,6 +14,7 @@ import './sass/styles.scss';
 import 'katex/dist/katex.min.css';
 
 import '@mattermost/compass-icons/css/compass-icons.css';
+import '@mattermost/compass-ui/styles';
 import '@mattermost/components/dist/index.esm.css';
 
 declare global {
@@ -28,53 +25,31 @@ declare global {
 
 // This is for anything that needs to be done for ALL react components.
 // This runs before we start to render anything.
-function preRenderSetup(callwhendone: () => void) {
-    window.onerror = (msg, url, line, column, error) => {
-        if (msg === 'ResizeObserver loop limit exceeded') {
-            return;
-        }
-
-        store.dispatch(
-            logError(
-                {
-                    type: AnnouncementBarTypes.DEVELOPER,
-                    message: 'A JavaScript error in the webapp client has occurred. (msg: ' + msg + ', row: ' + line + ', col: ' + column + ').',
-                    stack: error?.stack,
-                    url,
-                },
-                true,
-                true,
-            ),
-        );
-    };
+function preRenderSetup(onPreRenderSetupReady: () => void) {
+    registerGlobalErrorHandlers();
     setCSRFFromCookie();
-    callwhendone();
+    onPreRenderSetupReady();
 }
 
-function renderRootComponent() {
-    ReactDOM.render((
-        <App/>
-    ),
-    document.getElementById('root'));
+function renderReactRootComponent() {
+    const container = document.getElementById('root')!;
+    ReactDOMClient.createRoot(container).render(<App/>);
 }
 
 /**
- * Adds a function to be invoked onload appended to any existing onload
- * event handlers.
+ * Adds a function to be invoked when the DOM content is loaded.
  */
-function appendOnLoadEvent(fn: (evt: Event) => void) {
-    if (window.onload) {
-        const curronload = window.onload;
-        window.onload = (evt) => {
-            (curronload as any)(evt);
-            fn(evt);
-        };
+function appendOnDOMContentLoadedEvent(onDomContentReady: () => void) {
+    if (document.readyState === 'loading') {
+        // If the DOM hasn't finished loading, add an event listener and call the function when it does
+        document.addEventListener('DOMContentLoaded', onDomContentReady);
     } else {
-        window.onload = fn;
+        // If the DOM is already loaded, call the function immediately
+        onDomContentReady();
     }
 }
 
-appendOnLoadEvent(() => {
-    // Do the pre-render setup and call renderRootComponent when done
-    preRenderSetup(renderRootComponent);
+appendOnDOMContentLoadedEvent(() => {
+    // Do the pre-render setup and call renderReactRootComponent when done
+    preRenderSetup(renderReactRootComponent);
 });

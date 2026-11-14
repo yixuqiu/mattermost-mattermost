@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"slices"
 	"strconv"
 )
 
@@ -50,7 +51,6 @@ const (
 	WebsocketEventReactionRemoved                     WebsocketEventType = "reaction_removed"
 	WebsocketEventResponse                            WebsocketEventType = "response"
 	WebsocketEventEmojiAdded                          WebsocketEventType = "emoji_added"
-	WebsocketEventChannelViewed                       WebsocketEventType = "channel_viewed"
 	WebsocketEventMultipleChannelsViewed              WebsocketEventType = "multiple_channels_viewed"
 	WebsocketEventPluginStatusesChanged               WebsocketEventType = "plugin_statuses_changed"
 	WebsocketEventPluginEnabled                       WebsocketEventType = "plugin_enabled"
@@ -72,9 +72,6 @@ const (
 	WebsocketEventSidebarCategoryUpdated              WebsocketEventType = "sidebar_category_updated"
 	WebsocketEventSidebarCategoryDeleted              WebsocketEventType = "sidebar_category_deleted"
 	WebsocketEventSidebarCategoryOrderUpdated         WebsocketEventType = "sidebar_category_order_updated"
-	WebsocketWarnMetricStatusReceived                 WebsocketEventType = "warn_metric_status_received"
-	WebsocketWarnMetricStatusRemoved                  WebsocketEventType = "warn_metric_status_removed"
-	WebsocketEventCloudPaymentStatusUpdated           WebsocketEventType = "cloud_payment_status_updated"
 	WebsocketEventCloudSubscriptionChanged            WebsocketEventType = "cloud_subscription_changed"
 	WebsocketEventThreadUpdated                       WebsocketEventType = "thread_updated"
 	WebsocketEventThreadFollowChanged                 WebsocketEventType = "thread_follow_changed"
@@ -86,14 +83,72 @@ const (
 	WebsocketEventAcknowledgementAdded                WebsocketEventType = "post_acknowledgement_added"
 	WebsocketEventAcknowledgementRemoved              WebsocketEventType = "post_acknowledgement_removed"
 	WebsocketEventPersistentNotificationTriggered     WebsocketEventType = "persistent_notification_triggered"
+	// Deprecated: Self-hosted signup has been removed and this event is no longer sent.
 	WebsocketEventHostedCustomerSignupProgressUpdated WebsocketEventType = "hosted_customer_signup_progress_updated"
 	WebsocketEventChannelBookmarkCreated              WebsocketEventType = "channel_bookmark_created"
 	WebsocketEventChannelBookmarkUpdated              WebsocketEventType = "channel_bookmark_updated"
 	WebsocketEventChannelBookmarkDeleted              WebsocketEventType = "channel_bookmark_deleted"
 	WebsocketEventChannelBookmarkSorted               WebsocketEventType = "channel_bookmark_sorted"
+	WebsocketEventChannelAccessControlUpdated         WebsocketEventType = "channel_access_control_updated"
+	WebsocketEventPermissionPolicyUpdated             WebsocketEventType = "permission_policy_updated"
+	WebsocketEventTeamAccessControlUpdated            WebsocketEventType = "team_access_control_updated"
 	WebsocketPresenceIndicator                        WebsocketEventType = "presence"
 	WebsocketPostedNotifyAck                          WebsocketEventType = "posted_notify_ack"
+	WebsocketScheduledPostCreated                     WebsocketEventType = "scheduled_post_created"
+	WebsocketScheduledPostUpdated                     WebsocketEventType = "scheduled_post_updated"
+	WebsocketScheduledPostDeleted                     WebsocketEventType = "scheduled_post_deleted"
+	WebsocketEventCPAFieldCreated                     WebsocketEventType = "custom_profile_attributes_field_created"
+	WebsocketEventCPAFieldUpdated                     WebsocketEventType = "custom_profile_attributes_field_updated"
+	WebsocketEventCPAFieldDeleted                     WebsocketEventType = "custom_profile_attributes_field_deleted"
+	WebsocketEventCPAValuesUpdated                    WebsocketEventType = "custom_profile_attributes_values_updated"
+	WebsocketContentFlaggingReportValueUpdated        WebsocketEventType = "content_flagging_report_value_updated"
+	WebsocketEventJobUpdated                          WebsocketEventType = "job_updated"
+	WebsocketEventRecapUpdated                        WebsocketEventType = "recap_updated"
+	WebsocketEventPostTranslationUpdated              WebsocketEventType = "post_translation_updated"
+	WebsocketEventPostRevealed                        WebsocketEventType = "post_revealed"
+	WebsocketEventPostBurned                          WebsocketEventType = "post_burned"
+	WebsocketEventBurnOnReadAllRevealed               WebsocketEventType = "burn_on_read_all_revealed"
+
+	WebsocketEventBoardCreated WebsocketEventType = "board_created"
+
+	WebsocketEventViewCreated                WebsocketEventType = "view_created"
+	WebsocketEventViewUpdated                WebsocketEventType = "view_updated"
+	WebsocketEventViewDeleted                WebsocketEventType = "view_deleted"
+	WebsocketEventViewSorted                 WebsocketEventType = "view_sorted"
+	WebsocketEventPropertyFieldCreated       WebsocketEventType = "property_field_created"
+	WebsocketEventPropertyFieldUpdated       WebsocketEventType = "property_field_updated"
+	WebsocketEventPropertyFieldDeleted       WebsocketEventType = "property_field_deleted"
+	WebsocketEventPropertyValuesUpdated      WebsocketEventType = "property_values_updated"
+	WebsocketEventFileDownloadRejected       WebsocketEventType = "file_download_rejected"
+	WebsocketEventFileUploadRejected         WebsocketEventType = "file_upload_rejected"
+	WebsocketEventShowToast                  WebsocketEventType = "show_toast"
+	WebsocketEventSharedChannelRemoteUpdated WebsocketEventType = "shared_channel_remote_updated"
+	WebsocketEventChannelJoinRequestCreated  WebsocketEventType = "channel_join_request_created"
+	WebsocketEventChannelJoinRequestUpdated  WebsocketEventType = "channel_join_request_updated"
+
+	WebSocketMsgTypeResponse = "response"
+	WebSocketMsgTypeEvent    = "event"
 )
+
+type ActiveQueueItem struct {
+	Type string          `json:"type"` // websocket event or websocket response
+	Buf  json.RawMessage `json:"buf"`
+}
+
+// WSQueuesStatus explains why a node that holds a connection could not hand over its queues.
+type WSQueuesStatus string
+
+const (
+	WSQueuesStatusOldConnStillOpen    WSQueuesStatus = "old_conn_still_open"
+	WSQueuesStatusMissedEventsEvicted WSQueuesStatus = "missed_events_evicted"
+)
+
+type WSQueues struct {
+	ActiveQ    []ActiveQueueItem `json:"active_queue"` // websocketEvent|websocketResponse
+	DeadQ      []json.RawMessage `json:"dead_queue"`   // websocketEvent
+	ReuseCount int               `json:"reuse_count"`
+	Status     WSQueuesStatus    `json:"status,omitempty"`
+}
 
 type WebSocketMessage interface {
 	ToJSON() ([]byte, error)
@@ -110,9 +165,16 @@ type WebsocketBroadcast struct {
 	OmitConnectionId      string          `json:"omit_connection_id"`                // broadcast is omitted for this connection
 	ContainsSanitizedData bool            `json:"contains_sanitized_data,omitempty"` // broadcast only occurs for non-sysadmins
 	ContainsSensitiveData bool            `json:"contains_sensitive_data,omitempty"` // broadcast only occurs for sysadmins
+	RequiredPermissions   []string        `json:"required_permissions,omitempty"`    // broadcast only occurs for sessions with all permissions
 	// ReliableClusterSend indicates whether or not the message should
 	// be sent through the cluster using the reliable, TCP backed channel.
 	ReliableClusterSend bool `json:"-"`
+
+	// RecordPostDelivery marks a post whose websocket delivery should be audit logged. It
+	// is server-internal but intentionally NOT json:"-": it must cross the cluster so a
+	// peer node's hub can record deliveries for its own connections. It is stripped before
+	// client serialization by WithoutRecordPostDelivery.
+	RecordPostDelivery *PostDeliveryMarker `json:"record_post_delivery,omitempty"`
 
 	// BroadcastHooks is a slice of hooks IDs used to process events before sending them on individual connections. The
 	// IDs should be understood by the WebSocket code.
@@ -134,9 +196,7 @@ func (wb *WebsocketBroadcast) copy() *WebsocketBroadcast {
 	var c WebsocketBroadcast
 	if wb.OmitUsers != nil {
 		c.OmitUsers = make(map[string]bool, len(wb.OmitUsers))
-		for k, v := range wb.OmitUsers {
-			c.OmitUsers[k] = v
-		}
+		maps.Copy(c.OmitUsers, wb.OmitUsers)
 	}
 	c.UserId = wb.UserId
 	c.ChannelId = wb.ChannelId
@@ -144,6 +204,8 @@ func (wb *WebsocketBroadcast) copy() *WebsocketBroadcast {
 	c.OmitConnectionId = wb.OmitConnectionId
 	c.ContainsSanitizedData = wb.ContainsSanitizedData
 	c.ContainsSensitiveData = wb.ContainsSensitiveData
+	c.RecordPostDelivery = wb.RecordPostDelivery
+	c.RequiredPermissions = slices.Clone(wb.RequiredPermissions)
 	c.BroadcastHooks = wb.BroadcastHooks
 	c.BroadcastHookArgs = wb.BroadcastHookArgs
 
@@ -200,6 +262,7 @@ type WebSocketEvent struct {
 	broadcast       *WebsocketBroadcast
 	sequence        int64
 	precomputedJSON *precomputedWebSocketEventJSON
+	rejected        bool
 }
 
 // PrecomputeJSON precomputes and stores the serialized JSON for all fields other than Sequence.
@@ -241,6 +304,36 @@ func (ev *WebSocketEvent) WithoutBroadcastHooks() (*WebSocketEvent, []string, []
 	evCopy.broadcast.BroadcastHookArgs = nil
 
 	return evCopy, hooks, hookArgs
+}
+
+// WithoutRecordPostDelivery returns the event's post-delivery tracking marker and an event
+// whose broadcast no longer carries it. Callers invoke it right before precomputing the
+// client-bound JSON and use the returned marker out-of-band to record the delivery.
+//
+// Why not simply tag the field json:"-"? The marker is server-internal, but it must still
+// cross the cluster. Delivery is recorded per node, for that node's own connections: a post
+// created on node A reaches node B via PlatformService.Publish -> message.ToJSON() -> (on B)
+// WebSocketEventFromJSON -> B's hub, which records its recipients using this field. With
+// json:"-" the field would be dropped on the wire, so any recipient not on the origin node
+// would be silently unrecorded — a correctness bug in clustered deployments. And the client
+// frame is built from the SAME broadcast JSON (PrecomputeJSON), so a struct tag cannot keep
+// it for the cluster yet hide it from clients; the strip has to happen in code, here.
+//
+// This is copy-on-write (a copy is made only when the marker is set, mirroring
+// WithoutBroadcastHooks) and must stay so: Publish serializes the ORIGINAL event for the
+// cluster immediately after the local broadcast, so clearing the marker in place would race
+// that send and could drop the field before it leaves the node.
+func (ev *WebSocketEvent) WithoutRecordPostDelivery() (*WebSocketEvent, *PostDeliveryMarker) {
+	marker := ev.broadcast.RecordPostDelivery
+	if marker == nil {
+		return ev, nil
+	}
+
+	evCopy := ev.Copy()
+	evCopy.broadcast = ev.broadcast.copy()
+	evCopy.broadcast.RecordPostDelivery = nil
+
+	return evCopy, marker
 }
 
 func (ev *WebSocketEvent) Add(key string, value any) {
@@ -431,4 +524,12 @@ func (m *WebSocketResponse) ToJSON() ([]byte, error) {
 func WebSocketResponseFromJSON(data io.Reader) (*WebSocketResponse, error) {
 	var o *WebSocketResponse
 	return o, json.NewDecoder(data).Decode(&o)
+}
+
+func (ev *WebSocketEvent) Reject() {
+	ev.rejected = true
+}
+
+func (ev *WebSocketEvent) IsRejected() bool {
+	return ev.rejected
 }

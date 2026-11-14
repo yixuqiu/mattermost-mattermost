@@ -5,6 +5,7 @@ import React from 'react';
 import type {RefObject} from 'react';
 import {FormattedMessage} from 'react-intl';
 
+import {Radio} from '@mattermost/compass-ui/components/radio';
 import type {PreferenceType} from '@mattermost/types/preferences';
 
 import {Preferences} from 'mattermost-redux/constants';
@@ -16,23 +17,24 @@ import type SettingItemMinComponent from 'components/setting_item_min';
 
 import {a11yFocus} from 'utils/utils';
 
-type Props = {
+import type {OwnProps} from './index';
+
+type Props = OwnProps & {
     active: boolean;
     areAllSectionsInactive: boolean;
-    currentUserId: string;
     savePreferences: (userId: string, preferences: PreferenceType[]) => Promise<ActionResult>;
     showUnreadsCategory: boolean;
     updateSection: (section: string) => void;
-}
+};
 
 type State = {
     active: boolean;
     checked: boolean;
     isSaving: boolean;
-}
+};
 
 export default class ShowUnreadsCategory extends React.PureComponent<Props, State> {
-    minRef: RefObject<SettingItemMinComponent>;
+    minRef: RefObject<SettingItemMinComponent | null>;
 
     constructor(props: Props) {
         super(props);
@@ -75,10 +77,15 @@ export default class ShowUnreadsCategory extends React.PureComponent<Props, Stat
     };
 
     handleSubmit = async () => {
+        if (!this.props.userId) {
+            // Only for type safety, won't actually happen
+            return;
+        }
+
         this.setState({isSaving: true});
 
-        await this.props.savePreferences(this.props.currentUserId, [{
-            user_id: this.props.currentUserId,
+        await this.props.savePreferences(this.props.userId, [{
+            user_id: this.props.userId,
             category: Preferences.CATEGORY_SIDEBAR_SETTINGS,
             name: Preferences.SHOW_UNREAD_SECTION,
             value: this.state.checked.toString(),
@@ -141,37 +148,29 @@ export default class ShowUnreadsCategory extends React.PureComponent<Props, Stat
                         <legend className='form-legend hidden-label'>
                             {title}
                         </legend>
-                        <div className='radio'>
-                            <label>
-                                <input
-                                    data-testid='showUnreadsCategoryOn'
-                                    type='radio'
-                                    name='showUnreadsCategory'
-                                    checked={this.state.checked}
-                                    onChange={() => this.setState({checked: true})}
-                                />
+                        <div className='settings-radio-group'>
+                            <Radio
+                                data-testid='showUnreadsCategoryOn'
+                                name='showUnreadsCategory'
+                                checked={this.state.checked}
+                                onChange={() => this.setState({checked: true})}
+                            >
                                 <FormattedMessage
                                     id='user.settings.sidebar.on'
                                     defaultMessage='On'
                                 />
-                            </label>
-                            <br/>
-                        </div>
-                        <div className='radio'>
-                            <label>
-                                <input
-                                    data-testid='showUnreadsCategoryOff'
-                                    type='radio'
-                                    name='showUnreadsCategory'
-                                    checked={!this.state.checked}
-                                    onChange={() => this.setState({checked: false})}
-                                />
+                            </Radio>
+                            <Radio
+                                data-testid='showUnreadsCategoryOff'
+                                name='showUnreadsCategory'
+                                checked={!this.state.checked}
+                                onChange={() => this.setState({checked: false})}
+                            >
                                 <FormattedMessage
                                     id='user.settings.sidebar.off'
                                     defaultMessage='Off'
                                 />
-                            </label>
-                            <br/>
+                            </Radio>
                         </div>
                         <div className='mt-5'>
                             <FormattedMessage

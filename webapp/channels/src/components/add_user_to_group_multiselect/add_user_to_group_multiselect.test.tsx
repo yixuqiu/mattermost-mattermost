@@ -4,13 +4,13 @@
 import React from 'react';
 
 import type {UserProfile} from '@mattermost/types/users';
-import type {RelationOneToOne} from '@mattermost/types/utilities';
 
 import type {Value} from 'components/multiselect/multiselect';
 
-import {shallowWithIntl} from 'tests/helpers/intl-test-helper';
+import {defaultIntl} from 'tests/helpers/intl-test-helper';
+import {renderWithContext, act} from 'tests/react_testing_utils';
 
-import AddUserToGroupMultiSelect from './add_user_to_group_multiselect';
+import {AddUserToGroupMultiSelect} from './add_user_to_group_multiselect';
 import type {AddUserToGroupMultiSelect as AddUserToGroupMultiSelectClass} from './add_user_to_group_multiselect';
 
 type UserProfileValue = Value & UserProfile;
@@ -28,11 +28,6 @@ describe('component/add_user_to_group_multiselect', () => {
         delete_at: 0,
     } as UserProfileValue];
 
-    const userStatuses = {
-        'user-1': 'online',
-        'user-2': 'offline',
-    } as RelationOneToOne<UserProfile, string>;
-
     const baseProps = {
         multilSelectKey: 'addUsersToGroupKey',
         onSubmitCallback: jest.fn().mockImplementation(() => Promise.resolve()),
@@ -43,6 +38,7 @@ describe('component/add_user_to_group_multiselect', () => {
         profiles: [],
         userStatuses: {},
         saving: false,
+        intl: defaultIntl,
         actions: {
             getProfiles: jest.fn().mockImplementation(() => Promise.resolve()),
             getProfilesNotInGroup: jest.fn().mockImplementation(() => Promise.resolve()),
@@ -51,57 +47,37 @@ describe('component/add_user_to_group_multiselect', () => {
         },
     };
 
-    test('should match snapshot without any profiles', () => {
-        const wrapper = shallowWithIntl(
-            <AddUserToGroupMultiSelect
-                {...baseProps}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot with profiles', () => {
-        const wrapper = shallowWithIntl(
-            <AddUserToGroupMultiSelect
-                {...baseProps}
-                profiles={users}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot with different submit button text', () => {
-        const wrapper = shallowWithIntl(
-            <AddUserToGroupMultiSelect
-                {...baseProps}
-                profiles={users}
-                userStatuses={userStatuses}
-                buttonSubmitLoadingText='Updating...'
-                buttonSubmitText='Update Group'
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
     test('should trim the search term', () => {
-        const wrapper = shallowWithIntl(
-            <AddUserToGroupMultiSelect {...baseProps}/>,
+        const ref = React.createRef<AddUserToGroupMultiSelectClass>();
+        renderWithContext(
+            <AddUserToGroupMultiSelect
+                {...baseProps}
+                ref={ref}
+            />,
         );
 
-        (wrapper.instance() as AddUserToGroupMultiSelectClass).search(' something ');
-        expect(wrapper.state('term')).toEqual('something');
+        act(() => {
+            ref.current!.search(' something ');
+        });
+        expect(ref.current!.state.term).toEqual('something');
     });
 
     test('should add users on handleSubmit', (done) => {
-        const wrapper = shallowWithIntl(
+        const ref = React.createRef<AddUserToGroupMultiSelectClass>();
+        renderWithContext(
             <AddUserToGroupMultiSelect
                 {...baseProps}
+                ref={ref}
             />,
         );
-        const instance = wrapper.instance() as AddUserToGroupMultiSelectClass;
+        const instance = ref.current!;
 
-        wrapper.setState({values: users});
-        instance.handleSubmit();
+        act(() => {
+            instance.setState({values: users});
+        });
+        act(() => {
+            instance.handleSubmit();
+        });
         expect(instance.props.onSubmitCallback).toHaveBeenCalledTimes(1);
         process.nextTick(() => {
             done();

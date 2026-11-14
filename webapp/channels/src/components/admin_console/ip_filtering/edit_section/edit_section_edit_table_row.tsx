@@ -8,10 +8,8 @@ import {
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {AllowedIPRange} from '@mattermost/types/config';
-
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
 
 type EditTableRowProps = {
     allowedIPRange: AllowedIPRange;
@@ -33,8 +31,6 @@ const EditTableRow = ({
     hoveredRow,
 }: EditTableRowProps) => {
     const {formatMessage} = useIntl();
-    const editTooltip = <Tooltip id='edit-tooltip'>{formatMessage({id: 'admin.ip_filtering.edit', defaultMessage: 'Edit'})}</Tooltip>;
-    const deleteTooltip = <Tooltip id='delete-tooltip'>{formatMessage({id: 'admin.ip_filtering.delete', defaultMessage: 'Delete'})}</Tooltip>;
     return (
         <div
             className='Row'
@@ -46,26 +42,24 @@ const EditTableRow = ({
             <div className='Actions'>
                 {hoveredRow === index && (
                     <>
-                        <OverlayTrigger
-                            placement='top'
-                            overlay={editTooltip}
+                        <WithTooltip
+                            title={formatMessage({id: 'admin.ip_filtering.edit', defaultMessage: 'Edit'})}
                         >
                             <div
                                 className='edit'
-                                aria-label='Edit'
+                                aria-label={formatMessage({id: 'admin.ip_filtering.edit', defaultMessage: 'Edit'})}
                                 role='button'
                                 onClick={() => setEditFilter(allowedIPRange)}
                             >
                                 <PencilOutlineIcon size={20}/>
                             </div>
-                        </OverlayTrigger>
-                        <OverlayTrigger
-                            placement='top'
-                            overlay={deleteTooltip}
+                        </WithTooltip>
+                        <WithTooltip
+                            title={formatMessage({id: 'admin.ip_filtering.delete', defaultMessage: 'Delete'})}
                         >
                             <div
                                 className='delete'
-                                aria-label='Delete'
+                                aria-label={formatMessage({id: 'admin.ip_filtering.delete', defaultMessage: 'Delete'})}
                                 role='button'
                                 onClick={() => handleConfirmDeleteFilter(allowedIPRange)}
                             >
@@ -74,7 +68,7 @@ const EditTableRow = ({
                                     color='red'
                                 />
                             </div>
-                        </OverlayTrigger>
+                        </WithTooltip>
                     </>
                 )}
             </div>

@@ -32,8 +32,8 @@ type Printer struct { //nolint
 	templateFuncs template.FuncMap
 	pager         bool
 	Quiet         bool
-	Lines         []interface{}
-	ErrorLines    []interface{}
+	Lines         []any
+	ErrorLines    []string
 
 	cmd        *cobra.Command
 	serverAddr string
@@ -62,6 +62,11 @@ func SetFormat(t string) {
 	printer.Format = t
 }
 
+// GetFormat returns the format for the final output of the printer
+func GetFormat() string {
+	return printer.Format
+}
+
 func SetCommand(cmd *cobra.Command) {
 	printer.cmd = cmd
 }
@@ -85,7 +90,7 @@ func SetNoNewline(no bool) {
 	printer.NoNewline = no
 }
 
-func SetTemplateFunc(name string, f interface{}) {
+func SetTemplateFunc(name string, f any) {
 	printer.templateFuncs[name] = f
 }
 
@@ -100,7 +105,7 @@ func SetSingle(single bool) {
 // PrintT prints an element. Depending on the format, the element can be
 // formatted and printed as a structure or used to populate the
 // template
-func PrintT(templateString string, v interface{}) {
+func PrintT(templateString string, v any) {
 	if printer.Quiet {
 		return
 	}
@@ -118,7 +123,7 @@ func PrintT(templateString string, v interface{}) {
 	}
 }
 
-func PrintPreparedT(tpl *template.Template, v interface{}) {
+func PrintPreparedT(tpl *template.Template, v any) {
 	if printer.Quiet {
 		return
 	}
@@ -138,7 +143,7 @@ func PrintPreparedT(tpl *template.Template, v interface{}) {
 // Print an element. If the format requires a template, the element
 // will be printed as a structure with field names using the print
 // verb %+v
-func Print(v interface{}) {
+func Print(v any) {
 	PrintT("{{printf \"%+v\" .}}", v)
 }
 
@@ -192,8 +197,8 @@ func Flush() error {
 	printer.printErrors()
 
 	defer func() {
-		printer.Lines = []interface{}{}
-		printer.ErrorLines = []interface{}{}
+		printer.Lines = []any{}
+		printer.ErrorLines = []string{}
 	}()
 
 	if cmd == nil || cmd.Name() != "list" || printer.cmd.Parent().Name() == "auth" {
@@ -231,17 +236,17 @@ func Flush() error {
 
 // Clean resets the printer's accumulated lines
 func Clean() {
-	printer.Lines = []interface{}{}
-	printer.ErrorLines = []interface{}{}
+	printer.Lines = []any{}
+	printer.ErrorLines = []string{}
 }
 
 // GetLines returns the printer's accumulated lines
-func GetLines() []interface{} {
+func GetLines() []any {
 	return printer.Lines
 }
 
 // GetErrorLines returns the printer's accumulated error lines
-func GetErrorLines() []interface{} {
+func GetErrorLines() []string {
 	return printer.ErrorLines
 }
 
@@ -256,7 +261,7 @@ func PrintWarning(msg string) {
 	if printer.Quiet {
 		return
 	}
-	fmt.Fprintf(printer.eWriter, "%s\n", color.YellowString("WARNING: %s", msg))
+	fmt.Fprintf(printer.eWriter, "%s\n", color.YellowString("WARNING: %s", SanitizeForTerminal(msg)))
 }
 
 func (p Printer) linesToBytes(opts printOpts) (b []byte, err error) {
@@ -273,7 +278,10 @@ func (p Printer) linesToBytes(opts printOpts) (b []byte, err error) {
 	case FormatPlain:
 		var buf bytes.Buffer
 		for i := range p.Lines {
-			fmt.Fprintf(&buf, "%s%s", p.Lines[i], newline)
+			// Sanitize output to prevent terminal escape injection attacks
+			// when writing user-controlled content to the terminal
+			line := fmt.Sprintf("%s", p.Lines[i])
+			fmt.Fprintf(&buf, "%s%s", SanitizeForTerminal(line), newline)
 		}
 		b = buf.Bytes()
 	case FormatJSON:
@@ -320,6 +328,6 @@ func (p Printer) printBytes(b []byte, opts printOpts) error {
 
 func (p Printer) printErrors() {
 	for i := range printer.ErrorLines {
-		fmt.Fprintln(printer.eWriter, printer.ErrorLines[i])
+		fmt.Fprintln(printer.eWriter, SanitizeForTerminal(printer.ErrorLines[i]))
 	}
 }

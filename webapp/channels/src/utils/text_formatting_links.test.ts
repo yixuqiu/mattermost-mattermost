@@ -1,6 +1,9 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import store from 'stores/redux_store';
+
+import {makeInitialState} from 'packages/mattermost-redux/test/test_store';
 import EmojiMap from 'utils/emoji_map';
 import * as Markdown from 'utils/markdown';
 import * as TextFormatting from 'utils/text_formatting';
@@ -41,10 +44,6 @@ describe('Markdown.Links', () => {
     });
 
     it('External links', () => {
-        expect(Markdown.format('test.:test').trim()).toBe(
-            '<p><a class="theme markdown__link" href="test.:test" rel="noreferrer" target="_blank">test.:test</a></p>',
-        );
-
         expect(Markdown.format('http://example.com').trim()).toBe(
             '<p><a class="theme markdown__link" href="http://example.com" rel="noreferrer" target="_blank">http://example.com</a></p>',
         );
@@ -395,6 +394,34 @@ describe('Markdown.Links', () => {
         );
     });
 
+    it('Phone links starting with +', () => {
+        expect(Markdown.format('tel:+34600517276').trim()).toBe(`<p>${link('tel:+34600517276')}</p>`);
+
+        expect(Markdown.format('tel:+44.20.7946.0958').trim()).toBe(`<p>${link('tel:+44.20.7946.0958')}</p>`);
+
+        expect(Markdown.format('Call me at tel:+34600517276 today').trim()).toBe(
+            `<p>Call me at ${link('tel:+34600517276')} today</p>`,
+        );
+
+        expect(Markdown.format('Call me at tel:+34600517276.').trim()).toBe(
+            `<p>Call me at ${link('tel:+34600517276')}.</p>`,
+        );
+
+        expect(Markdown.format('Call tel:+34600517276, or email me').trim()).toBe(
+            `<p>Call ${link('tel:+34600517276')}, or email me</p>`,
+        );
+
+        expect(Markdown.format('(tel:+34600517276)').trim()).toBe(`<p>(${link('tel:+34600517276')})</p>`);
+
+        expect(Markdown.format('[+34 600 517 276](tel:+34600517276)').trim()).toBe(
+            `<p>${link('tel:+34600517276', '+34 600 517 276')}</p>`,
+        );
+
+        expect(Markdown.format('tel:+').trim()).toBe('<p>tel:+</p>');
+
+        expect(Markdown.format('test:+34600517276').trim()).toBe('<p>test:+34600517276</p>');
+    });
+
     it('Relative link', () => {
         expect(Markdown.format('[A Relative Link](/static/files/5b4a7904a3e041018526a00dba59ee48.png)').trim()).toBe(
             '<p><a class="theme markdown__link" href="/static/files/5b4a7904a3e041018526a00dba59ee48.png" rel="noreferrer" target="_blank">A Relative Link</a></p>',
@@ -402,7 +429,18 @@ describe('Markdown.Links', () => {
     });
 
     describe('autolinkedUrlSchemes', () => {
-        test('all links are rendered when not provided', () => {
+        test('only some types of links are rendered when there are custom URL schemes defined', () => {
+            jest.spyOn(store, 'getState').mockReturnValue(makeInitialState({
+                entities: {
+                    general: {
+                        config: {
+                            CustomUrlSchemes: '',
+                        },
+                    },
+                },
+            }));
+
+            // These are always linked
             expect(Markdown.format('http://example.com').trim()).toBe(`<p>${link('http://example.com')}</p>`);
 
             expect(Markdown.format('https://example.com').trim()).toBe(`<p>${link('https://example.com')}</p>`);
@@ -411,69 +449,74 @@ describe('Markdown.Links', () => {
 
             expect(Markdown.format('tel:1-555-123-4567').trim()).toBe(`<p>${link('tel:1-555-123-4567')}</p>`);
 
+            expect(Markdown.format('tel:+1-555-123-4567').trim()).toBe(`<p>${link('tel:+1-555-123-4567')}</p>`);
+
             expect(Markdown.format('mailto:test@example.com').trim()).toBe(`<p>${link('mailto:test@example.com')}</p>`);
 
+            // These aren't linked since they're not configured on the server
+            expect(Markdown.format('git://git.example.com').trim()).toBe('<p>git://git.example.com</p>');
+
+            expect(Markdown.format('test:test').trim()).toBe('<p>test:test</p>');
+
+            expect(Markdown.format('test.:test').trim()).toBe('<p>test.:test</p>');
+
+            expect(Markdown.format('taco+what://example.com').trim()).toBe('<p>taco+what://example.com</p>');
+
+            expect(Markdown.format('taco.what://example.com').trim()).toBe('<p>taco.what://example.com</p>');
+        });
+
+        test('matching links are rendered when schemes are provided', () => {
+            jest.spyOn(store, 'getState').mockReturnValue(makeInitialState({
+                entities: {
+                    general: {
+                        config: {
+                            CustomUrlSchemes: 'git,test,test.,taco+what,taco.what',
+                        },
+                    },
+                },
+            }));
+
+            // These are always linked
+            expect(Markdown.format('http://example.com').trim()).toBe(`<p>${link('http://example.com')}</p>`);
+
+            expect(Markdown.format('https://example.com').trim()).toBe(`<p>${link('https://example.com')}</p>`);
+
+            expect(Markdown.format('ftp://ftp.example.com').trim()).toBe(`<p>${link('ftp://ftp.example.com')}</p>`);
+
+            expect(Markdown.format('tel:1-555-123-4567').trim()).toBe(`<p>${link('tel:1-555-123-4567')}</p>`);
+
+            expect(Markdown.format('tel:+1-555-123-4567').trim()).toBe(`<p>${link('tel:+1-555-123-4567')}</p>`);
+
+            expect(Markdown.format('mailto:test@example.com').trim()).toBe(`<p>${link('mailto:test@example.com')}</p>`);
+
+            // These are linked since they're configured on the server
             expect(Markdown.format('git://git.example.com').trim()).toBe(`<p>${link('git://git.example.com')}</p>`);
 
             expect(Markdown.format('test:test').trim()).toBe(`<p>${link('test:test')}</p>`);
-        });
 
-        test('no links are rendered when no schemes are provided', () => {
-            const options = {
-                autolinkedUrlSchemes: [],
-            };
+            expect(Markdown.format('test.:test').trim()).toBe(`<p>${link('test.:test')}</p>`);
 
-            expect(Markdown.format('http://example.com', options).trim()).toBe('<p>http://example.com</p>');
+            expect(Markdown.format('taco+what://example.com').trim()).toBe(`<p>${link('taco+what://example.com')}</p>`);
 
-            expect(Markdown.format('https://example.com', options).trim()).toBe('<p>https://example.com</p>');
-
-            expect(Markdown.format('ftp://ftp.example.com', options).trim()).toBe('<p>ftp://ftp.example.com</p>');
-
-            expect(Markdown.format('tel:1-555-123-4567', options).trim()).toBe('<p>tel:1-555-123-4567</p>');
-
-            expect(Markdown.format('mailto:test@example.com', options).trim()).toBe('<p>mailto:test@example.com</p>');
-
-            expect(Markdown.format('git://git.example.com', options).trim()).toBe('<p>git://git.example.com</p>');
-
-            expect(Markdown.format('test:test', options).trim()).toBe('<p>test:test</p>');
-        });
-
-        test('only matching links are rendered when schemes are provided', () => {
-            const options = {
-                autolinkedUrlSchemes: ['https', 'git', 'test', 'test.', 'taco+what', 'taco.what'],
-            };
-
-            expect(Markdown.format('http://example.com', options).trim()).toBe('<p>http://example.com</p>');
-
-            expect(Markdown.format('https://example.com', options).trim()).toBe(`<p>${link('https://example.com')}</p>`);
-
-            expect(Markdown.format('ftp://ftp.example.com', options).trim()).toBe('<p>ftp://ftp.example.com</p>');
-
-            expect(Markdown.format('tel:1-555-123-4567', options).trim()).toBe('<p>tel:1-555-123-4567</p>');
-
-            expect(Markdown.format('mailto:test@example.com', options).trim()).toBe('<p>mailto:test@example.com</p>');
-
-            expect(Markdown.format('git://git.example.com', options).trim()).toBe(`<p>${link('git://git.example.com')}</p>`);
-
-            expect(Markdown.format('test:test', options).trim()).toBe(`<p>${link('test:test')}</p>`);
-
-            expect(Markdown.format('test.:test', options).trim()).toBe(`<p>${link('test.:test')}</p>`);
-
-            expect(Markdown.format('taco+what://example.com', options).trim()).toBe(`<p>${link('taco+what://example.com')}</p>`);
-
-            expect(Markdown.format('taco.what://example.com', options).trim()).toBe(`<p>${link('taco.what://example.com')}</p>`);
+            expect(Markdown.format('taco.what://example.com').trim()).toBe(`<p>${link('taco.what://example.com')}</p>`);
         });
 
         test('explicit links are not affected by this setting', () => {
-            const options = {
-                autolinkedUrlSchemes: [],
-            };
+            jest.spyOn(store, 'getState').mockReturnValue(makeInitialState({
+                entities: {
+                    general: {
+                        config: {
+                            CustomUrlSchemes: '',
+                        },
+                    },
+                },
+            }));
 
-            expect(Markdown.format('www.example.com', options).trim()).toBe(`<p>${link('http://www.example.com', 'www.example.com')}</p>`);
+            expect(Markdown.format('www.example.com').trim()).toBe(`<p>${link('http://www.example.com', 'www.example.com')}</p>`);
 
-            expect(Markdown.format('[link](git://git.example.com)', options).trim()).toBe(`<p>${link('git://git.example.com', 'link')}</p>`);
+            expect(Markdown.format('[link](git://git.example.com)').trim()).toBe(`<p>${link('git://git.example.com', 'link')}</p>`);
 
-            expect(Markdown.format('<http://example.com>', options).trim()).toBe(`<p>${link('http://example.com')}</p>`);
+            expect(Markdown.format('<git://git.example.com>').trim()).toBe(`<p>${link('git://git.example.com')}</p>`);
         });
     });
 });

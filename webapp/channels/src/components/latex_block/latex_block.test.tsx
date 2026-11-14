@@ -1,10 +1,22 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
+import {screen} from '@testing-library/react';
 import React from 'react';
 
 import LatexBlock from 'components/latex_block/latex_block';
+
+import {act, renderWithContext} from 'tests/react_testing_utils';
+
+const actImmediate = () =>
+    act(
+        () =>
+            new Promise<void>((resolve) => {
+                setImmediate(() => {
+                    resolve();
+                });
+            }),
+    );
 
 describe('components/LatexBlock', () => {
     const defaultProps = {
@@ -12,10 +24,10 @@ describe('components/LatexBlock', () => {
         enableLatex: true,
     };
 
-    test('should match snapshot', async () => {
-        const wrapper = shallow(<LatexBlock {...defaultProps}/>);
-        await import('katex'); //manually import katex
-        expect(wrapper).toMatchSnapshot();
+    test('should render', async () => {
+        renderWithContext(<LatexBlock {...defaultProps}/>);
+        const wrapper = await screen.findAllByTestId('latex-enabled');
+        expect(wrapper.length).toBe(1);
     });
 
     test('latex is disabled', async () => {
@@ -24,9 +36,12 @@ describe('components/LatexBlock', () => {
             enableLatex: false,
         };
 
-        const wrapper = shallow(<LatexBlock {...props}/>);
-        await import('katex'); //manually import katex
-        expect(wrapper).toMatchSnapshot();
+        const {container} = renderWithContext(<LatexBlock {...props}/>);
+
+        expect(screen.getByText('LaTeX')).toBeInTheDocument();
+        expect(container.querySelector('.post-code__line-numbers')).toBeInTheDocument();
+
+        await actImmediate();
     });
 
     test('error in katex', async () => {
@@ -35,8 +50,8 @@ describe('components/LatexBlock', () => {
             enableLatex: true,
         };
 
-        const wrapper = shallow(<LatexBlock {...props}/>);
-        await import('katex'); //manually import katex
-        expect(wrapper).toMatchSnapshot();
+        renderWithContext(<LatexBlock {...props}/>);
+        const wrapper = await screen.findAllByTestId('latex-enabled');
+        expect(wrapper.length).toBe(1);
     });
 });

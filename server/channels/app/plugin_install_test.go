@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,8 +20,7 @@ import (
 	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
 )
 
-type nilReadSeeker struct {
-}
+type nilReadSeeker struct{}
 
 func (r *nilReadSeeker) Read(p []byte) (int, error) {
 	return 0, io.EOF
@@ -62,16 +60,10 @@ func makeInMemoryGzipTarFile(t *testing.T, files []testFile) *bytes.Reader {
 	return bytes.NewReader(buf.Bytes())
 }
 
-type byBundleInfoID []*model.BundleInfo
-
-func (b byBundleInfoID) Len() int           { return len(b) }
-func (b byBundleInfoID) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
-func (b byBundleInfoID) Less(i, j int) bool { return b[i].Manifest.Id < b[j].Manifest.Id }
-
 func TestInstallPluginLocally(t *testing.T) {
+	mainHelper.Parallel(t)
 	t.Run("invalid tar", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		actualManifest, appErr := th.App.ch.installPluginLocally(&nilReadSeeker{}, installPluginLocallyOnlyIfNew)
 		require.NotNil(t, appErr)
@@ -81,7 +73,6 @@ func TestInstallPluginLocally(t *testing.T) {
 
 	t.Run("missing manifest", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		reader := makeInMemoryGzipTarFile(t, []testFile{
 			{"test", "test file"},
@@ -116,7 +107,6 @@ func TestInstallPluginLocally(t *testing.T) {
 
 	t.Run("invalid plugin id", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
 
 		actualManifest, appErr := installPlugin(t, th, "invalid#plugin#id", "version", installPluginLocallyOnlyIfNew)
 		require.NotNil(t, appErr)
@@ -145,19 +135,17 @@ func TestInstallPluginLocally(t *testing.T) {
 		bundleInfos, err := pluginsEnvironment.Available()
 		require.NoError(t, err)
 
-		sort.Sort(byBundleInfoID(bundleInfos))
-
 		actualManifests := make([]*model.Manifest, 0, len(bundleInfos))
 		for _, bundleInfo := range bundleInfos {
 			actualManifests = append(actualManifests, bundleInfo.Manifest)
 		}
 
-		require.Equal(t, manifests, actualManifests)
+		require.ElementsMatch(t, manifests, actualManifests)
 	}
 
 	t.Run("no plugins already installed", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
+
 		cleanExistingBundles(t, th)
 
 		manifest, appErr := installPlugin(t, th, "valid", "0.0.1", installPluginLocallyOnlyIfNew)
@@ -169,7 +157,7 @@ func TestInstallPluginLocally(t *testing.T) {
 
 	t.Run("different plugin already installed", func(t *testing.T) {
 		th := Setup(t)
-		defer th.TearDown()
+
 		cleanExistingBundles(t, th)
 
 		otherManifest, appErr := installPlugin(t, th, "other", "0.0.1", installPluginLocallyOnlyIfNew)
@@ -186,7 +174,7 @@ func TestInstallPluginLocally(t *testing.T) {
 	t.Run("same plugin already installed", func(t *testing.T) {
 		t.Run("install only if new", func(t *testing.T) {
 			th := Setup(t)
-			defer th.TearDown()
+
 			cleanExistingBundles(t, th)
 
 			existingManifest, appErr := installPlugin(t, th, "valid", "0.0.1", installPluginLocallyOnlyIfNew)
@@ -198,12 +186,68 @@ func TestInstallPluginLocally(t *testing.T) {
 			require.Equal(t, "app.plugin.install_id.app_error", appErr.Id, appErr.Error())
 			require.Nil(t, manifest)
 
+			require.Equal(t, existingManifest.Id, appErr.Props[model.PluginInstallConflictPropPluginID])
+			require.Equal(t, existingManifest.Version, appErr.Props[model.PluginInstallConflictPropExistingVersion])
+			require.Equal(t, existingManifest.Version, appErr.Props[model.PluginInstallConflictPropUploadedVersion])
+			require.Equal(t, model.PluginInstallConflictVersionDirectionSame, appErr.Props[model.PluginInstallConflictPropVersionDirection])
+
 			assertBundleInfoManifests(t, th, []*model.Manifest{existingManifest})
+		})
+
+		t.Run("install only if new returns conflict version direction", func(t *testing.T) {
+			for name, tc := range map[string]struct {
+				existingVersion  string
+				uploadedVersion  string
+				versionDirection string
+			}{
+				"upgrade": {
+					existingVersion:  "0.0.1",
+					uploadedVersion:  "0.0.2",
+					versionDirection: model.PluginInstallConflictVersionDirectionUpgrade,
+				},
+				"downgrade": {
+					existingVersion:  "0.0.2",
+					uploadedVersion:  "0.0.1",
+					versionDirection: model.PluginInstallConflictVersionDirectionDowngrade,
+				},
+				"same": {
+					existingVersion:  "0.0.1",
+					uploadedVersion:  "0.0.1",
+					versionDirection: model.PluginInstallConflictVersionDirectionSame,
+				},
+				"unknown": {
+					existingVersion:  "0.0.1",
+					uploadedVersion:  "not-semver",
+					versionDirection: model.PluginInstallConflictVersionDirectionUnknown,
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					th := Setup(t)
+
+					cleanExistingBundles(t, th)
+
+					existingManifest, appErr := installPlugin(t, th, "valid", tc.existingVersion, installPluginLocallyOnlyIfNew)
+					require.Nil(t, appErr)
+					require.NotNil(t, existingManifest)
+
+					manifest, appErr := installPlugin(t, th, "valid", tc.uploadedVersion, installPluginLocallyOnlyIfNew)
+					require.NotNil(t, appErr)
+					require.Equal(t, "app.plugin.install_id.app_error", appErr.Id, appErr.Error())
+					require.Nil(t, manifest)
+
+					require.Equal(t, existingManifest.Id, appErr.Props[model.PluginInstallConflictPropPluginID])
+					require.Equal(t, tc.existingVersion, appErr.Props[model.PluginInstallConflictPropExistingVersion])
+					require.Equal(t, tc.uploadedVersion, appErr.Props[model.PluginInstallConflictPropUploadedVersion])
+					require.Equal(t, tc.versionDirection, appErr.Props[model.PluginInstallConflictPropVersionDirection])
+
+					assertBundleInfoManifests(t, th, []*model.Manifest{existingManifest})
+				})
+			}
 		})
 
 		t.Run("install if upgrade, but older", func(t *testing.T) {
 			th := Setup(t)
-			defer th.TearDown()
+
 			cleanExistingBundles(t, th)
 
 			existingManifest, appErr := installPlugin(t, th, "valid", "0.0.2", installPluginLocallyOnlyIfNewOrUpgrade)
@@ -219,7 +263,7 @@ func TestInstallPluginLocally(t *testing.T) {
 
 		t.Run("install if upgrade, but same version", func(t *testing.T) {
 			th := Setup(t)
-			defer th.TearDown()
+
 			cleanExistingBundles(t, th)
 
 			existingManifest, appErr := installPlugin(t, th, "valid", "0.0.2", installPluginLocallyOnlyIfNewOrUpgrade)
@@ -235,7 +279,7 @@ func TestInstallPluginLocally(t *testing.T) {
 
 		t.Run("install if upgrade, newer version", func(t *testing.T) {
 			th := Setup(t)
-			defer th.TearDown()
+
 			cleanExistingBundles(t, th)
 
 			existingManifest, appErr := installPlugin(t, th, "valid", "0.0.2", installPluginLocallyOnlyIfNewOrUpgrade)
@@ -251,7 +295,7 @@ func TestInstallPluginLocally(t *testing.T) {
 
 		t.Run("install always, old version", func(t *testing.T) {
 			th := Setup(t)
-			defer th.TearDown()
+
 			cleanExistingBundles(t, th)
 
 			existingManifest, appErr := installPlugin(t, th, "valid", "0.0.2", installPluginLocallyAlways)
@@ -268,8 +312,8 @@ func TestInstallPluginLocally(t *testing.T) {
 }
 
 func TestInstallPluginAlreadyActive(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	path, _ := fileutils.FindDir("tests")
 	reader, err := os.Open(filepath.Join(path, "testplugin.tar.gz"))

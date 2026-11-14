@@ -1,14 +1,17 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {render, act} from '@testing-library/react';
+import {act} from '@testing-library/react';
+import {createMemoryHistory} from 'history';
 import React from 'react';
 import {Provider} from 'react-redux';
 
 import * as actions from 'actions/status_actions';
 
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 import mockStore from 'tests/test_store';
 import Constants from 'utils/constants';
+import {TestHelper} from 'utils/test_helper';
 
 import type {GlobalState} from 'types/store';
 
@@ -17,19 +20,24 @@ import ChannelController, {getClassnamesForBody} from './channel_controller';
 let mockState: GlobalState;
 
 jest.mock('components/reset_status_modal', () => () => <div/>);
-jest.mock('components/sidebar', () => () => <div/>);
+jest.mock('components/sidebar', () => () => <div data-testid='sidebar'/>);
 jest.mock('components/channel_layout/center_channel', () => () => <div/>);
 jest.mock('components/loading_screen', () => () => <div/>);
 jest.mock('components/unreads_status_handler', () => () => <div/>);
 jest.mock('components/product_notices_modal', () => () => <div/>);
+jest.mock('components/feature_toast/features/mark_all_as_read_toast', () => () => <div/>);
 jest.mock('plugins/pluggable', () => () => <div/>);
 
 jest.mock('actions/status_actions', () => ({
-    loadStatusesForChannelAndSidebar: jest.fn().mockImplementation(() => () => {}),
+    addVisibleUsersInCurrentChannelAndSelfToStatusPoll: jest.fn().mockImplementation(() => () => {}),
 }));
 
 jest.mock('mattermost-redux/selectors/entities/general', () => ({
     ...jest.requireActual('mattermost-redux/selectors/entities/general') as typeof import('mattermost-redux/selectors/entities/general'),
+}));
+
+jest.mock('selectors/views/browser', () => ({
+    getIsMobileView: () => false,
 }));
 
 describe('ChannelController', () => {
@@ -41,16 +49,19 @@ describe('ChannelController', () => {
                         EnableUserStatuses: 'false',
                     },
                 },
+                preferences: {
+                    myPreferences: TestHelper.getPreferencesMock(),
+                },
             },
         } as unknown as GlobalState;
         jest.useFakeTimers();
     });
 
-    it('dispatches loadStatusesForChannelAndSidebar when enableUserStatuses is true', () => {
+    it('dispatches addVisibleUsersInCurrentChannelAndSelfToStatusPoll when enableUserStatuses is true', () => {
         mockState.entities.general.config.EnableUserStatuses = 'true';
         const store = mockStore(mockState);
 
-        render(
+        renderWithContext(
             <Provider store={store}>
                 <ChannelController shouldRenderCenterChannel={true}/>
             </Provider>,
@@ -60,14 +71,14 @@ describe('ChannelController', () => {
             jest.advanceTimersByTime(Constants.STATUS_INTERVAL);
         });
 
-        expect(actions.loadStatusesForChannelAndSidebar).toHaveBeenCalled();
+        expect(actions.addVisibleUsersInCurrentChannelAndSelfToStatusPoll).toHaveBeenCalled();
     });
 
-    it('does not dispatch loadStatusesForChannelAndSidebar when enableUserStatuses is false', () => {
+    it('does not dispatch addVisibleUsersInCurrentChannelAndSelfToStatusPoll when enableUserStatuses is false', () => {
         const store = mockStore(mockState);
         mockState.entities.general.config.EnableUserStatuses = 'false';
 
-        render(
+        renderWithContext(
             <Provider store={store}>
                 <ChannelController shouldRenderCenterChannel={true}/>
             </Provider>,
@@ -77,22 +88,57 @@ describe('ChannelController', () => {
             jest.advanceTimersByTime(Constants.STATUS_INTERVAL);
         });
 
-        expect(actions.loadStatusesForChannelAndSidebar).not.toHaveBeenCalled();
+        expect(actions.addVisibleUsersInCurrentChannelAndSelfToStatusPoll).not.toHaveBeenCalled();
+    });
+});
+
+describe('ChannelController with the product rail', () => {
+    function renderAt(pathname: string, productRail: boolean) {
+        const state = {
+            entities: {
+                general: {config: {EnableUserStatuses: 'false', FeatureFlagProductRail: String(productRail)}},
+                preferences: {myPreferences: TestHelper.getPreferencesMock()},
+            },
+        } as unknown as GlobalState;
+
+        renderWithContext(
+            <ChannelController shouldRenderCenterChannel={true}/>,
+            state,
+            {history: createMemoryHistory({initialEntries: [pathname]})},
+        );
+    }
+
+    it('hides the channel sidebar in Threads', () => {
+        renderAt('/team-one/threads', true);
+
+        expect(screen.queryByTestId('sidebar')).not.toBeInTheDocument();
+    });
+
+    it('shows the channel sidebar in a channel', () => {
+        renderAt('/team-one/channels/town-square', true);
+
+        expect(screen.getByTestId('sidebar')).toBeInTheDocument();
+    });
+
+    it('shows the channel sidebar in Threads without the product rail', () => {
+        renderAt('/team-one/threads', false);
+
+        expect(screen.getByTestId('sidebar')).toBeInTheDocument();
     });
 });
 
 describe('components/channel_layout/ChannelController', () => {
-    test('Should have app__body and channel-view classes by default', () => {
-        expect(getClassnamesForBody('')).toEqual(['app__body', 'channel-view']);
+    test('Should have channel-view class by default', () => {
+        expect(getClassnamesForBody('')).toEqual(['channel-view']);
     });
 
     test('Should have os--windows class on body for windows 32 or windows 64', () => {
-        expect(getClassnamesForBody('Win32')).toEqual(['app__body', 'channel-view', 'os--windows']);
-        expect(getClassnamesForBody('Win64')).toEqual(['app__body', 'channel-view', 'os--windows']);
+        expect(getClassnamesForBody('Win32')).toEqual(['channel-view', 'os--windows']);
+        expect(getClassnamesForBody('Win64')).toEqual(['channel-view', 'os--windows']);
     });
 
     test('Should have os--mac class on body for MacIntel or MacPPC', () => {
-        expect(getClassnamesForBody('MacIntel')).toEqual(['app__body', 'channel-view', 'os--mac']);
-        expect(getClassnamesForBody('MacPPC')).toEqual(['app__body', 'channel-view', 'os--mac']);
+        expect(getClassnamesForBody('MacIntel')).toEqual(['channel-view', 'os--mac']);
+        expect(getClassnamesForBody('MacPPC')).toEqual(['channel-view', 'os--mac']);
     });
 });

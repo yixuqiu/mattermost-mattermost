@@ -1,16 +1,17 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type {AppBinding} from '@mattermost/types/apps';
+import type {Channel} from '@mattermost/types/channels';
 
 import {Preferences} from 'mattermost-redux/constants';
 import {createSelector} from 'mattermost-redux/selectors/create_selector';
 import {appBarEnabled, getAppBarAppBindings} from 'mattermost-redux/selectors/entities/apps';
+import {getLicense} from 'mattermost-redux/selectors/entities/general';
 import {get} from 'mattermost-redux/selectors/entities/preferences';
 import {createShallowSelector} from 'mattermost-redux/utils/helpers';
 
 import type {GlobalState} from 'types/store';
-import type {FileDropdownPluginComponent, PluginComponent} from 'types/store/plugins';
+import type {ChannelBookmarksMenuAction} from 'types/store/plugins';
 
 export const getPluginUserSettings = createSelector(
     'getPluginUserSettings',
@@ -24,7 +25,7 @@ export const getFilesDropdownPluginMenuItems = createSelector(
     'getFilesDropdownPluginMenuItems',
     (state: GlobalState) => state.plugins.components.FilesDropdown,
     (components) => {
-        return (components || []) as unknown as FileDropdownPluginComponent[];
+        return (components || []);
     },
 );
 
@@ -43,7 +44,7 @@ export const getChannelHeaderPluginComponents = createSelector(
     (state: GlobalState) => state.plugins.components.AppBar,
     (enabled, channelHeaderComponents = [], appBarComponents = []) => {
         if (!enabled || !appBarComponents.length) {
-            return channelHeaderComponents as unknown as PluginComponent[];
+            return channelHeaderComponents;
         }
 
         // Remove channel header icons for plugins that have also registered an app bar component
@@ -76,6 +77,69 @@ export const getChannelHeaderMenuPluginComponents = createShallowSelector(
     },
 );
 
+const getChannelInfoMenuPluginComponentsShouldRender = createSelector(
+    'getChannelInfoMenuPluginComponentsShouldRender',
+    (state: GlobalState) => state,
+    (state: GlobalState) => state.plugins.components.ChannelInfoMenu,
+    (_state: GlobalState, channel: Channel) => channel,
+    (state, channelInfoMenuComponents = [], channel) => {
+        return channelInfoMenuComponents.map((component) => {
+            if (typeof component.shouldRender === 'function') {
+                return component.shouldRender(state, channel);
+            }
+
+            return true;
+        });
+    },
+);
+
+/** Channel Info RHS plugin menu items that pass shouldRender(state, channel). */
+export const getChannelInfoMenuPluginComponents = createShallowSelector(
+    'getChannelInfoMenuPluginComponents',
+    getChannelInfoMenuPluginComponentsShouldRender,
+    (state: GlobalState) => state.plugins.components.ChannelInfoMenu,
+    (componentShouldRender = [], channelInfoMenuComponents = []) => {
+        return channelInfoMenuComponents.filter((component, idx) => componentShouldRender[idx]);
+    },
+);
+
+const getChannelBookmarksMenuPluginComponentsShouldRender = createSelector(
+    'getChannelBookmarksMenuPluginComponentsShouldRender',
+    (state: GlobalState) => state,
+    (state: GlobalState) => state.plugins.components.ChannelBookmarksMenu,
+    (_state: GlobalState, channelId: string) => channelId,
+    (state, components = [], channelId) => {
+        return components.map((component) => {
+            if (typeof component.shouldRender === 'function') {
+                return component.shouldRender(state, channelId);
+            }
+            return true;
+        });
+    },
+);
+
+/** Bookmarks "+" / header submenu plugin items that pass shouldRender. */
+export const getChannelBookmarksMenuPluginComponents = createShallowSelector(
+    'getChannelBookmarksMenuPluginComponents',
+    getChannelBookmarksMenuPluginComponentsShouldRender,
+    (state: GlobalState) => state.plugins.components.ChannelBookmarksMenu,
+    (componentShouldRender = [], components = []): ChannelBookmarksMenuAction[] => {
+        return components.filter((component, idx) => componentShouldRender[idx]);
+    },
+);
+
+export function getChannelSettingsTabs(state: GlobalState) {
+    return state.plugins.channelSettingsTabs || [];
+}
+
+export const getChannelMobileHeaderPluginButtons = createSelector(
+    'getChannelMobileHeaderPluginButtons',
+    (state: GlobalState) => state.plugins.components.MobileChannelHeaderButton,
+    (components = []) => {
+        return components;
+    },
+);
+
 export const getChannelIntroPluginButtons = createSelector(
     'getChannelIntroPluginButtons',
     (state: GlobalState) => state.plugins.components.ChannelIntroButton,
@@ -92,13 +156,29 @@ export const getAppBarPluginComponents = createSelector(
     },
 );
 
+export const getSidebarBrowseOrAddChannelMenuPluginComponents = createSelector(
+    'getSidebarBrowseOrAddChannelMenuPluginComponents',
+    (state: GlobalState) => state.plugins.components.SidebarBrowseOrAddChannelMenu,
+    (components = []) => {
+        return components;
+    },
+);
+
+export const getMainMenuPluginComponents = createSelector(
+    'getMainMenuPluginComponents',
+    (state: GlobalState) => state.plugins.components.MainMenu,
+    (components = []) => {
+        return components;
+    },
+);
+
 export const shouldShowAppBar = createSelector(
     'shouldShowAppBar',
     appBarEnabled,
     getAppBarAppBindings,
     getAppBarPluginComponents,
     getChannelHeaderPluginComponents,
-    (enabled: boolean, bindings: AppBinding[], appBarComponents: PluginComponent[], channelHeaderComponents) => {
+    (enabled, bindings, appBarComponents, channelHeaderComponents) => {
         return enabled && Boolean(bindings.length || appBarComponents.length || channelHeaderComponents.length);
     },
 );
@@ -108,3 +188,80 @@ export function showNewChannelWithBoardPulsatingDot(state: GlobalState): boolean
     const showPulsatingDot = pulsatingDotState !== '' && JSON.parse(pulsatingDotState)[Preferences.NEW_CHANNEL_WITH_BOARD_TOUR_SHOWED] === false;
     return showPulsatingDot;
 }
+
+export const getSearchPluginSuggestions = createSelector(
+    'getSearchPluginSuggestions',
+    getLicense,
+    (state: GlobalState) => state.plugins.components.SearchSuggestions,
+    (license, components = []) => {
+        if (license.IsLicensed !== 'true') {
+            return [];
+        }
+        return components;
+    },
+);
+
+export const getSearchBoxHints = createSelector(
+    'getSearchBoxHints',
+    getLicense,
+    (state: GlobalState) => state.plugins.components.SearchHints,
+    (license, components = []) => {
+        if (license.IsLicensed !== 'true') {
+            return [];
+        }
+        return components;
+    },
+);
+
+export const getSearchButtons = createSelector(
+    'getSearchButtons',
+    getLicense,
+    (state: GlobalState) => state.plugins.components.SearchButtons,
+    (license, components = []) => {
+        if (license.IsLicensed !== 'true') {
+            return [];
+        }
+        return components;
+    },
+);
+
+/**
+ * Plugin search types that should be shown before, and selected over, the built-in keyword search types,
+ * ordered from highest to lowest priority.
+ */
+export const getPrimarySearchButtons = createSelector(
+    'getPrimarySearchButtons',
+    getSearchButtons,
+    (buttons) => buttons.
+        filter((button) => (button.priority ?? 0) > 0).
+        sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
+);
+
+export const getSecondarySearchButtons = createSelector(
+    'getSecondarySearchButtons',
+    getSearchButtons,
+    (buttons) => buttons.filter((button) => (button.priority ?? 0) <= 0),
+);
+
+export const getDefaultSearchType = (state: GlobalState): string => {
+    return getPrimarySearchButtons(state)[0]?.pluginId ?? 'messages';
+};
+
+/**
+ * Get a plugin's display name by its ID
+ * Falls back to plugin ID if name is not available, then to 'unknown' if no plugin ID
+ */
+export const getPluginDisplayName = (state: GlobalState, pluginId?: string): string => {
+    if (!pluginId) {
+        return 'unknown';
+    }
+
+    // state.plugins.plugins only holds manifests for plugins that shipped a webapp
+    // bundle and registered themselves in the browser. Server-only plugins never
+    // appear there, so consult the admin plugin statuses (populated by
+    // getPluginStatuses) before falling back to the raw, user-hostile plugin ID.
+    const webappName = state.plugins?.plugins?.[pluginId]?.name;
+    const installedName = state.entities?.admin?.pluginStatuses?.[pluginId]?.name;
+
+    return webappName || installedName || pluginId;
+};

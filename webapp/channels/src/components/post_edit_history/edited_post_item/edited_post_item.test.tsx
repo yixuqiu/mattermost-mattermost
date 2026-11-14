@@ -1,12 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
+import {screen} from '@testing-library/react';
 import React from 'react';
 import type {ComponentProps} from 'react';
 
-import type {Theme} from 'mattermost-redux/selectors/entities/preferences';
-
+import {renderWithContext, userEvent} from 'tests/react_testing_utils';
 import {ModalIdentifiers} from 'utils/constants';
 import {TestHelper} from 'utils/test_helper';
 
@@ -21,7 +20,6 @@ describe('components/post_edit_history/edited_post_item', () => {
             message: 'post message',
         }),
         isCurrent: false,
-        theme: {} as Theme,
         postCurrentVersion: TestHelper.getPostMock({
             id: 'post_current_version_id',
             message: 'post current version message',
@@ -31,25 +29,16 @@ describe('components/post_edit_history/edited_post_item', () => {
             closeRightHandSide: jest.fn(),
             openModal: jest.fn(),
         },
+        isChannelAutotranslated: false,
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<EditedPostItem {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-    test('should match snapshot when isCurrent is true', () => {
-        const props = {
-            ...baseProps,
-            isCurrent: true,
-        };
-        const wrapper = shallow(<EditedPostItem {...props}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-    test('clicking on the restore button should call openRestorePostModal', () => {
-        const wrapper = shallow(<EditedPostItem {...baseProps}/>);
+    test('clicking on the restore button should call openRestorePostModal', async () => {
+        renderWithContext(<EditedPostItem {...baseProps}/>);
 
         // find the button with restore icon and click it
-        wrapper.find('ForwardRef').filterWhere((button) => button.prop('icon') === 'restore').simulate('click');
+        const restoreButton = screen.getByRole('button', {name: /restore/i});
+        await userEvent.click(restoreButton);
+
         expect(baseProps.actions.openModal).toHaveBeenCalledWith(
             expect.objectContaining({
                 modalId: ModalIdentifiers.RESTORE_POST_MODAL,
@@ -58,21 +47,21 @@ describe('components/post_edit_history/edited_post_item', () => {
         );
     });
 
-    test('when isCurrent is true, should not render the restore button', () => {
+    test('when isCurrent is true, should not renderWithContext the restore button', () => {
         const props = {
             ...baseProps,
             isCurrent: true,
         };
-        const wrapper = shallow(<EditedPostItem {...props}/>);
-        expect(wrapper.find('ForwardRef').filterWhere((button) => button.prop('icon') === 'refresh')).toHaveLength(0);
+        renderWithContext(<EditedPostItem {...props}/>);
+        expect(screen.queryByRole('button', {name: /restore/i})).toBeNull();
     });
 
-    test('when isCurrent is true, should render the current version text', () => {
+    test('when isCurrent is true, should renderWithContext the current version text', () => {
         const props = {
             ...baseProps,
             isCurrent: true,
         };
-        const wrapper = shallow(<EditedPostItem {...props}/>);
-        expect(wrapper.find('.edit-post-history__current__indicator')).toHaveLength(1);
+        renderWithContext(<EditedPostItem {...props}/>);
+        expect(screen.getByText(/current version/i)).toBeInTheDocument();
     });
 });

@@ -1,6 +1,8 @@
 package pluginapi
 
 import (
+	"slices"
+
 	"github.com/pkg/errors"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -66,6 +68,40 @@ func (p *PostService) UpdatePost(post *model.Post) error {
 	}
 
 	return nil
+}
+
+// UpdatePostWithOptions updates a post using the supplied options.
+// Nil options match the zero value.
+//
+// Minimum server version: 12.1
+func (p *PostService) UpdatePostWithOptions(post *model.Post, options *model.UpdatePostOptions) error {
+	updatedPost, appErr := p.api.UpdatePostWithOptions(post, options)
+	if appErr != nil {
+		return normalizeAppErr(appErr)
+	}
+
+	err := updatedPost.ShallowCopy(post)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetThreadFollowers gets the IDs of the active users who follow the thread of a root post.
+//
+// Minimum server version: 12.2
+func (p *PostService) GetThreadFollowers(threadID string) ([]string, error) {
+	followers, appErr := p.api.GetThreadFollowers(threadID)
+	return followers, normalizeAppErr(appErr)
+}
+
+// SetThreadFollowing makes a user follow, or stop following, the thread of a root post. It does
+// not check that the user can read the post's channel.
+//
+// Minimum server version: 12.2
+func (p *PostService) SetThreadFollowing(userID, threadID string, following bool) error {
+	return normalizeAppErr(p.api.SetThreadFollowing(userID, threadID, following))
 }
 
 // DeletePost deletes a post.
@@ -297,7 +333,7 @@ func (p *PostService) ShouldProcessMessage(post *model.Post, options ...ShouldPr
 		return false, nil
 	}
 
-	if !messageProcessOptions.AllowWebhook && post.GetProp("from_webhook") == "true" {
+	if !messageProcessOptions.AllowWebhook && post.GetProp(model.PostPropsFromWebhook) == "true" {
 		return false, nil
 	}
 
@@ -312,11 +348,11 @@ func (p *PostService) ShouldProcessMessage(post *model.Post, options ...ShouldPr
 		}
 	}
 
-	if len(messageProcessOptions.FilterChannelIDs) != 0 && !stringInSlice(post.ChannelId, messageProcessOptions.FilterChannelIDs) {
+	if len(messageProcessOptions.FilterChannelIDs) != 0 && !slices.Contains(messageProcessOptions.FilterChannelIDs, post.ChannelId) {
 		return false, nil
 	}
 
-	if len(messageProcessOptions.FilterUserIDs) != 0 && !stringInSlice(post.UserId, messageProcessOptions.FilterUserIDs) {
+	if len(messageProcessOptions.FilterUserIDs) != 0 && !slices.Contains(messageProcessOptions.FilterUserIDs, post.UserId) {
 		return false, nil
 	}
 

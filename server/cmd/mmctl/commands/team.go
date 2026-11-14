@@ -4,12 +4,14 @@
 package commands
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/hashicorp/go-multierror"
+
 	"github.com/mattermost/mattermost/server/public/model"
 
 	"github.com/mattermost/mattermost/server/v8/cmd/mmctl/client"
@@ -82,8 +84,8 @@ var SearchTeamCmd = &cobra.Command{
 var RenameTeamCmd = &cobra.Command{
 	Use:     "rename [team]",
 	Short:   "Rename team",
-	Long:    "Rename an existing team",
-	Example: "  team rename old-team --display-name 'New Display Name'",
+	Long:    "Rename an existing team. The team's name (the URL slug) and/or its display name can be changed.",
+	Example: "  team rename old-team --name new-team --display-name 'New Display Name'",
 	Args:    cobra.ExactArgs(1),
 	RunE:    withClient(renameTeamCmdF),
 }
@@ -100,8 +102,6 @@ var ModifyTeamsCmd = &cobra.Command{
 func init() {
 	TeamCreateCmd.Flags().String("name", "", "Team Name")
 	TeamCreateCmd.Flags().String("display-name", "", "Team Display Name")
-	TeamCreateCmd.Flags().String("display_name", "", "")
-	_ = TeamCreateCmd.Flags().MarkDeprecated("display_name", "please use display-name instead")
 	TeamCreateCmd.Flags().Bool("private", false, "Create a private team.")
 	TeamCreateCmd.Flags().String("email", "", "Administrator Email (anyone with this email is automatically a team admin)")
 
@@ -112,10 +112,8 @@ func init() {
 	ModifyTeamsCmd.Flags().Bool("public", false, "Modify team to be public.")
 
 	// Add flag declaration for RenameTeam
-	RenameTeamCmd.Flags().String("display-name", "", "Team Display Name")
-	// _ = RenameTeamCmd.MarkFlagRequired("display-name") // Uncomment this after fully deprecation of display_name
-	RenameTeamCmd.Flags().String("display_name", "", "")
-	_ = RenameTeamCmd.Flags().MarkDeprecated("display_name", "please use display-name instead")
+	RenameTeamCmd.Flags().String("name", "", "New team name (the URL slug)")
+	RenameTeamCmd.Flags().String("display-name", "", "New team display name")
 
 	TeamCmd.AddCommand(
 		TeamCreateCmd,
@@ -140,10 +138,7 @@ func createTeamCmdF(c client.Client, cmd *cobra.Command, args []string) error {
 	}
 	displayname, errdn := cmd.Flags().GetString("display-name")
 	if errdn != nil || displayname == "" {
-		displayname, errdn = cmd.Flags().GetString("display_name")
-		if errdn != nil || displayname == "" {
-			return errors.New("display Name is required")
-		}
+		return errors.New("display-name is required")
 	}
 	email, _ := cmd.Flags().GetString("email")
 	useprivate, _ := cmd.Flags().GetBool("private")
@@ -178,6 +173,7 @@ func deleteTeam(c client.Client, team *model.Team) (*model.Response, error) {
 }
 
 func archiveTeamsCmdF(c client.Client, cmd *cobra.Command, args []string) error {
+	var result *multierror.Error
 	confirmFlag, _ := cmd.Flags().GetBool("confirm")
 	if !confirmFlag {
 		if err := getConfirmation("Are you sure you want to archive the specified teams?", true); err != nil {
@@ -189,16 +185,18 @@ func archiveTeamsCmdF(c client.Client, cmd *cobra.Command, args []string) error 
 	for i, team := range teams {
 		if team == nil {
 			printer.PrintError("Unable to find team '" + args[i] + "'")
+			result = multierror.Append(result, errors.New("Unable to find team '"+args[i]+"'"))
 			continue
 		}
 		if _, err := c.SoftDeleteTeam(context.TODO(), team.Id); err != nil {
 			printer.PrintError("Unable to archive team '" + team.Name + "' error: " + err.Error())
+			result = multierror.Append(result, errors.New("Unable to archive team '"+team.Name+"' error: "+err.Error()))
 		} else {
 			printer.PrintT("Archived team '{{.Name}}'", team)
 		}
 	}
 
-	return nil
+	return result.ErrorOrNil()
 }
 
 func listTeamsCmdF(c client.Client, cmd *cobra.Command, args []string) error {
@@ -263,8 +261,8 @@ func removeDuplicatesAndSortTeams(teams []*model.Team) []*model.Team {
 			result = append(result, team)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Name < result[j].Name
+	slices.SortFunc(result, func(a, b *model.Team) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return result
 }
@@ -272,13 +270,10 @@ func removeDuplicatesAndSortTeams(teams []*model.Team) []*model.Team {
 func renameTeamCmdF(c client.Client, cmd *cobra.Command, args []string) error {
 	oldTeamName := args[0]
 
-	newDisplayName, _ := cmd.Flags().GetString("display_name")
-
-	if newDisplayName == "" {
-		newDisplayName, _ = cmd.Flags().GetString("display-name")
-	}
-	if newDisplayName == "" {
-		return errors.New("display name is required")
+	newName, _ := cmd.Flags().GetString("name")
+	newDisplayName, _ := cmd.Flags().GetString("display-name")
+	if newName == "" && newDisplayName == "" {
+		return errors.New("at least one of --name or --display-name is required")
 	}
 
 	team := getTeamFromTeamArg(c, oldTeamName)
@@ -286,7 +281,12 @@ func renameTeamCmdF(c client.Client, cmd *cobra.Command, args []string) error {
 		return errors.New("Unable to find team '" + oldTeamName + "', to see the all teams try 'team list' command")
 	}
 
-	team.DisplayName = newDisplayName
+	if newName != "" {
+		team.Name = newName
+	}
+	if newDisplayName != "" {
+		team.DisplayName = newDisplayName
+	}
 
 	// Using UpdateTeam API Method to rename team
 	_, _, err := c.UpdateTeam(context.TODO(), team)

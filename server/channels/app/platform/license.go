@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
@@ -18,14 +17,14 @@ import (
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
 	"github.com/mattermost/mattermost/server/public/shared/request"
 	"github.com/mattermost/mattermost/server/v8/channels/jobs"
+	"github.com/mattermost/mattermost/server/v8/channels/store"
 	"github.com/mattermost/mattermost/server/v8/channels/store/sqlstore"
 	"github.com/mattermost/mattermost/server/v8/channels/utils"
 	"github.com/mattermost/mattermost/server/v8/einterfaces"
 )
 
 const (
-	LicenseEnv                = "MM_LICENSE"
-	JWTDefaultTokenExpiration = 7 * 24 * time.Hour // 7 days of expiration
+	LicenseEnv = "MM_LICENSE"
 )
 
 // JWTClaims custom JWT claims with the needed information for the
@@ -83,16 +82,22 @@ func (ps *PlatformService) LoadLicense() {
 	}
 
 	licenseId := ""
-	props, nErr := ps.Store.System().Get()
+	// Read from master: SaveLicense writes the active license ID then calls
+	// LoadLicense, so a replica read can return a stale ID and revert the license.
+	activeLicense, nErr := ps.Store.System().GetByNameWithContext(sqlstore.RequestContextWithMaster(c), model.SystemActiveLicenseId)
 	if nErr == nil {
-		licenseId = props[model.SystemActiveLicenseId]
+		licenseId = activeLicense.Value
 	}
 
 	if !model.IsValidId(licenseId) {
 		// Lets attempt to load the file from disk since it was missing from the DB
-		license, licenseBytes, err := utils.GetAndValidateLicenseFileFromDisk(*ps.Config().ServiceSettings.LicenseFileLocation)
+		location := *ps.Config().ServiceSettings.LicenseFileLocation
+		license, licenseBytes, err := utils.GetAndValidateLicenseFileFromDisk(location)
 		if err != nil {
-			ps.logger.Warn("Failed to get license from disk", mlog.Err(err))
+			// No license file at the default location is the normal state of an unlicensed server.
+			if location != "" || !errors.Is(err, os.ErrNotExist) {
+				ps.logger.Warn("Failed to get license from disk", mlog.Err(err))
+			}
 		} else {
 			if _, err := ps.SaveLicense(licenseBytes); err != nil {
 				ps.logger.Error("Failed to save license key loaded from disk.", mlog.Err(err))
@@ -104,8 +109,29 @@ func (ps *PlatformService) LoadLicense() {
 
 	record, nErr := ps.Store.License().Get(sqlstore.RequestContextWithMaster(c), licenseId)
 	if nErr != nil {
-		ps.logger.Warn("License key from https://mattermost.com required to unlock enterprise features.", mlog.Err(nErr))
-		ps.SetLicense(nil)
+		// LoadLicense reruns on a 24h timer, so clearing the license on a store
+		// failure would drop every entitlement, and deactivate add-on plugins,
+		// until the next successful read.
+		var nfErr *store.ErrNotFound
+		if !errors.As(nErr, &nfErr) {
+			ps.logger.Error("Failed to read the license from the database, keeping the current license.", mlog.Err(nErr))
+			return
+		}
+
+		if ps.Config().FeatureFlags.EnableMattermostEntry && model.BuildEnterpriseReady == "true" {
+			ps.logger.Info("Mattermost Entry is enabled. Unlocking enterprise features.")
+
+			if ps.LicenseManager() == nil {
+				ps.logger.Warn("License manager not available, setting license to nil.")
+				ps.SetLicense(nil)
+				return
+			}
+
+			ps.SetLicense(ps.LicenseManager().NewMattermostEntryLicense(ps.telemetryId))
+		} else {
+			ps.logger.Warn("License key from https://mattermost.com required to unlock enterprise features.", mlog.Err(nErr))
+			ps.SetLicense(nil)
+		}
 		return
 	}
 
@@ -120,7 +146,7 @@ func (ps *PlatformService) LoadLicense() {
 func (ps *PlatformService) SaveLicense(licenseBytes []byte) (*model.License, *model.AppError) {
 	licenseStr, err := utils.LicenseValidator.ValidateLicense(licenseBytes)
 	if err != nil {
-		return nil, model.NewAppError("addLicense", model.InvalidLicenseError, nil, "", http.StatusBadRequest).Wrap(err)
+		return nil, utils.NewLicenseValidationAppError("addLicense", err)
 	}
 
 	var license model.License
@@ -128,13 +154,27 @@ func (ps *PlatformService) SaveLicense(licenseBytes []byte) (*model.License, *mo
 		return nil, model.NewAppError("addLicense", "api.unmarshal_error", nil, "", http.StatusInternalServerError).Wrap(jsonErr)
 	}
 
+	if license.Features == nil {
+		return nil, model.NewAppError("addLicense", "api.license.add_license.invalid.app_error", nil, "", http.StatusBadRequest).Wrap(errors.New("license.Features is nil"))
+	}
+
+	if license.Features.Users == nil {
+		return nil, model.NewAppError("addLicense", "api.license.add_license.invalid.app_error", nil, "", http.StatusBadRequest).Wrap(errors.New("license.Features.Users is nil"))
+	}
+
 	uniqueUserCount, err := ps.Store.User().Count(model.UserCountOptions{})
 	if err != nil {
 		return nil, model.NewAppError("addLicense", "api.license.add_license.invalid_count.app_error", nil, "", http.StatusBadRequest).Wrap(err)
 	}
 
-	if uniqueUserCount > int64(*license.Features.Users) {
-		return nil, model.NewAppError("addLicense", "api.license.add_license.unique_users.app_error", map[string]any{"Users": *license.Features.Users, "Count": uniqueUserCount}, "", http.StatusBadRequest)
+	// Single-channel guests are free and should not count against licensed seats.
+	effectiveUserCount := uniqueUserCount
+	if scgCount, scgErr := ps.Store.User().AnalyticsGetSingleChannelGuestCount(); scgErr == nil {
+		effectiveUserCount = max(uniqueUserCount-scgCount, 0)
+	}
+
+	if effectiveUserCount > int64(*license.Features.Users) {
+		return nil, model.NewAppError("addLicense", "api.license.add_license.unique_users.app_error", map[string]any{"Users": *license.Features.Users, "Count": effectiveUserCount}, "", http.StatusBadRequest)
 	}
 
 	if license.IsExpired() {
@@ -177,15 +217,16 @@ func (ps *PlatformService) SaveLicense(licenseBytes []byte) (*model.License, *mo
 	record.Id = license.Id
 	record.Bytes = string(licenseBytes)
 
-	nErr := ps.Store.License().Save(record)
-	if nErr != nil {
-		ps.RemoveLicense()
+	if err := ps.Store.License().Save(record); err != nil {
+		if appErr := ps.RemoveLicense(); appErr != nil {
+			ps.logger.Error("Failed to remove license after saving it to the license store failed", mlog.Err(appErr))
+		}
 		var appErr *model.AppError
 		switch {
-		case errors.As(nErr, &appErr):
+		case errors.As(err, &appErr):
 			return nil, appErr
 		default:
-			return nil, model.NewAppError("addLicense", "api.license.add_license.save.app_error", nil, "", http.StatusInternalServerError).Wrap(nErr)
+			return nil, model.NewAppError("addLicense", "api.license.add_license.save.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 		}
 	}
 
@@ -193,19 +234,18 @@ func (ps *PlatformService) SaveLicense(licenseBytes []byte) (*model.License, *mo
 	sysVar.Name = model.SystemActiveLicenseId
 	sysVar.Value = license.Id
 	if err := ps.Store.System().SaveOrUpdate(sysVar); err != nil {
-		ps.RemoveLicense()
-		return nil, model.NewAppError("addLicense", "api.license.add_license.save_active.app_error", nil, "", http.StatusInternalServerError)
-	}
-	// only on prem licenses set this in the first place
-	if !license.IsCloud() {
-		_, err := ps.Store.System().PermanentDeleteByName(model.SystemHostedPurchaseNeedsScreening)
-		if err != nil {
-			ps.logger.Warn(fmt.Sprintf("Failed to remove %s system store key", model.SystemHostedPurchaseNeedsScreening))
+		appErr := ps.RemoveLicense()
+		if appErr != nil {
+			ps.logger.Error("Failed to remove license after saving it to the system store failed", mlog.Err(appErr))
 		}
+		return nil, model.NewAppError("addLicense", "api.license.add_license.save_active.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
 	}
-
-	ps.ReloadConfig()
-	ps.InvalidateAllCaches()
+	if err := ps.ReloadConfig(); err != nil {
+		ps.logger.Warn("Failed to reload config after saving license", mlog.Err(err))
+	}
+	if appErr := ps.InvalidateAllCaches(); appErr != nil {
+		ps.logger.Warn("Failed to invalidate cache after saving license", mlog.Err(appErr))
+	}
 
 	return &license, nil
 }
@@ -229,7 +269,16 @@ func (ps *PlatformService) SetLicense(license *model.License) bool {
 		ps.licenseValue.Store(license)
 
 		ps.clientLicenseValue.Store(utils.GetClientLicense(license))
+
+		if oldLicense == nil || oldLicense.Id != license.Id {
+			ps.logLicense("Set license", license)
+		}
+
 		return true
+	}
+
+	if oldLicense != nil {
+		ps.logLicense("Cleared license", oldLicense)
 	}
 
 	ps.licenseValue.Store((*model.License)(nil))
@@ -280,8 +329,12 @@ func (ps *PlatformService) RemoveLicense() *model.AppError {
 	}
 
 	ps.SetLicense(nil)
-	ps.ReloadConfig()
-	ps.InvalidateAllCaches()
+	if err := ps.ReloadConfig(); err != nil {
+		ps.logger.Warn("Failed to reload config after removing license", mlog.Err(err))
+	}
+	if appErr := ps.InvalidateAllCaches(); appErr != nil {
+		ps.logger.Warn("Failed to invalidate cache after removing license", mlog.Err(appErr))
+	}
 
 	return nil
 }
@@ -337,12 +390,51 @@ func (ps *PlatformService) RequestTrialLicense(trialRequest *model.TrialLicenseR
 		return err
 	}
 
-	ps.ReloadConfig()
-	ps.InvalidateAllCaches()
+	if err := ps.ReloadConfig(); err != nil {
+		ps.logger.Warn("Failed to reload config after requesting trial license", mlog.Err(err))
+	}
+	if appErr := ps.InvalidateAllCaches(); appErr != nil {
+		ps.logger.Warn("Failed to invalidate cache after requesting trial license", mlog.Err(appErr))
+	}
 
 	return nil
 }
 
 func (ps *PlatformService) getRequestTrialURL() string {
 	return fmt.Sprintf("%s/api/v1/trials", *ps.Config().CloudSettings.CWSURL)
+}
+
+func (ps *PlatformService) logLicense(message string, license *model.License) {
+	if ps.logger == nil {
+		return
+	}
+
+	logger := ps.logger.With(
+		mlog.String("id", license.Id),
+		mlog.Time("issued_at", model.GetTimeForMillis(license.IssuedAt)),
+		mlog.Time("starts_at", model.GetTimeForMillis(license.StartsAt)),
+		mlog.Time("expires_at", model.GetTimeForMillis(license.ExpiresAt)),
+		mlog.String("sku_name", license.SkuName),
+		mlog.String("sku_short_name", license.SkuShortName),
+		mlog.Bool("is_trial", license.IsTrial),
+		mlog.Bool("is_gov_sku", license.IsGovSku),
+		mlog.Bool("is_non_production", license.IsNonProduction),
+	)
+
+	if license.Customer != nil {
+		logger = logger.With(mlog.String("customer_id", license.Customer.Id))
+	}
+
+	if license.Features != nil {
+		logger = logger.With(
+			mlog.Int("features_users", *license.Features.Users),
+			mlog.Map("features", license.Features.ToMap()),
+		)
+	}
+
+	if len(license.AddOns) > 0 {
+		logger = logger.With(mlog.Array("add_ons", license.AddOns))
+	}
+
+	logger.Info(message)
 }

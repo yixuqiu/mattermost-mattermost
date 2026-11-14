@@ -7,7 +7,9 @@ import type {Channel, ChannelStats} from '@mattermost/types/channels';
 import type {Team} from '@mattermost/types/teams';
 import type {UserProfile} from '@mattermost/types/users';
 
-import {act, renderWithContext} from 'tests/react_testing_utils';
+import {act, renderWithContext, screen} from 'tests/react_testing_utils';
+import {boardChannelsState} from 'utils/channel_kind_test_utils';
+import {ModalIdentifiers} from 'utils/constants';
 
 import ChannelInfoRHS from './channel_info_rhs';
 
@@ -26,8 +28,8 @@ describe('channel_info_rhs', () => {
         currentTeam: {} as Team,
         isFavorite: false,
         isMuted: false,
-        isInvitingPeople: false,
         isMobile: false,
+        isInManagedCategory: false,
         canManageMembers: true,
         canManageProperties: true,
         channelMembers: [],
@@ -48,6 +50,7 @@ describe('channel_info_rhs', () => {
 
     beforeEach(() => {
         props = {...OriginalProps};
+        mockAboutArea.mockClear();
     });
 
     describe('about area', () => {
@@ -87,5 +90,47 @@ describe('channel_info_rhs', () => {
                 }),
             );
         });
+    });
+
+    test('editChannelName opens Rename Channel modal', () => {
+        props.currentTeam = {name: 'team-1'} as Team;
+        renderWithContext(
+            <ChannelInfoRHS
+                {...props}
+            />,
+        );
+
+        // Invoke the handler passed into the mocked AboutArea
+        const lastArgs = mockAboutArea.mock.calls[mockAboutArea.mock.calls.length - 1][0];
+        lastArgs.actions.editChannelName();
+
+        expect(props.actions.openModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                modalId: ModalIdentifiers.RENAME_CHANNEL,
+                dialogProps: expect.objectContaining({
+                    channel: props.channel,
+                    teamName: 'team-1',
+                }),
+            }),
+        );
+    });
+
+    test('says the board is archived for an archived board', async () => {
+        props.channel = {id: 'board1', display_name: 'my board title', type: 'O'} as Channel;
+        props.isArchived = true;
+
+        renderWithContext(
+            <ChannelInfoRHS
+                {...props}
+            />,
+            boardChannelsState('board1'),
+        );
+
+        await act(async () => {
+            props.actions.getChannelStats();
+        });
+
+        expect(screen.getByText('This board is archived.')).toBeInTheDocument();
+        expect(screen.queryByText('This channel is archived.')).not.toBeInTheDocument();
     });
 });

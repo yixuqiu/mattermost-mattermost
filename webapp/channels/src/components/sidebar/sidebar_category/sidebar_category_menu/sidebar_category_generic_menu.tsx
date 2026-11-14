@@ -8,17 +8,21 @@ import {useIntl} from 'react-intl';
 import {
     DotsVerticalIcon,
 } from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
 import * as Menu from 'components/menu';
+import {SidebarMenuTrigger} from 'components/sidebar/sidebar_menu_trigger';
 
 type Props = {
     id: string;
     children: React.ReactNode[];
+    name: string;
 };
 
 const SidebarCategoryGenericMenu = ({
     id,
     children,
+    name,
 }: Props) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -42,13 +46,13 @@ const SidebarCategoryGenericMenu = ({
             <Menu.Container
                 menuButton={{
                     id: `SidebarCategoryMenu-Button-${id}`,
-                    'aria-label': formatMessage({id: 'sidebar_left.sidebar_category_menu.editCategory', defaultMessage: 'Category options'}),
+                    'aria-label': formatMessage({id: 'sidebar_left.sidebar_category_menu.editCategory', defaultMessage: '{name} category options'}, {name}),
+                    as: SidebarMenuTrigger,
                     class: 'SidebarMenu_menuButton',
-                    children: <DotsVerticalIcon size={16}/>,
+                    children: <Icon glyph={<DotsVerticalIcon/>}/>,
                 }}
                 menuButtonTooltip={{
-                    id: `SidebarCategoryMenu-ButtonTooltip-${id}`,
-                    text: formatMessage({id: 'sidebar_left.sidebar_category_menu.editCategory', defaultMessage: 'Category options'}),
+                    text: formatMessage({id: 'sidebar_left.sidebar_category_menu.editCategory', defaultMessage: '{name} category options'}, {name}),
                     class: 'hidden-xs',
                 }}
                 menu={{

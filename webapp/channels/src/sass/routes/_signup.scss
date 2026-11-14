@@ -1,11 +1,13 @@
-@charset 'UTF-8';
+@use "utils/functions";
+@use "utils/mixins";
+@use "utils/variables";
 
 @use 'sass:color';
 
 body {
     &.announcement-bar--fixed {
         .signup-header {
-            top: 42px;
+            top: calc(var(--announcement-bar-count, 1) * #{variables.$announcement-bar-height});
         }
     }
 }
@@ -23,7 +25,7 @@ body {
     left: 0;
     width: 100%;
     padding: 0 1em 0.2em;
-    background: $bg--gray;
+    background: variables.$bg--gray;
     line-height: 33px;
 
     .fa {
@@ -34,11 +36,18 @@ body {
 .signup-team__container {
     position: relative;
     display: flex;
+
+    // Load-bearing: .terms-of-service__markdown below is min-width: 100vw and
+    // would otherwise blow the page out horizontally. It does mean the
+    // container clips anything that paints outside its box -- including the
+    // Compass focus ring, which sits 3px outside a button and is 2px wide.
+    // The 8px gutter gives that ring room; max-width carries it so the content
+    // column stays 400px (box-sizing is border-box, globally, from Bootstrap).
     overflow: hidden;
-    max-width: 400px;
+    max-width: 416px;
     flex: 1;
     flex-direction: column;
-    padding: 40px 0 0;
+    padding: 40px 8px 8px;
     margin: 0 auto;
 
     .medium-center {
@@ -82,7 +91,7 @@ body {
             p {
                 width: 100%;
                 margin: 0;
-                color: color.adjust($black, $lightness: 50%);
+                color: color.adjust(variables.$black, $lightness: 50%);
                 line-height: 1.6em;
                 white-space: pre-wrap;
                 word-break: break-word;
@@ -107,8 +116,14 @@ body {
         padding-bottom: 0.5em;
 
         .terms-of-service__button-group {
+            display: flex;
+            justify-content: center;
             padding-top: 1em;
             padding-bottom: 1em;
+
+            // Was the global `.btn + .btn` margin in _buttons.scss, which the
+            // Compass buttons no longer match.
+            gap: 8px;
         }
 
         .terms-of-service__server-error {
@@ -140,7 +155,7 @@ body {
 
     h2 {
         margin-bottom: 0.8em;
-        font-size: em(30px);
+        font-size: functions.em(30px);
         font-weight: 600;
         letter-spacing: -0.5px;
     }
@@ -153,12 +168,12 @@ body {
 
     h4 {
         margin-bottom: 1em;
-        font-size: em(20px);
+        font-size: functions.em(20px);
         font-weight: 600;
     }
 
     h5 {
-        font-size: em(16px);
+        font-size: functions.em(16px);
     }
 
     hr {
@@ -195,6 +210,7 @@ body {
                 display: table-cell;
                 overflow: hidden;
                 width: 50%;
+                color: inherit;
                 text-align: left;
                 text-overflow: ellipsis;
             }
@@ -246,7 +262,7 @@ body {
     }
 
     .form-control {
-        height: em(38px);
+        height: functions.em(38px);
     }
 
     .or__container {
@@ -280,6 +296,7 @@ body {
         }
 
         .control-label {
+            display: block;
             width: 100%;
             padding: 0.7em 1em;
             border-radius: 3px;
@@ -287,7 +304,6 @@ body {
             background: #f2f2f2;
             color: #999;
             font-size: 14px;
-            font-weight: normal;
 
             &::before {
                 @extend %font-awesome;
@@ -342,7 +358,7 @@ body {
     margin: 0 0 20px;
 
     .signup-team-dir {
-        @include pie-clearfix;
+        @include mixins.pie-clearfix;
 
         position: relative;
         display: flex;
@@ -354,7 +370,7 @@ body {
         background: #fafafa;
 
         &:hover {
-            background: $white;
+            background: variables.$white;
             transition: background-color 0.15s ease;
         }
 
@@ -368,7 +384,6 @@ body {
 
         .icon {
             height: 20px;
-            margin: 0 -8px 0 15px;
             cursor: pointer;
             float: left;
             opacity: 0.45;
@@ -398,7 +413,7 @@ body {
             text-decoration: none;
 
             &.disabled {
-                color: $dark-gray;
+                color: variables.$dark-gray;
                 cursor: default;
             }
         }
@@ -423,9 +438,29 @@ body {
         white-space: nowrap;
     }
 
+    .signup-team-dir__recommended {
+        display: inline-flex;
+        flex-shrink: 0;
+        align-items: center;
+        padding: 0 6px;
+        border-radius: 4px;
+        margin: 0 20px;
+        background: rgba(var(--button-bg-rgb), 0.08);
+        color: var(--button-bg);
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 18px;
+        white-space: nowrap;
+
+        i {
+            margin-right: 2px;
+            font-size: 12px;
+        }
+    }
+
     .signup-team__icon {
         position: relative;
-        color: $dark-gray;
+        color: variables.$dark-gray;
         font-size: 1.5em;
 
         &.fa-spin {
@@ -448,7 +483,7 @@ body {
 .authorize-box {
     width: 500px;
     height: 280px;
-    border: 1px solid $black;
+    border: 1px solid variables.$black;
     margin: 100px auto;
 }
 

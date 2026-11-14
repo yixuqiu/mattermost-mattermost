@@ -1,8 +1,10 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import type {ReactNode} from 'react';
+import type {ReactNode, JSX} from 'react';
 import React from 'react';
+
+import {Radio} from '@mattermost/compass-ui/components/radio';
 
 import type {BaseSettingItemProps} from './base_setting_item';
 import BaseSettingItem from './base_setting_item';
@@ -14,16 +16,15 @@ export type FieldsetRadio = {
         name: string;
         key: string;
         value: string;
-        suffix?: JSX.Element;
     }>;
-}
+};
 
 type Props = BaseSettingItemProps & {
     className?: string;
     inputFieldData: FieldsetRadio;
     inputFieldValue: string;
     handleChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-}
+};
 
 function RadioSettingItem({
     title,
@@ -32,35 +33,38 @@ function RadioSettingItem({
     inputFieldData,
     inputFieldValue,
     handleChange,
+    dataTestId,
 }: Props): JSX.Element {
     const fields = inputFieldData.options.map((option) => {
         return (
-            <label
+            <Radio
                 key={option.key}
+                id={option.key}
+                data-testid={option.dataTestId}
                 className='mm-modal-generic-section-item__label-radio'
+                name={option.name}
+                checked={option.value === inputFieldValue}
+                value={option.value}
+                onChange={handleChange}
             >
-                <input
-                    id={option.key}
-                    data-testid={option.dataTestId}
-                    type='radio'
-                    name={option.name}
-                    checked={option.value === inputFieldValue}
-                    value={option.value}
-                    onChange={handleChange}
-                />
                 {option.title}
-                {option.suffix}
-            </label>
+            </Radio>
         );
     });
 
     const content = (
-        <fieldset className='mm-modal-generic-section-item__fieldset-radio'>
+        <fieldset
+            className='mm-modal-generic-section-item__fieldset-radio'
+        >
+            <legend className='hidden-label'>
+                {title}
+            </legend>
             {[...fields]}
         </fieldset>
     );
     return (
         <BaseSettingItem
+            dataTestId={dataTestId}
             className={className}
             content={content}
             title={title}

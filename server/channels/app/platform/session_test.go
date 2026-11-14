@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -19,8 +20,8 @@ const (
 )
 
 func TestCache(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	session := &model.Session{
 		Id:     model.NewId(),
@@ -34,30 +35,45 @@ func TestCache(t *testing.T) {
 		UserId: model.NewId(),
 	}
 
-	th.Service.sessionCache.SetWithExpiry(session.Token, session, 5*time.Minute)
-	th.Service.sessionCache.SetWithExpiry(session2.Token, session2, 5*time.Minute)
+	err := th.Service.sessionCache.SetWithExpiry(session.Token, session, 5*time.Minute)
+	require.NoError(t, err)
+	err = th.Service.sessionCache.SetWithExpiry(session2.Token, session2, 5*time.Minute)
+	require.NoError(t, err)
 
-	keys, err := th.Service.sessionCache.Keys()
+	var keys []string
+	err = th.Service.sessionCache.Scan(func(in []string) error {
+		keys = append(keys, in...)
+		return nil
+	})
 	require.NoError(t, err)
 	require.NotEmpty(t, keys)
 
 	th.Service.ClearUserSessionCache(session.UserId)
 
-	rkeys, err := th.Service.sessionCache.Keys()
+	var rkeys []string
+	err = th.Service.sessionCache.Scan(func(in []string) error {
+		rkeys = append(rkeys, in...)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Lenf(t, rkeys, len(keys)-1, "should have one less: %d - %d != 1", len(keys), len(rkeys))
 	require.NotEmpty(t, rkeys)
+	clear(rkeys)
+	rkeys = []string{}
 
-	th.Service.ClearAllUsersSessionCache()
-
-	rkeys, err = th.Service.sessionCache.Keys()
+	err = th.Service.ClearAllUsersSessionCache()
 	require.NoError(t, err)
-	require.Empty(t, rkeys)
+	err = th.Service.sessionCache.Scan(func(in []string) error {
+		rkeys = append(rkeys, in...)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, rkeys, 0)
 }
 
 func TestSetSessionExpireInHours(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	now := model.GetMillis()
 	createAt := now - (dayInMillis * 20)
@@ -102,11 +118,16 @@ func TestSetSessionExpireInHours(t *testing.T) {
 }
 
 func TestOAuthRevokeAccessToken(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
-	err := th.Service.RevokeAccessToken(th.Context, model.NewRandomString(16))
+	unknownToken := model.NewRandomString(16)
+	err := th.Service.RevokeAccessToken(th.Context, unknownToken)
 	require.Error(t, err, "Should have failed due to an incorrect token")
+	// RevokeAccessToken formats the store error into GetTokenError, which callers
+	// log, so the token must not be part of it; MM-70121.
+	require.ErrorIs(t, err, GetTokenError)
+	assert.NotContains(t, err.Error(), unknownToken)
 
 	session := &model.Session{}
 	session.CreateAt = model.GetMillis()
@@ -134,11 +155,11 @@ func TestOAuthRevokeAccessToken(t *testing.T) {
 }
 
 func TestUpdateSessionsIsGuest(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	t.Run("Test session is demoted", func(t *testing.T) {
-		user := th.CreateUserOrGuest(false)
+		user := th.CreateUserOrGuest(t, false)
 
 		session := &model.Session{}
 		session.CreateAt = model.GetMillis()
@@ -149,7 +170,7 @@ func TestUpdateSessionsIsGuest(t *testing.T) {
 
 		session, _ = th.Service.CreateSession(th.Context, session)
 
-		demotedUser, err := th.Service.Store.User().DemoteUserToGuest(user.Id)
+		demotedUser, err := th.Service.Store.User().DemoteUserToGuest(th.Context, user.Id)
 		require.NoError(t, err)
 		require.Equal(t, model.SystemGuestRoleId, demotedUser.Roles)
 
@@ -163,7 +184,7 @@ func TestUpdateSessionsIsGuest(t *testing.T) {
 	})
 
 	t.Run("Test session is promoted", func(t *testing.T) {
-		user := th.CreateUserOrGuest(true)
+		user := th.CreateUserOrGuest(t, true)
 
 		session := &model.Session{}
 		session.CreateAt = model.GetMillis()
@@ -174,10 +195,10 @@ func TestUpdateSessionsIsGuest(t *testing.T) {
 
 		session, _ = th.Service.CreateSession(th.Context, session)
 
-		err := th.Service.Store.User().PromoteGuestToUser(user.Id)
+		err := th.Service.Store.User().PromoteGuestToUser(th.Context, user.Id)
 		require.NoError(t, err)
 
-		promotedUser, err := th.Service.Store.User().Get(th.Context.Context(), user.Id)
+		promotedUser, err := th.Service.Store.User().Get(th.Context, user.Id)
 		require.NoError(t, err)
 		err = th.Service.UpdateSessionsIsGuest(th.Context, promotedUser, false)
 		require.NoError(t, err)
@@ -187,4 +208,130 @@ func TestUpdateSessionsIsGuest(t *testing.T) {
 		require.Equal(t, model.SystemUserRoleId, session.Roles)
 		require.Equal(t, "false", session.Props[model.SessionPropIsGuest])
 	})
+}
+
+func TestRevokeSessionsForDeviceTokens(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t).InitBasic(t)
+
+	// Both revoke variants are structurally identical (one matches DeviceId,
+	// the other VoIPDeviceId), and the invariants they must hold are the
+	// same. Drive them through a single table.
+	type variant struct {
+		name          string
+		setToken      func(s *model.Session, token string)
+		revoke        func(userID, token, currentSessionID string) error
+		emptyTokenErr error
+	}
+
+	variants := []variant{
+		{
+			name:     "RevokeOtherSessionsForDeviceId",
+			setToken: func(s *model.Session, token string) { s.DeviceId = token },
+			revoke: func(userID, token, currentSessionID string) error {
+				return th.Service.RevokeOtherSessionsForDeviceId(th.Context, userID, token, currentSessionID)
+			},
+			emptyTokenErr: ErrEmptyDeviceId,
+		},
+		{
+			name:     "RevokeOtherSessionsForVoIPDeviceId",
+			setToken: func(s *model.Session, token string) { s.VoIPDeviceId = token },
+			revoke: func(userID, token, currentSessionID string) error {
+				return th.Service.RevokeOtherSessionsForVoIPDeviceId(th.Context, userID, token, currentSessionID)
+			},
+			emptyTokenErr: ErrEmptyVoIPDeviceId,
+		},
+	}
+
+	createSession := func(t *testing.T, v variant, userID, token string) *model.Session {
+		t.Helper()
+		s := &model.Session{UserId: userID, Roles: model.SystemUserRoleId}
+		v.setToken(s, token)
+		saved, err := th.Service.CreateSession(th.Context, s)
+		require.NoError(t, err)
+		return saved
+	}
+
+	sessionExists := func(t *testing.T, id string) bool {
+		t.Helper()
+		_, err := th.Service.GetSessionByID(th.Context, id)
+		return err == nil
+	}
+
+	for _, v := range variants {
+		t.Run(v.name, func(t *testing.T) {
+			t.Run("revokes the matching session", func(t *testing.T) {
+				token := "apple_rn:revokes-matching-" + v.name
+				target := createSession(t, v, th.BasicUser.Id, token)
+
+				require.NoError(t, v.revoke(th.BasicUser.Id, token, ""))
+				assert.False(t, sessionExists(t, target.Id), "matching session must be revoked")
+			})
+
+			t.Run("does not revoke the session passed as currentSessionId", func(t *testing.T) {
+				// Self-skip: a session re-attaching its own token must not
+				// revoke itself.
+				token := "apple_rn:self-skip-" + v.name
+				self := createSession(t, v, th.BasicUser.Id, token)
+
+				require.NoError(t, v.revoke(th.BasicUser.Id, token, self.Id))
+				assert.True(t, sessionExists(t, self.Id), "currentSessionId must be exempt from revocation")
+			})
+
+			t.Run("does not revoke sessions belonging to other users", func(t *testing.T) {
+				// The function scopes by userID — a session with a matching
+				// token on a different user must stay alive.
+				token := "apple_rn:cross-user-" + v.name
+				otherUserSession := createSession(t, v, th.BasicUser2.Id, token)
+
+				require.NoError(t, v.revoke(th.BasicUser.Id, token, ""))
+				assert.True(t, sessionExists(t, otherUserSession.Id),
+					"session on a different user must not be revoked")
+			})
+
+			t.Run("empty token returns an error and revokes nothing", func(t *testing.T) {
+				webSession := createSession(t, v, th.BasicUser.Id, "")
+
+				err := v.revoke(th.BasicUser.Id, "", "")
+				require.ErrorIs(t, err, v.emptyTokenErr)
+				assert.True(t, sessionExists(t, webSession.Id),
+					"empty-token revoke must not match sessions with no token in this slot")
+			})
+
+			t.Run("leaves siblings of the same user with different tokens alone", func(t *testing.T) {
+				targetToken := "apple_rn:target-" + v.name
+				siblingToken := "apple_rn:sibling-" + v.name
+
+				target := createSession(t, v, th.BasicUser.Id, targetToken)
+				sibling := createSession(t, v, th.BasicUser.Id, siblingToken)
+
+				require.NoError(t, v.revoke(th.BasicUser.Id, targetToken, ""))
+				assert.False(t, sessionExists(t, target.Id))
+				assert.True(t, sessionExists(t, sibling.Id),
+					"session with a different token must stay alive")
+			})
+		})
+	}
+}
+
+func TestRevokeAllSessionsReturnsRevokedSessions(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := Setup(t)
+
+	userId := model.NewId()
+
+	s1 := &model.Session{UserId: userId, ExpiresAt: model.GetMillis() + dayInMillis, DeviceId: model.NewId()}
+	s1, _ = th.Service.CreateSession(th.Context, s1)
+
+	s2 := &model.Session{UserId: userId, ExpiresAt: model.GetMillis() + dayInMillis}
+	s2, _ = th.Service.CreateSession(th.Context, s2)
+
+	sessions, err := th.Service.RevokeAllSessions(th.Context, userId)
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	require.ElementsMatch(t, []string{s1.Id, s2.Id}, []string{sessions[0].Id, sessions[1].Id})
+
+	remaining, err := th.Service.Store.Session().GetSessions(th.Context, userId)
+	require.NoError(t, err)
+	require.Empty(t, remaining)
 }

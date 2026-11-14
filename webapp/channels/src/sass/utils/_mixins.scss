@@ -1,4 +1,15 @@
-@charset "utf-8";
+// Compass's IconButton hover and active rules carry several :not() selectors, so a plain class can't override them
+// whatever order the stylesheets load in. Repeating the class adds the specificity needed without !important:
+// `#{mixins.outrank('.my-button', 2)}` gives `.my-button.my-button`.
+@function outrank($class, $times: 2) {
+    $selector: '';
+
+    @for $i from 1 through $times {
+        $selector: $selector + $class;
+    }
+
+    @return $selector;
+}
 
 @mixin file-icon($path) {
     background-image: url($path);
@@ -164,7 +175,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--denim-button-bg);
+    border: 1px solid var(--button-bg);
     border-radius: 4px;
     background: var(--center-channel-bg);
     color: var(--button-bg);
@@ -172,11 +183,11 @@
     transition: all 0.15s ease-out;
 
     &:hover {
-        background: rgba(var(--denim-button-bg-rgb), 0.08);
+        background: rgba(var(--button-bg-rgb), 0.08);
     }
 
     &:active {
-        background: rgba(var(--denim-button-bg-rgb), 0.16);
+        background: rgba(var(--button-bg-rgb), 0.16);
     }
 
     &:focus {
@@ -200,7 +211,7 @@
 @mixin button-focus {
     &:focus {
         border-width: 0;
-        box-shadow: inset 0 0 0 2px var(--sidebar-text-active-border);
+        box-shadow: 0 0 0 2px var(--sidebar-text-active-border);
     }
 
     &:focus:not(:focus-visible) {
@@ -210,7 +221,7 @@
 
     &:focus-visible {
         border-width: 0;
-        box-shadow: inset 0 0 0 2px var(--sidebar-text-active-border);
+        box-shadow: 0 0 0 2px var(--sidebar-text-active-border);
     }
 }
 
@@ -275,7 +286,7 @@
     &:focus,
     &:focus-within {
         box-sizing: border-box;
-        border: 2px solid rgba(var(--denim-button-bg-rgb), 0.32);
+        border: 2px solid rgba(var(--button-bg-rgb), 0.32);
         box-shadow: none;
         outline: none;
     }

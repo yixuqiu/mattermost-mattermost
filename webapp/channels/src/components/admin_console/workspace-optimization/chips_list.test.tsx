@@ -1,11 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import ChipsList from 'components/admin_console/workspace-optimization/chips_list';
 import type {ChipsInfoType} from 'components/admin_console/workspace-optimization/chips_list';
+
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 
 import {ItemStatus} from './dashboard.type';
 
@@ -21,14 +22,9 @@ describe('components/admin_console/workspace-optimization/chips_list', () => {
         hideCountZeroChips: false,
     };
 
-    test('should match snapshot', () => {
-        const wrapper = shallow(<ChipsList {...baseProps}/>);
-        expect(wrapper).toMatchSnapshot();
-    });
-
     test('test chips list lenght is 3 as defined in baseProps', () => {
-        const wrapper = shallow(<ChipsList {...baseProps}/>);
-        const chips = wrapper.find('Chip');
+        renderWithContext(<ChipsList {...baseProps}/>);
+        const chips = screen.getAllByRole('button');
 
         expect(chips.length).toBe(3);
     });
@@ -38,8 +34,8 @@ describe('components/admin_console/workspace-optimization/chips_list', () => {
             chipsData: {...overallScoreChips, [ItemStatus.ERROR]: 0},
             hideCountZeroChips: true,
         };
-        const wrapper = shallow(<ChipsList {...zeroErrorProps}/>);
-        const chips = wrapper.find('Chip');
+        renderWithContext(<ChipsList {...zeroErrorProps}/>);
+        const chips = screen.getAllByRole('button');
 
         expect(chips.length).toBe(2);
     });
@@ -49,8 +45,8 @@ describe('components/admin_console/workspace-optimization/chips_list', () => {
             chipsData: {...overallScoreChips, [ItemStatus.ERROR]: 0},
             hideCountZeroChips: false,
         };
-        const wrapper = shallow(<ChipsList {...zeroErrorProps}/>);
-        const chips = wrapper.find('Chip');
+        renderWithContext(<ChipsList {...zeroErrorProps}/>);
+        const chips = screen.getAllByRole('button');
 
         expect(chips.length).toBe(3);
     });

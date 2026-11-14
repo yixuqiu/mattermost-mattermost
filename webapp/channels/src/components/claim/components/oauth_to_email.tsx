@@ -2,25 +2,28 @@
 // See LICENSE.txt for license information.
 
 import classNames from 'classnames';
-import React, {useRef, useState} from 'react';
+import React, {useRef, useState, type JSX} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
 import type {AuthChangeResponse} from '@mattermost/types/users';
 
-import {oauthToEmail} from 'actions/admin_actions.jsx';
+import type {PasswordConfig} from 'mattermost-redux/selectors/entities/general';
+
+import {oauthToEmail} from 'actions/admin_actions';
 
 import Constants from 'utils/constants';
-import {isValidPassword, localizeMessage, toTitleCase} from 'utils/utils';
-import type {getPasswordConfig} from 'utils/utils';
+import {isValidPassword} from 'utils/password';
+import {toTitleCase} from 'utils/utils';
 
 import ErrorLabel from './error_label';
 
 type Props = {
-    currentType: string | null;
-    email: string | null;
+    currentType: string;
+    email: string;
     siteName?: string;
-    passwordConfig?: ReturnType<typeof getPasswordConfig>;
-}
+    passwordConfig?: PasswordConfig;
+};
 
 const OAuthToEmail = (props: Props) => {
     const intl = useIntl();
@@ -34,7 +37,7 @@ const OAuthToEmail = (props: Props) => {
 
         const password = passwordInput.current?.value;
         if (!password) {
-            setError(localizeMessage('claim.oauth_to_email.enterPwd', 'Please enter a password.'));
+            setError(intl.formatMessage({id: 'claim.oauth_to_email.enterPwd', defaultMessage: 'Please enter a password.'}));
             return;
         }
 
@@ -48,7 +51,7 @@ const OAuthToEmail = (props: Props) => {
 
         const confirmPassword = passwordConfirmInput.current?.value;
         if (!confirmPassword || password !== confirmPassword) {
-            setError(localizeMessage('claim.oauth_to_email.pwdNotMatch', 'Passwords do not match.'));
+            setError(intl.formatMessage({id: 'claim.oauth_to_email.pwdNotMatch', defaultMessage: 'Passwords do not match.'}));
             return;
         }
 
@@ -121,16 +124,16 @@ const OAuthToEmail = (props: Props) => {
                     />
                 </div>
                 <ErrorLabel errorText={error}/>
-                <button
+                <Button
                     type='submit'
-                    className='btn btn-primary'
+                    emphasis='primary'
                 >
                     <FormattedMessage
                         id='claim.oauth_to_email.switchTo'
                         defaultMessage='Switch {type} to Email and Password'
                         values={{type: uiType}}
                     />
-                </button>
+                </Button>
             </form>
         </>
     );

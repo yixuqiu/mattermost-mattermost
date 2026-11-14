@@ -2,9 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import type {ChangeEvent, ChangeEventHandler} from 'react';
-import {FormattedMessage, injectIntl, type IntlShape} from 'react-intl';
+import type {ChangeEvent, ChangeEventHandler, JSX} from 'react';
+import {defineMessage, FormattedMessage} from 'react-intl';
 
+import {ChevronLeftIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import type {CustomEmoji} from '@mattermost/types/emojis';
 
 import {deleteCustomEmoji} from 'mattermost-redux/actions/emojis';
@@ -13,9 +16,9 @@ import type {ActionResult} from 'mattermost-redux/types/actions';
 
 import EmojiListItem from 'components/emoji/emoji_list_item';
 import LoadingScreen from 'components/loading_screen';
+import LocalizedPlaceholderInput from 'components/localized_placeholder_input';
 import SaveButton from 'components/save_button';
 import NextIcon from 'components/widgets/icons/fa_next_icon';
-import PreviousIcon from 'components/widgets/icons/fa_previous_icon';
 import SearchIcon from 'components/widgets/icons/fa_search_icon';
 
 const EMOJI_PER_PAGE = 50;
@@ -32,7 +35,6 @@ export interface Props {
      * Function to scroll list to top.
      */
     scrollToTop: () => void;
-    intl: IntlShape;
     actions: {
 
         /**
@@ -56,7 +58,7 @@ interface State {
     missingPages: boolean;
 }
 
-class EmojiList extends React.PureComponent<Props, State> {
+export default class EmojiList extends React.PureComponent<Props, State> {
     private searchTimeout: NodeJS.Timeout | null;
 
     constructor(props: Props) {
@@ -235,7 +237,7 @@ class EmojiList extends React.PureComponent<Props, State> {
 
                 nextButton = (
                     <SaveButton
-                        btnClass='btn-tertiary'
+                        emphasis='tertiary'
                         extraClasses='pull-right'
                         onClick={this.nextPage}
                         saving={this.state.nextLoading}
@@ -248,16 +250,16 @@ class EmojiList extends React.PureComponent<Props, State> {
 
             if (this.state.page > 0) {
                 previousButton = (
-                    <button
-                        className='btn btn-tertiary'
+                    <Button
+                        emphasis='tertiary'
                         onClick={this.previousPage}
+                        leadingIcon={<Icon glyph={<ChevronLeftIcon/>}/>}
                     >
-                        <PreviousIcon additionalClassName='mr-2'/>
                         <FormattedMessage
                             id='filtered_user_list.prev'
                             defaultMessage='Previous'
                         />
-                    </button>
+                    </Button>
                 );
             }
         }
@@ -267,10 +269,10 @@ class EmojiList extends React.PureComponent<Props, State> {
                 <div className='backstage-filters'>
                     <div className='backstage-filter__search'>
                         <SearchIcon/>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='search'
                             className='form-control'
-                            placeholder={this.props.intl.formatMessage({id: 'emoji_list.search', defaultMessage: 'Search Custom Emoji'})}
+                            placeholder={defineMessage({id: 'emoji_list.search', defaultMessage: 'Search Custom Emoji'})}
                             onChange={this.onSearchChange}
                             style={style.search}
                         />
@@ -335,5 +337,3 @@ class EmojiList extends React.PureComponent<Props, State> {
 const style = {
     search: {flexGrow: 0, flexShrink: 0},
 };
-
-export default injectIntl(EmojiList);

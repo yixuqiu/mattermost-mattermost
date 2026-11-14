@@ -7,7 +7,6 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @custom_status
 
 import moment from 'moment-timezone';
@@ -45,7 +44,7 @@ describe('Custom Status - CTAs for New Users', () => {
     it('MM-T3851_3 should remove pulsating dot and Update your status post header after opening modal', () => {
         // # Open custom status modal and close it
         cy.get('#statusDropdownMenu .custom_status__row .pulsating_dot').click();
-        cy.get('#custom_status_modal').should('exist').get('button.close').click();
+        cy.get('#custom_status_modal').should('exist').find('button[aria-label="Close"]').click();
 
         // * Check if the post header contains "Update your status" button
         cy.get('.post.current--user .post__header').findByText('Update your status').should('not.exist');

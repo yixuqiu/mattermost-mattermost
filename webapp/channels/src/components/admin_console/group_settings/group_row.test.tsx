@@ -1,130 +1,16 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import GroupRow from 'components/admin_console/group_settings/group_row';
-import LoadingSpinner from 'components/widgets/loading/loading_spinner';
+
+import {renderWithContext, screen, waitFor, userEvent} from 'tests/react_testing_utils';
 
 describe('components/admin_console/group_settings/GroupRow', () => {
-    test('should match snapshot, on linked and configured row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id='group-id'
-                has_syncables={true}
-                checked={false}
-                failed={false}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on linked but not configured row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id='group-id'
-                has_syncables={false}
-                checked={false}
-                failed={false}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on not linked row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id={undefined}
-                has_syncables={undefined}
-                checked={false}
-                failed={false}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on checked row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id={undefined}
-                has_syncables={undefined}
-                checked={true}
-                failed={false}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on failed linked row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id='group-id'
-                has_syncables={undefined}
-                checked={false}
-                failed={true}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('should match snapshot, on failed not linked row', () => {
-        const wrapper = shallow(
-            <GroupRow
-                primary_key='primary_key'
-                name='name'
-                mattermost_group_id={undefined}
-                has_syncables={undefined}
-                checked={false}
-                failed={true}
-                onCheckToggle={jest.fn()}
-                actions={{
-                    link: jest.fn(),
-                    unlink: jest.fn(),
-                }}
-            />,
-        );
-        expect(wrapper).toMatchSnapshot();
-    });
-
-    test('onRowClick call to onCheckToggle', () => {
+    test('checkbox change calls onCheckToggle', async () => {
         const onCheckToggle = jest.fn();
-        const wrapper = shallow(
+        renderWithContext(
             <GroupRow
                 primary_key='primary_key'
                 name='name'
@@ -140,13 +26,39 @@ describe('components/admin_console/group_settings/GroupRow', () => {
             />,
         );
 
-        wrapper.find('.group').prop('onClick')?.({} as unknown as React.MouseEvent);
+        await userEvent.click(screen.getByRole('checkbox', {name: 'name'}));
         expect(onCheckToggle).toHaveBeenCalledWith('primary_key');
+    });
+
+    test('link action is not swallowed by checkbox selection', async () => {
+        const onCheckToggle = jest.fn();
+        const link = jest.fn().mockReturnValue(Promise.resolve());
+        renderWithContext(
+            <GroupRow
+                primary_key='primary_key'
+                name='name'
+                mattermost_group_id={undefined}
+                has_syncables={undefined}
+                checked={false}
+                failed={false}
+                onCheckToggle={onCheckToggle}
+                actions={{
+                    link,
+                    unlink: jest.fn(),
+                }}
+            />,
+        );
+
+        await userEvent.click(screen.getByText('Not Linked'));
+        await waitFor(() => {
+            expect(link).toHaveBeenCalledWith('primary_key');
+        });
+        expect(onCheckToggle).not.toHaveBeenCalled();
     });
 
     test('linkHandler must run the link action', async () => {
         const link = jest.fn().mockReturnValue(Promise.resolve());
-        const wrapper = shallow(
+        renderWithContext(
             <GroupRow
                 primary_key='primary_key'
                 name='name'
@@ -162,14 +74,16 @@ describe('components/admin_console/group_settings/GroupRow', () => {
             />,
         );
 
-        await wrapper.find('a').prop('onClick')?.({stopPropagation: jest.fn(), preventDefault: jest.fn()} as unknown as React.MouseEvent);
-        expect(wrapper.find(LoadingSpinner).exists()).toBe(false);
-        expect(link).toHaveBeenCalledWith('primary_key');
+        await userEvent.click(screen.getByText('Not Linked'));
+        await waitFor(() => {
+            expect(link).toHaveBeenCalledWith('primary_key');
+        });
+        expect(screen.queryByText('Linking')).not.toBeInTheDocument();
     });
 
     test('unlinkHandler must run the unlink action', async () => {
         const unlink = jest.fn().mockReturnValue(Promise.resolve());
-        const wrapper = shallow(
+        renderWithContext(
             <GroupRow
                 primary_key='primary_key'
                 name='name'
@@ -185,8 +99,10 @@ describe('components/admin_console/group_settings/GroupRow', () => {
             />,
         );
 
-        await wrapper.find('a').prop('onClick')?.({stopPropagation: jest.fn(), preventDefault: jest.fn()} as unknown as React.MouseEvent);
-        expect(wrapper.find(LoadingSpinner).exists()).toBe(false);
-        expect(unlink).toHaveBeenCalledWith('primary_key');
+        await userEvent.click(screen.getByText('Linked'));
+        await waitFor(() => {
+            expect(unlink).toHaveBeenCalledWith('primary_key');
+        });
+        expect(screen.queryByText('Unlinking')).not.toBeInTheDocument();
     });
 });

@@ -3,54 +3,52 @@
 
 import React, {memo} from 'react';
 
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
-
-import Constants from 'utils/constants';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 export type TableItem = {
     name: string;
     tip: string;
     value: React.ReactNode;
-}
+};
 type Props = {
     title: React.ReactNode;
     data: TableItem[];
-}
+    id?: string;
+};
 
 const TableChart = ({
     title,
     data,
+    id,
 }: Props) => (
     <div className='col-sm-6'>
-        <div className='total-count recent-active-users'>
-            <div className='title'>
+        <div
+            data-testid={id ? id + 'Chart' : undefined}
+            className='total-count recent-active-users'
+        >
+            <div
+                data-testid={id ? id + 'Title' : undefined}
+                className='title'
+            >
                 {title}
             </div>
-            <div className='content'>
+            <div
+                data-testid={id ? id + 'Content' : undefined}
+                className='content'
+            >
                 <table>
                     <tbody>
                         {
                             data.map((item) => (
                                 <tr key={'table-entry-' + item.name}>
                                     <td>
-                                        <OverlayTrigger
-                                            delayShow={Constants.OVERLAY_TIME_DELAY}
-                                            placement='top'
-                                            overlay={(
-                                                <Tooltip id={'tip-table-entry-' + item.name}>
-                                                    {item.tip}
-                                                </Tooltip>
-                                            )}
+                                        <WithTooltip
+                                            title={item.tip}
                                         >
-                                            <time>
-                                                {item.name}
-                                            </time>
-                                        </OverlayTrigger>
+                                            <span>{item.name}</span>
+                                        </WithTooltip>
                                     </td>
-                                    <td>
-                                        {item.value}
-                                    </td>
+                                    <td>{item.value}</td>
                                 </tr>
                             ))
                         }

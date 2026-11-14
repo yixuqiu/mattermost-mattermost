@@ -1,18 +1,19 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useCallback} from 'react';
+import {defineMessage, useIntl} from 'react-intl';
 
 import type {Channel} from '@mattermost/types/channels';
 
-import {trackEvent} from 'actions/telemetry_actions';
-
 import LeaveChannelModal from 'components/leave_channel_modal';
-import SharedChannelIndicator from 'components/shared_channel_indicator';
 import SidebarChannelLink from 'components/sidebar/sidebar_channel/sidebar_channel_link';
 
+import {useChannelKind} from 'hooks/useChannelKind';
+import type {KindMessages} from 'utils/channel_kind';
 import Constants, {ModalIdentifiers} from 'utils/constants';
-import {localizeMessage} from 'utils/utils';
+
+import SidebarBaseChannelIcon from './sidebar_base_channel_icon';
 
 import type {PropsFromRedux} from './index';
 
@@ -21,74 +22,78 @@ export interface Props extends PropsFromRedux {
     currentTeamName: string;
 }
 
-export default class SidebarBaseChannel extends React.PureComponent<Props> {
-    handleLeavePublicChannel = (callback: () => void) => {
-        this.props.actions.leaveChannel(this.props.channel.id);
-        trackEvent('ui', 'ui_public_channel_x_button_clicked');
+const SidebarBaseChannel = ({
+    channel,
+    currentTeamName,
+    actions,
+}: Props) => {
+    const intl = useIntl();
+    const channelKind = useChannelKind(channel);
+
+    const handleLeavePublicChannel = useCallback((callback: () => void) => {
+        actions.leaveChannel(channel.id);
         callback();
-    };
+    }, [channel.id, actions.leaveChannel]);
 
-    handleLeavePrivateChannel = (callback: () => void) => {
-        this.props.actions.openModal({modalId: ModalIdentifiers.LEAVE_PRIVATE_CHANNEL_MODAL, dialogType: LeaveChannelModal, dialogProps: {channel: this.props.channel}});
-        trackEvent('ui', 'ui_private_channel_x_button_clicked');
+    const handleLeaveWithConfirmation = useCallback((callback: () => void) => {
+        actions.openModal({modalId: ModalIdentifiers.LEAVE_PRIVATE_CHANNEL_MODAL, dialogType: LeaveChannelModal, dialogProps: {channel}});
         callback();
-    };
+    }, [channel, actions.openModal]);
 
-    getChannelLeaveHandler = () => {
-        const {channel} = this.props;
-
-        if (channel.type === Constants.OPEN_CHANNEL && channel.name !== Constants.DEFAULT_CHANNEL) {
-            return this.handleLeavePublicChannel;
-        } else if (channel.type === Constants.PRIVATE_CHANNEL) {
-            return this.handleLeavePrivateChannel;
-        }
-
-        return null;
-    };
-
-    getIcon = () => {
-        const {channel} = this.props;
-
-        if (channel.shared) {
-            return (
-                <SharedChannelIndicator
-                    className='icon'
-                    channelType={channel.type}
-                    withTooltip={true}
-                />
-            );
-        } else if (channel.type === Constants.OPEN_CHANNEL) {
-            return (
-                <i className='icon icon-globe'/>
-            );
-        } else if (channel.type === Constants.PRIVATE_CHANNEL) {
-            return (
-                <i className='icon icon-lock-outline'/>
-            );
-        }
-
-        return null;
-    };
-
-    render() {
-        const {channel, currentTeamName} = this.props;
-
-        let ariaLabelPrefix;
-        if (channel.type === Constants.OPEN_CHANNEL) {
-            ariaLabelPrefix = localizeMessage('accessibility.sidebar.types.public', 'public channel');
-        } else if (channel.type === Constants.PRIVATE_CHANNEL) {
-            ariaLabelPrefix = localizeMessage('accessibility.sidebar.types.private', 'private channel');
-        }
-
-        return (
-            <SidebarChannelLink
-                channel={channel}
-                link={`/${currentTeamName}/channels/${channel.name}`}
-                label={channel.display_name}
-                ariaLabelPrefix={ariaLabelPrefix}
-                channelLeaveHandler={this.getChannelLeaveHandler()!}
-                icon={this.getIcon()!}
-            />
-        );
+    let channelLeaveHandler = null;
+    if (channel.type === Constants.OPEN_CHANNEL && channel.name !== Constants.DEFAULT_CHANNEL) {
+        channelLeaveHandler = channel.policy_enforced ? handleLeaveWithConfirmation : handleLeavePublicChannel;
+    } else if (channel.type === Constants.PRIVATE_CHANNEL) {
+        channelLeaveHandler = handleLeaveWithConfirmation;
     }
-}
+
+    const channelIcon = (
+        <SidebarBaseChannelIcon
+            channel={channel}
+        />
+    );
+
+    let ariaLabelPrefix;
+    if (channel.type === Constants.OPEN_CHANNEL) {
+        ariaLabelPrefix = intl.formatMessage(messages.publicType[channelKind]);
+    } else if (channel.type === Constants.PRIVATE_CHANNEL) {
+        ariaLabelPrefix = intl.formatMessage(messages.privateType[channelKind]);
+    }
+
+    return (
+        <SidebarChannelLink
+            channel={channel}
+            link={`/${currentTeamName}/channels/${channel.name}`}
+            label={channel.display_name}
+            ariaLabelPrefix={ariaLabelPrefix}
+            channelLeaveHandler={channelLeaveHandler!}
+            icon={channelIcon}
+            isSharedChannel={channel.shared}
+        />
+    );
+};
+
+const messages = {
+    publicType: {
+        channel: defineMessage({
+            id: 'accessibility.sidebar.types.public',
+            defaultMessage: 'public channel',
+        }),
+        board: defineMessage({
+            id: 'accessibility.sidebar.types.public.board',
+            defaultMessage: 'public board',
+        }),
+    },
+    privateType: {
+        channel: defineMessage({
+            id: 'accessibility.sidebar.types.private',
+            defaultMessage: 'private channel',
+        }),
+        board: defineMessage({
+            id: 'accessibility.sidebar.types.private.board',
+            defaultMessage: 'private board',
+        }),
+    },
+} satisfies Record<string, KindMessages>;
+
+export default SidebarBaseChannel;

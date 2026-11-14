@@ -4,10 +4,16 @@
 package commands
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -25,9 +31,6 @@ func Run(args []string) error {
 
 	RootCmd.PersistentFlags().String("config", filepath.Join(xdgConfigHomeVar, configParent, configFileName), "path to the configuration file")
 	_ = viper.BindPFlag("config", RootCmd.PersistentFlags().Lookup("config"))
-	RootCmd.PersistentFlags().String("config-path", xdgConfigHomeVar, "path to the configuration directory.")
-	_ = viper.BindPFlag("config-path", RootCmd.PersistentFlags().Lookup("config-path"))
-	_ = RootCmd.PersistentFlags().MarkHidden("config-path")
 	RootCmd.PersistentFlags().Bool("suppress-warnings", false, "disables printing warning messages")
 	_ = viper.BindPFlag("suppress-warnings", RootCmd.PersistentFlags().Lookup("suppress-warnings"))
 	RootCmd.PersistentFlags().String("format", "plain", "the format of the command output [plain, json]")
@@ -56,15 +59,49 @@ func Run(args []string) error {
 
 	defer func() {
 		if x := recover(); x != nil {
-			printer.PrintError("Uh oh! Something unexpected happened :( Would you mind reporting it?\n")
-			printer.PrintError(`https://github.com/mattermost/mmctl/issues/new?title=%5Bbug%5D%20panic%20on%20mmctl%20v` + Version + "&body=%3C!---%20Please%20provide%20the%20stack%20trace%20--%3E\n")
-			printer.PrintError(string(debug.Stack()))
+			printPanic(x)
 
+			_ = printer.Flush()
 			os.Exit(1)
 		}
 	}()
 
-	return RootCmd.Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Restore default signal handling on the first signal so a second one kills a command that ignores ctx.
+	context.AfterFunc(ctx, stop)
+
+	err := RootCmd.ExecuteContext(ctx)
+	stop()
+
+	return finishExecute(err)
+}
+
+// finishExecute flushes the printer and prints any error other than a graceful
+// cancellation, returning err unchanged so the caller can still act on it.
+func finishExecute(err error) error {
+	_ = printer.Flush()
+	if err != nil && !errors.Is(err, context.Canceled) {
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+	}
+
+	return err
+}
+
+func printPanic(x any) {
+	u, err := url.Parse("https://github.com/mattermost/mattermost/issues/new")
+	if err != nil {
+		panic(err)
+	}
+
+	q := u.Query()
+	q.Add("title", "[mmctl] [bug] panic on v"+Version)
+	q.Add("body", "<!--- Please provide the stack trace -->\n")
+	u.RawQuery = q.Encode()
+
+	printer.PrintError("Uh oh! Something unexpected happened :( Would you mind reporting it?")
+	printer.PrintError(u.String() + "\n")
+	printer.PrintError(fmt.Sprintf("%s", x))
+	printer.PrintError(string(debug.Stack()))
 }
 
 var RootCmd = &cobra.Command{
@@ -90,9 +127,12 @@ var RootCmd = &cobra.Command{
 		}
 		quiet := viper.GetBool("quiet")
 		printer.SetQuiet(quiet)
+
+		perPage, err := cmd.Flags().GetInt("per-page")
+		if err == nil && perPage > MaxPageSize {
+			printer.PrintError(fmt.Sprintf("Per page value is greater than the maximum allowed. Mattermost might only return %d items.", MaxPageSize))
+		}
 	},
-	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		_ = printer.Flush()
-	},
-	SilenceUsage: true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }

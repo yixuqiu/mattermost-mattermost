@@ -4,46 +4,36 @@
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import KeyboardShortcutSequence, {KEYBOARD_SHORTCUTS} from 'components/keyboard_shortcuts/keyboard_shortcuts_sequence';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
+import {
+    ArrowBackIosIcon,
+    ArrowCollapseIcon,
+    ArrowExpandIcon,
+    CloseIcon,
+} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
-import Constants, {RHSStates} from 'utils/constants';
+import KeyboardShortcutSequence, {KEYBOARD_SHORTCUTS} from 'components/keyboard_shortcuts/keyboard_shortcuts_sequence';
+import PopoutButton from 'components/popout_button';
+
+import {RHSStates} from 'utils/constants';
+import {isChannelPopoutWindow, isPopoutWindow} from 'utils/popouts/popout_windows';
 
 import type {PropsFromRedux} from './index';
 
 export interface Props extends PropsFromRedux {
     children: React.ReactNode;
+    newWindowHandler?: () => void;
 }
 
 function SearchResultsHeader(props: Props) {
     const {formatMessage} = useIntl();
 
-    const closeSidebarTooltip = (
-        <Tooltip id='closeSidebarTooltip'>
-            <FormattedMessage
-                id='rhs_header.closeSidebarTooltip'
-                defaultMessage='Close'
-            />
-        </Tooltip>
-    );
+    const showExpand = props.previousRhsState !== RHSStates.CHANNEL_INFO;
 
-    const expandSidebarTooltip = (
-        <Tooltip id='expandSidebarTooltip'>
-            <FormattedMessage
-                id='rhs_header.expandSidebarTooltip'
-                defaultMessage='Expand the right sidebar'
-            />
-            <KeyboardShortcutSequence
-                shortcut={KEYBOARD_SHORTCUTS.navExpandSidebar}
-                hideDescription={true}
-                isInsideTooltip={true}
-            />
-        </Tooltip>
-    );
-
-    const shrinkSidebarTooltip = (
-        <Tooltip id='shrinkSidebarTooltip'>
+    const sidebarTooltipContent = props.isExpanded ? (
+        <>
             <FormattedMessage
                 id='rhs_header.collapseSidebarTooltip'
                 defaultMessage='Collapse the right sidebar'
@@ -53,66 +43,76 @@ function SearchResultsHeader(props: Props) {
                 hideDescription={true}
                 isInsideTooltip={true}
             />
-        </Tooltip>
+        </>
+    ) : (
+        <>
+            <FormattedMessage
+                id='rhs_header.expandSidebarTooltip'
+                defaultMessage='Expand the right sidebar'
+            />
+            <KeyboardShortcutSequence
+                shortcut={KEYBOARD_SHORTCUTS.navExpandSidebar}
+                hideDescription={true}
+                isInsideTooltip={true}
+            />
+        </>
     );
 
-    const showExpand = props.previousRhsState !== RHSStates.CHANNEL_INFO;
+    const expandOrCollapseSidebarButtonAriaLabel = props.isExpanded ? formatMessage({id: 'rhs_header.collapseSidebarTooltip.icon', defaultMessage: 'Collapse Sidebar Icon'}) : formatMessage({id: 'rhs_header.expandSidebarTooltip.icon', defaultMessage: 'Expand Sidebar Icon'});
 
     return (
         <div className='sidebar--right__header'>
-            <span className='sidebar--right__title'>
+            <span
+                className='sidebar--right__title'
+                id='rhsPanelTitle'
+            >
                 {props.canGoBack && (
-                    <button
-                        className='sidebar--right__back btn btn-icon btn-sm'
-                        onClick={props.actions.goBack}
-                        aria-label={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}
-                    >
-                        <i className='icon icon-arrow-back-ios'/>
-                    </button>
+                    <WithTooltip title={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}>
+                        <IconButton
+                            size='small'
+                            className='sidebar--right__back'
+                            icon={<Icon glyph={<ArrowBackIosIcon/>}/>}
+                            onClick={props.actions.goBack}
+                            aria-label={formatMessage({id: 'rhs_header.back.icon', defaultMessage: 'Back Icon'})}
+                        />
+                    </WithTooltip>
                 )}
                 {props.children}
             </span>
             <div className='pull-right'>
-                {showExpand && (
-                    <OverlayTrigger
-                        delayShow={Constants.OVERLAY_TIME_DELAY}
-                        placement='bottom'
-                        overlay={props.isExpanded ? shrinkSidebarTooltip : expandSidebarTooltip}
-                    >
-                        <button
-                            type='button'
-                            className='sidebar--right__expand btn btn-icon btn-sm'
+                {showExpand && !isPopoutWindow() && (
+                    <WithTooltip title={sidebarTooltipContent}>
+                        <IconButton
+                            size='small'
+                            className='sidebar--right__expand'
+                            icon={<Icon glyph={props.isExpanded ? <ArrowCollapseIcon/> : <ArrowExpandIcon/>}/>}
                             onClick={props.actions.toggleRhsExpanded}
-                        >
-                            <i
-                                className='icon icon-arrow-expand'
-                                aria-label={formatMessage({id: 'rhs_header.expandSidebarTooltip.icon', defaultMessage: 'Expand Sidebar Icon'})}
-                            />
-                            <i
-                                className='icon icon-arrow-collapse'
-                                aria-label={formatMessage({id: 'rhs_header.collapseSidebarTooltip.icon', defaultMessage: 'Collapse Sidebar Icon'})}
-                            />
-                        </button>
-                    </OverlayTrigger>
-                )}
-                <OverlayTrigger
-                    delayShow={Constants.OVERLAY_TIME_DELAY}
-                    placement='top'
-                    overlay={closeSidebarTooltip}
-                >
-                    <button
-                        id='searchResultsCloseButton'
-                        type='button'
-                        className='sidebar--right__close btn btn-icon btn-sm'
-                        aria-label='Close'
-                        onClick={props.actions.closeRightHandSide}
-                    >
-                        <i
-                            className='icon icon-close'
-                            aria-label={formatMessage({id: 'rhs_header.closeTooltip.icon', defaultMessage: 'Close Sidebar Icon'})}
+                            aria-label={expandOrCollapseSidebarButtonAriaLabel}
                         />
-                    </button>
-                </OverlayTrigger>
+                    </WithTooltip>
+                )}
+                {props.newWindowHandler && (
+                    <PopoutButton onClick={props.newWindowHandler}/>
+                )}
+                {(!isPopoutWindow() || isChannelPopoutWindow()) &&
+                    <WithTooltip
+                        title={
+                            <FormattedMessage
+                                id='rhs_header.closeSidebarTooltip'
+                                defaultMessage='Close'
+                            />
+                        }
+                    >
+                        <IconButton
+                            id='searchResultsCloseButton'
+                            size='small'
+                            className='sidebar--right__close'
+                            icon={<Icon glyph={<CloseIcon/>}/>}
+                            aria-label={formatMessage({id: 'generic.close', defaultMessage: 'Close'})}
+                            onClick={props.actions.closeRightHandSide}
+                        />
+                    </WithTooltip>
+                }
             </div>
         </div>
     );

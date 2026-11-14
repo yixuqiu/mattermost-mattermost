@@ -19,7 +19,7 @@ const professionalPaidFeatures = [
 
 const enterprisePaidFeatures = [
     {sidebarName: 'Groups', featureDiscoveryTitle: 'Active Directory/LDAP groups'},
-    {sidebarName: 'System Roles', featureDiscoveryTitle: 'controlled access to the System Console'},
+    {sidebarName: 'Delegated Granular Administration', featureDiscoveryTitle: 'controlled access to the System Console'},
     {sidebarName: 'Data Retention Policy', featureDiscoveryTitle: 'Create data retention schedules with Mattermost Enterprise'},
     {sidebarName: 'Compliance Export', featureDiscoveryTitle: 'Run compliance exports with Mattermost Enterprise'},
     {sidebarName: 'Custom Terms of Service', featureDiscoveryTitle: 'Create custom terms of service with Mattermost Enterprise'},
@@ -76,7 +76,7 @@ describe('Feature discovery cloud', () => {
         withTrialBefore('false');
         [...professionalPaidFeatures, ...enterprisePaidFeatures].forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             testForTrialButton();
         });
     });
@@ -92,7 +92,7 @@ describe('Feature discovery cloud', () => {
         withTrialBefore('false');
         professionalPaidFeatures.forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             testForUpgradeToProfessionalOption();
         });
     });
@@ -108,7 +108,7 @@ describe('Feature discovery cloud', () => {
         withTrialBefore('false');
         enterprisePaidFeatures.forEach(({sidebarName, featureDiscoveryTitle}) => {
             cy.get('li').contains(sidebarName).click();
-            cy.get("div[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
+            cy.get("[data-testid='featureDiscovery_title']").should('contain', featureDiscoveryTitle);
             cy.get("button[data-testid='featureDiscovery_primaryCallToAction']").should('contain', 'Contact sales');
         });
     });

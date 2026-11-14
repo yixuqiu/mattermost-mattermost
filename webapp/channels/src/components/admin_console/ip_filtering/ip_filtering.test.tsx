@@ -1,8 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {render, fireEvent, waitFor, screen} from '@testing-library/react';
-import React from 'react';
+import React, {type JSX} from 'react';
 import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {BrowserRouter as Router} from 'react-router-dom';
@@ -15,6 +14,8 @@ import {Client4} from 'mattermost-redux/client';
 import configureStore from 'store';
 
 import ModalController from 'components/modal_controller';
+
+import {fireEvent, render, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 
 import IPFiltering from './index';
 
@@ -95,14 +96,13 @@ describe('IPFiltering', () => {
         render(wrapWithIntlProviderAndStore(<IPFiltering/>));
 
         await waitFor(() => {
-            expect(screen.getByTestId('filterToggle-button')).toBeInTheDocument();
-            expect(screen.getByRole('button', {pressed: true})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: true})).toBeInTheDocument();
         });
 
-        fireEvent.click(screen.getByTestId('filterToggle-button'));
+        await userEvent.click(screen.getByRole('switch'));
 
         await waitFor(() => {
-            expect(screen.getByRole('button', {pressed: false})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: false})).toBeInTheDocument();
         });
     });
 
@@ -113,15 +113,17 @@ describe('IPFiltering', () => {
             expect(getByText('Add Filter')).toBeInTheDocument();
         });
 
-        fireEvent.click(getByText('Add Filter'));
+        await userEvent.click(getByText('Add Filter'));
 
         const descriptionInput = getByLabelText('Enter a name for this rule');
         const cidrInput = getByLabelText('Enter IP Range');
         const saveButton = screen.getByTestId('save-add-edit-button');
 
-        fireEvent.change(cidrInput, {target: {value: '192.168.0.0/16'}});
-        fireEvent.change(descriptionInput, {target: {value: 'Test IP Filter 2'}});
-        fireEvent.click(saveButton);
+        await userEvent.clear(cidrInput);
+        await userEvent.type(cidrInput, '192.168.0.0/16');
+        await userEvent.clear(descriptionInput);
+        await userEvent.type(descriptionInput, 'Test IP Filter 2');
+        await userEvent.click(saveButton);
 
         await waitFor(() => {
             expect(getByText('Test IP Filter 2')).toBeInTheDocument();
@@ -136,8 +138,8 @@ describe('IPFiltering', () => {
             expect(getByText('Test IP Filter')).toBeInTheDocument();
         });
 
-        fireEvent.mouseEnter(screen.getByText('Test IP Filter'));
-        fireEvent.click(screen.getByRole('button', {
+        await userEvent.hover(screen.getByText('Test IP Filter'));
+        await userEvent.click(screen.getByRole('button', {
             name: /Edit/i,
         }));
 
@@ -145,9 +147,11 @@ describe('IPFiltering', () => {
         const cidrInput = getByLabelText('Enter IP Range');
         const saveButton = screen.getByTestId('save-add-edit-button');
 
-        fireEvent.change(cidrInput, {target: {value: '192.168.0.0/16'}});
-        fireEvent.change(descriptionInput, {target: {value: 'zzzzzfilter'}});
-        fireEvent.click(saveButton);
+        await userEvent.clear(cidrInput);
+        await userEvent.type(cidrInput, '192.168.0.0/16');
+        await userEvent.clear(descriptionInput);
+        await userEvent.type(descriptionInput, 'zzzzzfilter');
+        await userEvent.click(saveButton);
 
         await waitFor(() => {
             expect(getByText('zzzzzfilter')).toBeInTheDocument();
@@ -165,14 +169,14 @@ describe('IPFiltering', () => {
             expect(getByText('Test IP Filter')).toBeInTheDocument();
         });
 
-        fireEvent.mouseEnter(screen.getByText('Test IP Filter'));
-        fireEvent.click(screen.getByRole('button', {
+        await userEvent.hover(screen.getByText('Test IP Filter'));
+        await userEvent.click(screen.getByRole('button', {
             name: /Delete/i,
         }));
 
         const confirmButton = getByText('Delete filter');
 
-        fireEvent.click(confirmButton);
+        await userEvent.click(confirmButton);
 
         await waitFor(() => {
             expect(queryByText('Test IP Filter')).not.toBeInTheDocument();
@@ -183,22 +187,21 @@ describe('IPFiltering', () => {
         const {getByText, queryByText} = render(wrapWithIntlProviderAndStore(<IPFiltering/>));
 
         await waitFor(() => {
-            expect(screen.getByTestId('filterToggle-button')).toBeInTheDocument();
-            expect(screen.getByRole('button', {pressed: true})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: true})).toBeInTheDocument();
         });
 
-        fireEvent.click(screen.getByTestId('filterToggle-button'));
+        await userEvent.click(screen.getByRole('switch'));
 
         await waitFor(() => {
-            expect(screen.getByRole('button', {pressed: false})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: false})).toBeInTheDocument();
         });
 
         await waitFor(() => {
             expect(queryByText('Test IP Filter')).not.toBeInTheDocument();
         });
 
-        fireEvent.click(getByText('Save'));
-        fireEvent.click(screen.getByTestId('save-confirmation-button'));
+        await userEvent.click(getByText('Save'));
+        await userEvent.click(screen.getByTestId('save-confirmation-button'));
 
         await waitFor(() => {
             expect(applyIPFiltersMock).toHaveBeenCalledTimes(1);
@@ -212,8 +215,8 @@ describe('IPFiltering', () => {
             expect(getByText('Test IP Filter')).toBeInTheDocument();
         });
 
-        fireEvent.mouseEnter(screen.getByText('Test IP Filter'));
-        fireEvent.click(screen.getByRole('button', {
+        await userEvent.hover(screen.getByText('Test IP Filter'));
+        await userEvent.click(screen.getByRole('button', {
             name: /Edit/i,
         }));
 
@@ -221,9 +224,11 @@ describe('IPFiltering', () => {
         const cidrInput = getByLabelText('Enter IP Range');
         const saveButton = screen.getByTestId('save-add-edit-button');
 
-        fireEvent.change(cidrInput, {target: {value: '192.168.0.0/16'}});
-        fireEvent.change(descriptionInput, {target: {value: 'zzzzzfilter'}});
-        fireEvent.click(saveButton);
+        await userEvent.clear(cidrInput);
+        await userEvent.type(cidrInput, '192.168.0.0/16');
+        await userEvent.clear(descriptionInput);
+        await userEvent.type(descriptionInput, 'zzzzzfilter');
+        await userEvent.click(saveButton);
 
         await waitFor(() => {
             expect(getByText('zzzzzfilter')).toBeInTheDocument();
@@ -243,14 +248,14 @@ describe('IPFiltering', () => {
         const {getByText, queryByText} = render(wrapWithIntlProviderAndStore(<IPFiltering/>));
 
         await waitFor(() => {
-            expect(screen.getByTestId('filterToggle-button')).toBeInTheDocument();
-            expect(screen.getByRole('button', {pressed: true})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: true})).toBeInTheDocument();
         });
 
-        fireEvent.click(screen.getByTestId('filterToggle-button'));
+        // Use fireEvent.click here because userEvent doesn't work well with fake timers
+        fireEvent.click(screen.getByRole('switch'));
 
         await waitFor(() => {
-            expect(screen.getByRole('button', {pressed: false})).toBeInTheDocument();
+            expect(screen.getByRole('switch', {checked: false})).toBeInTheDocument();
         });
 
         await waitFor(() => {

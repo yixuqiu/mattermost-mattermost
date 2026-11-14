@@ -4,7 +4,7 @@
 package remotecluster
 
 import (
-	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -17,9 +17,11 @@ import (
 )
 
 type mockServer struct {
-	remotes []*model.RemoteCluster
-	logger  *mlog.Logger
-	user    *model.User
+	remotes     []*model.RemoteCluster
+	logger      *mlog.Logger
+	user        *model.User
+	customStore store.Store // if set, GetStore() returns this instead of creating default
+	metrics     einterfaces.MetricsInterface
 }
 
 func newMockServer(t *testing.T, remotes []*model.RemoteCluster) *mockServer {
@@ -31,12 +33,23 @@ func newMockServer(t *testing.T, remotes []*model.RemoteCluster) *mockServer {
 	}
 }
 
+// newMockServerWithStore creates a mockServer with a custom store for fine-grained test control.
+// Use this when you need to mock specific store behaviors that aren't covered by the default.
+func newMockServerWithStore(t *testing.T, customStore store.Store) *mockServer {
+	logger := mlog.CreateConsoleTestLogger(t)
+
+	return &mockServer{
+		logger:      logger,
+		customStore: customStore,
+	}
+}
+
 func (ms *mockServer) SetUser(user *model.User) {
 	ms.user = user
 }
 
 func (ms *mockServer) Config() *model.Config                                  { return nil }
-func (ms *mockServer) GetMetrics() einterfaces.MetricsInterface               { return nil }
+func (ms *mockServer) GetMetrics() einterfaces.MetricsInterface               { return ms.metrics }
 func (ms *mockServer) IsLeader() bool                                         { return true }
 func (ms *mockServer) AddClusterLeaderChangedListener(listener func()) string { return model.NewId() }
 func (ms *mockServer) RemoveClusterLeaderChangedListener(id string)           {}
@@ -44,6 +57,12 @@ func (ms *mockServer) Log() *mlog.Logger {
 	return ms.logger
 }
 func (ms *mockServer) GetStore() store.Store {
+	// If a custom store was provided, use it (for unit tests with fine-grained control)
+	if ms.customStore != nil {
+		return ms.customStore
+	}
+
+	// Otherwise, return the default pre-configured store (for integration-style tests)
 	anyQueryFilter := mock.MatchedBy(func(filter model.RemoteClusterQueryFilter) bool {
 		return true
 	})
@@ -52,11 +71,11 @@ func (ms *mockServer) GetStore() store.Store {
 
 	remoteClusterStoreMock := &mocks.RemoteClusterStore{}
 	remoteClusterStoreMock.On("GetByTopic", "share").Return(ms.remotes, nil)
-	remoteClusterStoreMock.On("GetAll", anyQueryFilter).Return(ms.remotes, nil)
+	remoteClusterStoreMock.On("GetAll", 0, 999999, anyQueryFilter).Return(ms.remotes, nil)
 	remoteClusterStoreMock.On("SetLastPingAt", anyId).Return(nil)
 
 	userStoreMock := &mocks.UserStore{}
-	userStoreMock.On("Get", context.Background(), anyUserId).Return(ms.user, nil)
+	userStoreMock.On("Get", mock.Anything, anyUserId).Return(ms.user, nil)
 
 	storeMock := &mocks.Store{}
 	storeMock.On("RemoteCluster").Return(remoteClusterStoreMock)
@@ -84,11 +103,9 @@ func (ma *mockApp) OnSharedChannelsPing(rc *model.RemoteCluster) bool {
 	ma.mux.Lock()
 	defer ma.mux.Unlock()
 
-	for _, id := range ma.offlinePluginIDs {
-		if rc.PluginID == id {
-			ma.totalPingErrors++
-			return false
-		}
+	if slices.Contains(ma.offlinePluginIDs, rc.PluginID) {
+		ma.totalPingErrors++
+		return false
 	}
 
 	ma.totalPingCount++

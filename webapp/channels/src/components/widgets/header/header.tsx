@@ -3,7 +3,7 @@
 
 import classNames from 'classnames';
 import React, {Fragment} from 'react';
-import type {ReactNode, HTMLAttributes} from 'react';
+import type {HTMLAttributes, JSX, ReactNode} from 'react';
 
 import './header.scss';
 
@@ -27,7 +27,7 @@ const Header = ({
 }: Props & HTMLAttributes<HTMLElement>) => {
     const H = Headings[level];
     return (
-        <header
+        <div
             {...attrs}
             className={classNames('Header', attrs.className)}
         >
@@ -37,7 +37,7 @@ const Header = ({
             </div>
             <div className='spacer'/>
             {right}
-        </header>
+        </div>
     );
 };
 

@@ -1,15 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {mount, shallow} from 'enzyme';
 import React from 'react';
-import {Provider} from 'react-redux';
 
 import type {DeepPartial} from '@mattermost/types/utilities';
 
-import ExternalImage from 'components/external_image';
-
-import mockStore from 'tests/test_store';
+import {fireEvent, renderWithContext, screen, userEvent} from 'tests/react_testing_utils';
 
 import type {GlobalState} from 'types/store';
 
@@ -47,22 +43,31 @@ describe('YoutubeVideo', () => {
         },
     };
 
-    test('should match init snapshot', () => {
-        const store = mockStore(initialState);
-        const wrapper = mount(
-            <Provider store={store}>
-                <YoutubeVideo {...baseProps}/>
-            </Provider>,
+    test('should render', () => {
+        const {container} = renderWithContext(
+            <YoutubeVideo {...baseProps}/>,
+            initialState,
         );
-        expect(wrapper).toMatchSnapshot();
-        expect(wrapper.find(ExternalImage).prop('src')).toEqual('linkForThumbnail');
-        expect(wrapper.find('a').text()).toEqual('Youtube title');
+
+        // Verify that maxresdefault thumbnail is used by default (useMaxResThumbnail = true)
+        expect(container.querySelector('.video-thumbnail')).toHaveAttribute(
+            'src',
+            'https://img.youtube.com/vi/xqCoNej8Zxo/maxresdefault.jpg',
+        );
+        expect(screen.getByRole('heading', {level: 4})).toHaveTextContent('YouTube - Youtube title');
     });
 
-    test('should match snapshot for playing state', () => {
-        const wrapper = shallow(<YoutubeVideo {...baseProps}/>);
-        wrapper.setState({playing: true});
-        expect(wrapper).toMatchSnapshot();
+    test('should send the origin as referrer to the embedded player so YouTube does not reject it', async () => {
+        renderWithContext(
+            <YoutubeVideo {...baseProps}/>,
+            initialState,
+        );
+
+        await userEvent.click(screen.getByRole('button', {name: /Play Youtube title on YouTube/}));
+
+        const iframe = screen.getByTitle('Youtube title');
+        expect(iframe).toHaveAttribute('referrerPolicy', 'strict-origin-when-cross-origin');
+        expect(iframe).toHaveAttribute('src', 'https://www.youtube.com/embed/xqCoNej8Zxo?autoplay=1&rel=0&fs=1&enablejsapi=1');
     });
 
     test('should use url if secure_url is not present', () => {
@@ -75,8 +80,56 @@ describe('YoutubeVideo', () => {
                 }],
             },
         };
-        const wrapper = shallow(<YoutubeVideo {...props}/>);
+        const {container} = renderWithContext(
+            <YoutubeVideo {...props}/>,
+            initialState,
+        );
 
-        expect(wrapper.find(ExternalImage).prop('src')).toEqual('linkUrl');
+        // Verify that maxresdefault thumbnail is used by default (useMaxResThumbnail = true)
+        expect(container.querySelector('.video-thumbnail')).toHaveAttribute(
+            'src',
+            'https://img.youtube.com/vi/xqCoNej8Zxo/maxresdefault.jpg',
+        );
+    });
+
+    describe('thumbnail fallback', () => {
+        it('should fallback to hqdefault.jpg on image error', () => {
+            const {container} = renderWithContext(
+                <YoutubeVideo {...baseProps}/>,
+                initialState,
+            );
+
+            const thumbnail = container.querySelector('.video-thumbnail');
+            expect(thumbnail).toBeInTheDocument();
+
+            // Verify that maxresdefault is used initially
+            expect(thumbnail).toHaveAttribute(
+                'src',
+                'https://img.youtube.com/vi/xqCoNej8Zxo/maxresdefault.jpg',
+            );
+
+            // Simulate thumbnail loading failure to test fallback behavior - fireEvent used because userEvent doesn't support image loading events
+            fireEvent.error(thumbnail!);
+
+            // Verify that hqdefault is used after error (useMaxResThumbnail is now false)
+            expect(container.querySelector('.video-thumbnail')).toHaveAttribute(
+                'src',
+                'https://img.youtube.com/vi/xqCoNej8Zxo/hqdefault.jpg',
+            );
+        });
+    });
+
+    it('should initialize with useMaxResThumbnail set to true', () => {
+        const {container} = renderWithContext(
+            <YoutubeVideo {...baseProps}/>,
+            initialState,
+        );
+
+        // Verify that the component initializes with useMaxResThumbnail = true by checking
+        // that maxresdefault.jpg is used for the thumbnail
+        expect(container.querySelector('.video-thumbnail')).toHaveAttribute(
+            'src',
+            'https://img.youtube.com/vi/xqCoNej8Zxo/maxresdefault.jpg',
+        );
     });
 });

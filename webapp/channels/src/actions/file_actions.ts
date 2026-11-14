@@ -10,11 +10,14 @@ import {FileTypes} from 'mattermost-redux/action_types';
 import {getLogErrorAction} from 'mattermost-redux/actions/errors';
 import {forceLogoutIfNecessary} from 'mattermost-redux/actions/helpers';
 import {Client4} from 'mattermost-redux/client';
-import type {ThunkActionFunc} from 'mattermost-redux/types/actions';
+
+import {getConnectionId} from 'selectors/general';
 
 import type {FilePreviewInfo} from 'components/file_preview/file_preview';
 
 import {localizeMessage} from 'utils/utils';
+
+import type {ThunkActionFunc} from 'types/store';
 
 export interface UploadFile {
     file: File;
@@ -28,13 +31,18 @@ export interface UploadFile {
     onError: (err: string | ServerError, clientId: string, channelId: string, rootId: string) => void;
 }
 
-export function uploadFile({file, name, type, rootId, channelId, clientId, onProgress, onSuccess, onError}: UploadFile): ThunkActionFunc<XMLHttpRequest> {
+export function uploadFile({file, name, type, rootId, channelId, clientId, onProgress, onSuccess, onError}: UploadFile, isBookmark?: boolean): ThunkActionFunc<XMLHttpRequest> {
     return (dispatch, getState) => {
         dispatch({type: FileTypes.UPLOAD_FILES_REQUEST});
 
+        let url = Client4.getFilesRoute();
+        if (isBookmark) {
+            url += '?bookmark=true';
+        }
+
         const xhr = new XMLHttpRequest();
 
-        xhr.open('POST', Client4.getFilesRoute(), true);
+        xhr.open('POST', url, true);
 
         const client4Headers = Client4.getOptions({method: 'POST'}).headers;
         Object.keys(client4Headers).forEach((client4Header) => {
@@ -45,6 +53,11 @@ export function uploadFile({file, name, type, rootId, channelId, clientId, onPro
         });
 
         xhr.setRequestHeader('Accept', 'application/json');
+
+        const connectionId = getConnectionId(getState());
+        if (connectionId) {
+            xhr.setRequestHeader('Connection-Id', connectionId);
+        }
 
         const formData = new FormData();
         formData.append('channel_id', channelId);
@@ -90,12 +103,17 @@ export function uploadFile({file, name, type, rootId, channelId, clientId, onPro
                     onSuccess(response, channelId, rootId);
                 } else if (xhr.status >= 400 && xhr.readyState === 4) {
                     let errorMessage = '';
+                    let pluginRejected = false;
                     try {
                         const errorResponse = JSON.parse(xhr.response);
+
+                        // Plugin upload rejections are surfaced as a toast via the
+                        // file_upload_rejected websocket event, so suppress the inline composer error.
+                        pluginRejected = errorResponse?.id === 'app.upload.run_plugins_hook.rejected';
                         errorMessage =
-                        (errorResponse?.id && errorResponse?.message) ? localizeMessage(errorResponse.id, errorResponse.message) : localizeMessage('file_upload.generic_error', 'There was a problem uploading your files.');
-                    } catch (e) {
-                        errorMessage = localizeMessage('file_upload.generic_error', 'There was a problem uploading your files.');
+                            (errorResponse?.id && errorResponse?.message) ? localizeMessage({id: errorResponse.id, defaultMessage: errorResponse.message}) : localizeMessage({id: 'file_upload.generic_error', defaultMessage: 'There was a problem uploading your files.'});
+                    } catch {
+                        errorMessage = localizeMessage({id: 'file_upload.generic_error', defaultMessage: 'There was a problem uploading your files.'});
                     }
 
                     dispatch({
@@ -105,7 +123,9 @@ export function uploadFile({file, name, type, rootId, channelId, clientId, onPro
                         rootId,
                     });
 
-                    onError?.(errorMessage, clientId, channelId, rootId);
+                    // Pass an empty message on plugin rejection so the in-progress upload is cleared
+                    // without showing the inline error; the websocket-driven toast explains the rejection.
+                    onError?.(pluginRejected ? '' : errorMessage, clientId, channelId, rootId);
                 }
             };
         }
@@ -128,7 +148,7 @@ export function uploadFile({file, name, type, rootId, channelId, clientId, onPro
                     dispatch(batchActions([uploadFailureAction, getLogErrorAction(errorResponse)]));
                     onError(errorResponse, clientId, channelId, rootId);
                 } else {
-                    const errorMessage = xhr.status === 0 || !xhr.status ? localizeMessage('file_upload.generic_error', 'There was a problem uploading your files.') : localizeMessage('channel_loader.unknown_error', 'We received an unexpected status code from the server.') + ' (' + xhr.status + ')';
+                    const errorMessage = xhr.status === 0 || !xhr.status ? localizeMessage({id: 'file_upload.generic_error', defaultMessage: 'There was a problem uploading your files.'}) : localizeMessage({id: 'channel_loader.unknown_error', defaultMessage: 'We received an unexpected status code from the server.'}) + ' (' + xhr.status + ')';
 
                     dispatch({
                         type: FileTypes.UPLOAD_FILES_FAILURE,

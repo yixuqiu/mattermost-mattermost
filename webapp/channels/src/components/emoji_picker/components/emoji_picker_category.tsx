@@ -3,17 +3,16 @@
 
 import classNames from 'classnames';
 import React, {memo} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {useIntl} from 'react-intl';
 
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {EmojiCategory} from '@mattermost/types/emojis';
 
 import type {Category, CategoryOrEmojiRow} from 'components/emoji_picker/types';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
 
-import {Constants} from 'utils/constants';
-
-interface Props {
+export interface Props {
     category: Category;
     categoryRowIndex: CategoryOrEmojiRow['index'];
     selected: boolean;
@@ -22,6 +21,10 @@ interface Props {
 }
 
 function EmojiPickerCategory({category, categoryRowIndex, selected, enable, onClick}: Props) {
+    const intl = useIntl();
+    const categoryLabel = intl.formatMessage(category.label);
+    const CategoryIcon = category.icon;
+
     const handleClick = (event: React.MouseEvent) => {
         event.preventDefault();
 
@@ -32,37 +35,22 @@ function EmojiPickerCategory({category, categoryRowIndex, selected, enable, onCl
         }
     };
 
-    const className = classNames('emoji-picker__category', {
-        'emoji-picker__category--selected': selected,
-        disable: !enable,
-    });
-
     return (
-        <OverlayTrigger
-            trigger={['hover', 'focus']}
-            delayShow={Constants.OVERLAY_TIME_DELAY}
-            placement='bottom'
-            overlay={
-                <Tooltip
-                    id='skinTooltip'
-                    className='emoji-tooltip'
-                >
-                    <FormattedMessage
-                        id={`emoji_picker.${category.name}`}
-                        defaultMessage={category.message}
-                    />
-                </Tooltip>
-            }
-        >
-            <a
-                className={className}
-                href='#'
+        <WithTooltip title={categoryLabel}>
+            <IconButton
+                aria-label={categoryLabel}
+                aria-pressed={selected}
+                active={selected}
+                disabled={!enable}
+                size='small'
+                padding='compact'
+                className={classNames('emoji-picker__category', {
+                    disable: !enable,
+                })}
                 onClick={handleClick}
-                aria-label={category.id}
-            >
-                <i className={category.className}/>
-            </a>
-        </OverlayTrigger>
+                icon={<Icon glyph={<CategoryIcon/>}/>}
+            />
+        </WithTooltip>
     );
 }
 

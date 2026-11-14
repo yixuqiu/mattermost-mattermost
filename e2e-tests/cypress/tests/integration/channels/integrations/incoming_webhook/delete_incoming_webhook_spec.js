@@ -7,7 +7,6 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
-// Stage: @prod
 // Group: @channels @incoming_webhook
 
 import {enableUsernameAndIconOverride} from './helpers';
@@ -34,7 +33,7 @@ describe('Incoming webhook', () => {
 
         // # Go to test team/channel, open product menu and click "Integrations"
         cy.visit(`${testTeam.name}/channels/${testChannel.name}`);
-        cy.uiOpenProductMenu('Integrations');
+        cy.uiOpenSwitchProductMenu('Integrations');
 
         // * Verify that it redirects to integrations URL. Then, click "Incoming Webhooks"
         cy.url().should('include', `${testTeam.name}/integrations`);
@@ -91,7 +90,7 @@ describe('Incoming webhook', () => {
                 });
 
                 // # Click 'Integrations' at product menu
-                cy.uiOpenProductMenu('Integrations');
+                cy.uiOpenSwitchProductMenu('Integrations');
 
                 // * Verify that it redirects to integrations URL. Then, click "Incoming Webhooks"
                 cy.url().should('include', `${testTeam.name}/integrations`);

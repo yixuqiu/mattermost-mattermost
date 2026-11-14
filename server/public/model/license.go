@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -16,14 +18,35 @@ const (
 
 	ExpiredLicenseError = "api.license.add_license.expired.app_error"
 	InvalidLicenseError = "api.license.add_license.invalid.app_error"
-	LicenseGracePeriod  = DayInMilliseconds * 10 //10 days
-	LicenseRenewalLink  = "https://mattermost.com/renew/"
+	// WrongEnvironmentProductionLicenseError is returned when a production license is
+	// uploaded to a server running in a test or development service environment.
+	WrongEnvironmentProductionLicenseError = "api.license.add_license.wrong_environment_production.app_error"
+	// WrongEnvironmentTestLicenseError is returned when a test or development license is
+	// uploaded to a server running in a production service environment.
+	WrongEnvironmentTestLicenseError = "api.license.add_license.wrong_environment_test.app_error"
+	LicenseGracePeriod               = DayInMilliseconds * 10 //10 days
+	LicenseRenewalLink               = "https://mattermost.com/renew/"
 
-	LicenseShortSkuE10          = "E10"
-	LicenseShortSkuE20          = "E20"
-	LicenseShortSkuProfessional = "professional"
-	LicenseShortSkuEnterprise   = "enterprise"
+	LicenseShortSkuE10                = "E10"
+	LicenseShortSkuE20                = "E20"
+	LicenseShortSkuProfessional       = "professional"
+	LicenseShortSkuEnterprise         = "enterprise"
+	LicenseShortSkuEnterpriseAdvanced = "advanced"
+	LicenseShortSkuMattermostEntry    = "entry"
+
+	ProfessionalTier = 10
+	EnterpriseTier   = 20
+
+	EntryTier              = 30
+	EnterpriseAdvancedTier = 30
 )
+
+var LicenseToLicenseTier = map[string]int{
+	LicenseShortSkuProfessional:       ProfessionalTier,
+	LicenseShortSkuEnterprise:         EnterpriseTier,
+	LicenseShortSkuEnterpriseAdvanced: EnterpriseAdvancedTier,
+	LicenseShortSkuMattermostEntry:    EntryTier,
+}
 
 const (
 	LicenseUpForRenewalEmailSent = "LicenseUpForRenewalEmailSent"
@@ -45,18 +68,42 @@ type LicenseRecord struct {
 	Bytes    string `json:"-"`
 }
 
+type LicenseLimits struct {
+	PostHistory         int64 `json:"post_history"`
+	BoardCards          int64 `json:"board_cards"`
+	PlaybookRuns        int64 `json:"playbook_runs"`
+	CallDurationSeconds int64 `json:"call_duration"`
+	AgentsPrompts       int64 `json:"agents_prompts"`
+	PushNotifications   int64 `json:"push_notifications"`
+}
+
 type License struct {
-	Id           string    `json:"id"`
-	IssuedAt     int64     `json:"issued_at"`
-	StartsAt     int64     `json:"starts_at"`
-	ExpiresAt    int64     `json:"expires_at"`
-	Customer     *Customer `json:"customer"`
-	Features     *Features `json:"features"`
-	SkuName      string    `json:"sku_name"`
-	SkuShortName string    `json:"sku_short_name"`
-	IsTrial      bool      `json:"is_trial"`
-	IsGovSku     bool      `json:"is_gov_sku"`
-	SignupJWT    *string   `json:"signup_jwt"`
+	Id                  string    `json:"id"`
+	IssuedAt            int64     `json:"issued_at"`
+	StartsAt            int64     `json:"starts_at"`
+	ExpiresAt           int64     `json:"expires_at"`
+	Customer            *Customer `json:"customer"`
+	Features            *Features `json:"features"`
+	SkuName             string    `json:"sku_name"`
+	SkuShortName        string    `json:"sku_short_name"`
+	IsTrial             bool      `json:"is_trial"`
+	IsGovSku            bool      `json:"is_gov_sku"`
+	IsNonProduction     bool      `json:"is_non_production"`
+	IsSeatCountEnforced bool      `json:"is_seat_count_enforced"`
+	// ExtraUsers provides a grace mechanism that allows a configurable number of users
+	// beyond the base license limit before restricting user creation. When nil, defaults to 0.
+	// For example: 100 licensed users + 5 ExtraUsers = 105 total allowed users.
+	ExtraUsers *int           `json:"extra_users"`
+	SignupJWT  *string        `json:"signup_jwt"`
+	Limits     *LicenseLimits `json:"limits"`
+	// AddOns names products purchased alongside the license that are not part of
+	// any SKU tier. Unrecognized names are ignored, so a license issued for a newer
+	// add-on still validates here. Read it through HasAddOn.
+	AddOns []string `json:"add_ons"`
+}
+
+func (l *License) IsMattermostEntry() bool {
+	return l != nil && l.SkuShortName == LicenseShortSkuMattermostEntry
 }
 
 type Customer struct {
@@ -80,6 +127,7 @@ type TrialLicenseRequest struct {
 	CompanyName           string `json:"company_name"`
 	CompanyCountry        string `json:"company_country"`
 	CompanySize           string `json:"company_size"`
+	ServerVersion         string `json:"server_version"`
 }
 
 // If any of the below fields are set, this is not a legacy request, and all fields should be validated
@@ -120,39 +168,40 @@ func (tlr *TrialLicenseRequest) IsValid() bool {
 }
 
 type Features struct {
-	Users                     *int  `json:"users"`
-	LDAP                      *bool `json:"ldap"`
-	LDAPGroups                *bool `json:"ldap_groups"`
-	MFA                       *bool `json:"mfa"`
-	GoogleOAuth               *bool `json:"google_oauth"`
-	Office365OAuth            *bool `json:"office365_oauth"`
-	OpenId                    *bool `json:"openid"`
-	Compliance                *bool `json:"compliance"`
-	Cluster                   *bool `json:"cluster"`
-	Metrics                   *bool `json:"metrics"`
-	MHPNS                     *bool `json:"mhpns"`
-	SAML                      *bool `json:"saml"`
-	Elasticsearch             *bool `json:"elastic_search"`
-	Announcement              *bool `json:"announcement"`
-	ThemeManagement           *bool `json:"theme_management"`
-	EmailNotificationContents *bool `json:"email_notification_contents"`
-	DataRetention             *bool `json:"data_retention"`
-	MessageExport             *bool `json:"message_export"`
-	CustomPermissionsSchemes  *bool `json:"custom_permissions_schemes"`
-	CustomTermsOfService      *bool `json:"custom_terms_of_service"`
-	GuestAccounts             *bool `json:"guest_accounts"`
-	GuestAccountsPermissions  *bool `json:"guest_accounts_permissions"`
-	IDLoadedPushNotifications *bool `json:"id_loaded"`
-	LockTeammateNameDisplay   *bool `json:"lock_teammate_name_display"`
-	EnterprisePlugins         *bool `json:"enterprise_plugins"`
-	AdvancedLogging           *bool `json:"advanced_logging"`
-	Cloud                     *bool `json:"cloud"`
-	SharedChannels            *bool `json:"shared_channels"`
-	RemoteClusterService      *bool `json:"remote_cluster_service"`
-	OutgoingOAuthConnections  *bool `json:"outgoing_oauth_connections"`
+	Users                     *int  `json:"users" yaml:"users,omitempty"`
+	LDAP                      *bool `json:"ldap" yaml:"ldap,omitempty"`
+	LDAPGroups                *bool `json:"ldap_groups" yaml:"ldap_groups,omitempty"`
+	MFA                       *bool `json:"mfa" yaml:"mfa,omitempty"`
+	GoogleOAuth               *bool `json:"google_oauth" yaml:"google_oauth,omitempty"`
+	Office365OAuth            *bool `json:"office365_oauth" yaml:"office365_oauth,omitempty"`
+	OpenId                    *bool `json:"openid" yaml:"openid,omitempty"`
+	Compliance                *bool `json:"compliance" yaml:"compliance,omitempty"`
+	Cluster                   *bool `json:"cluster" yaml:"cluster,omitempty"`
+	Metrics                   *bool `json:"metrics" yaml:"metrics,omitempty"`
+	MHPNS                     *bool `json:"mhpns" yaml:"mhpns,omitempty"`
+	SAML                      *bool `json:"saml" yaml:"saml,omitempty"`
+	Elasticsearch             *bool `json:"elastic_search" yaml:"elastic_search,omitempty"`
+	Announcement              *bool `json:"announcement" yaml:"announcement,omitempty"`
+	ThemeManagement           *bool `json:"theme_management" yaml:"theme_management,omitempty"`
+	EmailNotificationContents *bool `json:"email_notification_contents" yaml:"email_notification_contents,omitempty"`
+	DataRetention             *bool `json:"data_retention" yaml:"data_retention,omitempty"`
+	MessageExport             *bool `json:"message_export" yaml:"message_export,omitempty"`
+	CustomPermissionsSchemes  *bool `json:"custom_permissions_schemes" yaml:"custom_permissions_schemes,omitempty"`
+	CustomTermsOfService      *bool `json:"custom_terms_of_service" yaml:"custom_terms_of_service,omitempty"`
+	GuestAccounts             *bool `json:"guest_accounts" yaml:"guest_accounts,omitempty"`
+	GuestAccountsPermissions  *bool `json:"guest_accounts_permissions" yaml:"guest_accounts_permissions,omitempty"`
+	IDLoadedPushNotifications *bool `json:"id_loaded" yaml:"id_loaded,omitempty"`
+	LockTeammateNameDisplay   *bool `json:"lock_teammate_name_display" yaml:"lock_teammate_name_display,omitempty"`
+	EnterprisePlugins         *bool `json:"enterprise_plugins" yaml:"enterprise_plugins,omitempty"`
+	AdvancedLogging           *bool `json:"advanced_logging" yaml:"advanced_logging,omitempty"`
+	Cloud                     *bool `json:"cloud" yaml:"cloud,omitempty"`
+	SharedChannels            *bool `json:"shared_channels" yaml:"shared_channels,omitempty"`
+	RemoteClusterService      *bool `json:"remote_cluster_service" yaml:"remote_cluster_service,omitempty"`
+	OutgoingOAuthConnections  *bool `json:"outgoing_oauth_connections" yaml:"outgoing_oauth_connections,omitempty"`
+	AutoTranslation           *bool `json:"auto_translation" yaml:"auto_translation,omitempty"`
 
 	// after we enabled more features we'll need to control them with this
-	FutureFeatures *bool `json:"future_features"`
+	FutureFeatures *bool `json:"future_features" yaml:"future_features,omitempty"`
 }
 
 func (f *Features) ToMap() map[string]any {
@@ -189,127 +238,127 @@ func (f *Features) ToMap() map[string]any {
 
 func (f *Features) SetDefaults() {
 	if f.FutureFeatures == nil {
-		f.FutureFeatures = NewBool(true)
+		f.FutureFeatures = new(true)
 	}
 
 	if f.Users == nil {
-		f.Users = NewInt(0)
+		f.Users = new(0)
 	}
 
 	if f.LDAP == nil {
-		f.LDAP = NewBool(*f.FutureFeatures)
+		f.LDAP = new(*f.FutureFeatures)
 	}
 
 	if f.LDAPGroups == nil {
-		f.LDAPGroups = NewBool(*f.FutureFeatures)
+		f.LDAPGroups = new(*f.FutureFeatures)
 	}
 
 	if f.MFA == nil {
-		f.MFA = NewBool(*f.FutureFeatures)
+		f.MFA = new(*f.FutureFeatures)
 	}
 
 	if f.GoogleOAuth == nil {
-		f.GoogleOAuth = NewBool(*f.FutureFeatures)
+		f.GoogleOAuth = new(*f.FutureFeatures)
 	}
 
 	if f.Office365OAuth == nil {
-		f.Office365OAuth = NewBool(*f.FutureFeatures)
+		f.Office365OAuth = new(*f.FutureFeatures)
 	}
 
 	if f.OpenId == nil {
-		f.OpenId = NewBool(*f.FutureFeatures)
+		f.OpenId = new(*f.FutureFeatures)
 	}
 
 	if f.Compliance == nil {
-		f.Compliance = NewBool(*f.FutureFeatures)
+		f.Compliance = new(*f.FutureFeatures)
 	}
 
 	if f.Cluster == nil {
-		f.Cluster = NewBool(*f.FutureFeatures)
+		f.Cluster = new(*f.FutureFeatures)
 	}
 
 	if f.Metrics == nil {
-		f.Metrics = NewBool(*f.FutureFeatures)
+		f.Metrics = new(*f.FutureFeatures)
 	}
 
 	if f.MHPNS == nil {
-		f.MHPNS = NewBool(*f.FutureFeatures)
+		f.MHPNS = new(*f.FutureFeatures)
 	}
 
 	if f.SAML == nil {
-		f.SAML = NewBool(*f.FutureFeatures)
+		f.SAML = new(*f.FutureFeatures)
 	}
 
 	if f.Elasticsearch == nil {
-		f.Elasticsearch = NewBool(*f.FutureFeatures)
+		f.Elasticsearch = new(*f.FutureFeatures)
 	}
 
 	if f.Announcement == nil {
-		f.Announcement = NewBool(true)
+		f.Announcement = new(true)
 	}
 
 	if f.ThemeManagement == nil {
-		f.ThemeManagement = NewBool(true)
+		f.ThemeManagement = new(true)
 	}
 
 	if f.EmailNotificationContents == nil {
-		f.EmailNotificationContents = NewBool(*f.FutureFeatures)
+		f.EmailNotificationContents = new(*f.FutureFeatures)
 	}
 
 	if f.DataRetention == nil {
-		f.DataRetention = NewBool(*f.FutureFeatures)
+		f.DataRetention = new(*f.FutureFeatures)
 	}
 
 	if f.MessageExport == nil {
-		f.MessageExport = NewBool(*f.FutureFeatures)
+		f.MessageExport = new(*f.FutureFeatures)
 	}
 
 	if f.CustomPermissionsSchemes == nil {
-		f.CustomPermissionsSchemes = NewBool(*f.FutureFeatures)
+		f.CustomPermissionsSchemes = new(*f.FutureFeatures)
 	}
 
 	if f.GuestAccounts == nil {
-		f.GuestAccounts = NewBool(*f.FutureFeatures)
+		f.GuestAccounts = new(*f.FutureFeatures)
 	}
 
 	if f.GuestAccountsPermissions == nil {
-		f.GuestAccountsPermissions = NewBool(*f.FutureFeatures)
+		f.GuestAccountsPermissions = new(*f.FutureFeatures)
 	}
 
 	if f.CustomTermsOfService == nil {
-		f.CustomTermsOfService = NewBool(*f.FutureFeatures)
+		f.CustomTermsOfService = new(*f.FutureFeatures)
 	}
 
 	if f.IDLoadedPushNotifications == nil {
-		f.IDLoadedPushNotifications = NewBool(*f.FutureFeatures)
+		f.IDLoadedPushNotifications = new(*f.FutureFeatures)
 	}
 
 	if f.LockTeammateNameDisplay == nil {
-		f.LockTeammateNameDisplay = NewBool(*f.FutureFeatures)
+		f.LockTeammateNameDisplay = new(*f.FutureFeatures)
 	}
 
 	if f.EnterprisePlugins == nil {
-		f.EnterprisePlugins = NewBool(*f.FutureFeatures)
+		f.EnterprisePlugins = new(*f.FutureFeatures)
 	}
 
 	if f.AdvancedLogging == nil {
-		f.AdvancedLogging = NewBool(*f.FutureFeatures)
+		f.AdvancedLogging = new(*f.FutureFeatures)
 	}
 
 	if f.Cloud == nil {
-		f.Cloud = NewBool(false)
+		f.Cloud = new(false)
 	}
 
 	if f.SharedChannels == nil {
-		f.SharedChannels = NewBool(*f.FutureFeatures)
+		f.SharedChannels = new(*f.FutureFeatures)
 	}
 
 	if f.RemoteClusterService == nil {
-		f.RemoteClusterService = NewBool(*f.FutureFeatures)
+		f.RemoteClusterService = new(*f.FutureFeatures)
 	}
 
 	if f.OutgoingOAuthConnections == nil {
-		f.OutgoingOAuthConnections = NewBool(*f.FutureFeatures)
+		f.OutgoingOAuthConnections = new(*f.FutureFeatures)
 	}
 }
 
@@ -338,6 +387,11 @@ func (l *License) IsStarted() bool {
 	return l.StartsAt < GetMillis()
 }
 
+// Cloud preview is a cloud license, that is also a trial, and the difference between the start and end date is exactly 1 hour.
+func (l *License) IsCloudPreview() bool {
+	return l.IsCloud() && l.IsTrialLicense() && l.ExpiresAt-l.StartsAt == 1*time.Hour.Milliseconds()
+}
+
 func (l *License) IsCloud() bool {
 	return l != nil && l.Features != nil && l.Features.Cloud != nil && *l.Features.Cloud
 }
@@ -356,8 +410,7 @@ func (l *License) IsSanctionedTrial() bool {
 func (l *License) HasEnterpriseMarketplacePlugins() bool {
 	return *l.Features.EnterprisePlugins ||
 		l.SkuShortName == LicenseShortSkuE20 ||
-		l.SkuShortName == LicenseShortSkuProfessional ||
-		l.SkuShortName == LicenseShortSkuEnterprise
+		MinimumProfessionalLicense(l)
 }
 
 func (l *License) HasRemoteClusterService() bool {
@@ -371,8 +424,7 @@ func (l *License) HasRemoteClusterService() bool {
 	}
 
 	return (l.Features != nil && l.Features.RemoteClusterService != nil && *l.Features.RemoteClusterService) ||
-		l.SkuShortName == LicenseShortSkuProfessional ||
-		l.SkuShortName == LicenseShortSkuEnterprise
+		MinimumProfessionalLicense(l)
 }
 
 func (l *License) HasSharedChannels() bool {
@@ -381,8 +433,30 @@ func (l *License) HasSharedChannels() bool {
 	}
 
 	return (l.Features != nil && l.Features.SharedChannels != nil && *l.Features.SharedChannels) ||
-		l.SkuShortName == LicenseShortSkuProfessional ||
-		l.SkuShortName == LicenseShortSkuEnterprise
+		MinimumProfessionalLicense(l)
+}
+
+// HasMHPNS reports whether the license grants access to the Mattermost hosted push notification service.
+func (l *License) HasMHPNS() bool {
+	return l != nil && l.Features != nil && l.Features.MHPNS != nil && *l.Features.MHPNS
+}
+
+// HasAdvancedLogging reports whether the license allows advanced log and audit targets.
+func (l *License) HasAdvancedLogging() bool {
+	return l != nil && l.Features != nil && l.Features.AdvancedLogging != nil && *l.Features.AdvancedLogging
+}
+
+// HasAddOn reports whether the license grants the named add-on. Unlike the
+// SKU-derived helpers above, this deliberately has no minimum-license fallback:
+// an add-on is bought separately from the tier.
+func (l *License) HasAddOn(addOn string) bool {
+	if l == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(l.AddOns, func(a string) bool {
+		return strings.EqualFold(a, addOn)
+	})
 }
 
 // NewTestLicense returns a license that expires in the future and has the given features.
@@ -428,6 +502,13 @@ func NewTestLicenseWithFalseDefaults(features ...string) *License {
 	return ret
 }
 
+// NewTestLicenseWithAddOns returns a test license granting the given add-ons.
+func NewTestLicenseWithAddOns(addOns ...string) *License {
+	ret := NewTestLicense()
+	ret.AddOns = addOns
+	return ret
+}
+
 func NewTestLicenseSKU(skuShortName string, features ...string) *License {
 	lic := NewTestLicense(features...)
 	lic.SkuShortName = skuShortName
@@ -452,4 +533,21 @@ func (lr *LicenseRecord) IsValid() *AppError {
 
 func (lr *LicenseRecord) PreSave() {
 	lr.CreateAt = GetMillis()
+}
+
+// MinimumProfessionalLicense returns true if the provided license is at least a professional license.
+// Higher tier licenses also satisfy the condition.
+func MinimumProfessionalLicense(license *License) bool {
+	return license != nil && LicenseToLicenseTier[license.SkuShortName] >= ProfessionalTier
+}
+
+// MinimumEnterpriseLicense returns true if the provided license is at least a enterprise license.
+// Higher tier licenses also satisfy the condition.
+func MinimumEnterpriseLicense(license *License) bool {
+	return license != nil && LicenseToLicenseTier[license.SkuShortName] >= EnterpriseTier
+}
+
+// MinimumEnterpriseAdvancedLicense returns true if the provided license is at least an Enterprise Advanced license.
+func MinimumEnterpriseAdvancedLicense(license *License) bool {
+	return license != nil && LicenseToLicenseTier[license.SkuShortName] >= EnterpriseAdvancedTier
 }

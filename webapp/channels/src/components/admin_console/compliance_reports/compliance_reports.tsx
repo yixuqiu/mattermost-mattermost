@@ -1,9 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {FormattedDate, FormattedMessage, FormattedTime, type IntlShape, injectIntl} from 'react-intl';
+import React, {type JSX} from 'react';
+import {FormattedDate, FormattedMessage, FormattedTime, defineMessage, defineMessages} from 'react-intl';
 
+import {RefreshIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import type {Compliance} from '@mattermost/types/compliance';
 import type {UserProfile} from '@mattermost/types/users';
 
@@ -11,7 +14,8 @@ import {Client4} from 'mattermost-redux/client';
 import type {ActionResult} from 'mattermost-redux/types/actions';
 
 import LoadingScreen from 'components/loading_screen';
-import ReloadIcon from 'components/widgets/icons/fa_reload_icon';
+import LocalizedPlaceholderInput from 'components/localized_placeholder_input';
+import AdminPanel from 'components/widgets/admin_console/admin_panel';
 
 type Props = {
 
@@ -38,8 +42,6 @@ type Props = {
 
     readOnly?: boolean;
 
-    intl: IntlShape;
-
     actions: {
 
         /*
@@ -52,19 +54,19 @@ type Props = {
             */
         createComplianceReport: (job: Partial<Compliance>) => Promise<ActionResult<Compliance>>;
     };
-}
+};
 
 type State = {
     loadingReports: boolean;
     runningReport?: boolean;
-}
+};
 
-class ComplianceReports extends React.PureComponent<Props, State> {
-    private descInput: React.RefObject<HTMLInputElement>;
-    private emailsInput: React.RefObject<HTMLInputElement>;
-    private fromInput: React.RefObject<HTMLInputElement>;
-    private keywordsInput: React.RefObject<HTMLInputElement>;
-    private toInput: React.RefObject<HTMLInputElement>;
+export default class ComplianceReports extends React.PureComponent<Props, State> {
+    private descInput: React.RefObject<HTMLInputElement | null>;
+    private emailsInput: React.RefObject<HTMLInputElement | null>;
+    private fromInput: React.RefObject<HTMLInputElement | null>;
+    private keywordsInput: React.RefObject<HTMLInputElement | null>;
+    private toInput: React.RefObject<HTMLInputElement | null>;
 
     constructor(props: Props) {
         super(props);
@@ -330,102 +332,100 @@ class ComplianceReports extends React.PureComponent<Props, State> {
         }
 
         return (
-            <div className='panel compliance-panel'>
-                <h4>
-                    <FormattedMessage
-                        id='admin.compliance_reports.title'
-                        defaultMessage='Compliance Reports'
-                    />
-                </h4>
+            <AdminPanel
+                id='compliance_reports'
+                className='compliance-panel'
+                title={messages.title}
+            >
                 <div className='row'>
                     <div className='col-sm-6 col-md-4 form-group'>
-                        <label>
+                        <label htmlFor='desc'>
                             <FormattedMessage
                                 id='admin.compliance_reports.desc'
                                 defaultMessage='Job Name:'
                             />
                         </label>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='text'
                             className='form-control'
                             id='desc'
                             ref={this.descInput}
-                            placeholder={this.props.intl.formatMessage({id: 'admin.compliance_reports.desc_placeholder', defaultMessage: 'E.g. "Audit 445 for HR"'})}
+                            placeholder={defineMessage({id: 'admin.compliance_reports.desc_placeholder', defaultMessage: 'E.g. "Audit 445 for HR"'})}
                             disabled={this.props.readOnly}
                         />
                     </div>
                     <div className='col-sm-3 col-md-2 form-group'>
-                        <label>
+                        <label htmlFor='from'>
                             <FormattedMessage
                                 id='admin.compliance_reports.from'
                                 defaultMessage='From:'
                             />
                         </label>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='text'
                             className='form-control'
                             id='from'
                             ref={this.fromInput}
-                            placeholder={this.props.intl.formatMessage({id: 'admin.compliance_reports.from_placeholder', defaultMessage: 'E.g. "2016-03-11"'})}
+                            placeholder={defineMessage({id: 'admin.compliance_reports.from_placeholder', defaultMessage: 'E.g. "2016-03-11"'})}
                             disabled={this.props.readOnly}
                         />
                     </div>
                     <div className='col-sm-3 col-md-2 form-group'>
-                        <label>
+                        <label htmlFor='to'>
                             <FormattedMessage
                                 id='admin.compliance_reports.to'
                                 defaultMessage='To:'
                             />
                         </label>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='text'
                             className='form-control'
                             id='to'
                             ref={this.toInput}
-                            placeholder={this.props.intl.formatMessage({id: 'admin.compliance_reports.to_placeholder', defaultMessage: 'E.g. "2016-03-15"'})}
+                            placeholder={defineMessage({id: 'admin.compliance_reports.to_placeholder', defaultMessage: 'E.g. "2016-03-15"'})}
                             disabled={this.props.readOnly}
                         />
                     </div>
                 </div>
                 <div className='row'>
                     <div className='col-sm-6 col-md-4 form-group'>
-                        <label>
+                        <label htmlFor='emails'>
                             <FormattedMessage
                                 id='admin.compliance_reports.emails'
                                 defaultMessage='Emails:'
                             />
                         </label>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='text'
                             className='form-control'
                             id='emails'
                             ref={this.emailsInput}
-                            placeholder={this.props.intl.formatMessage({id: 'admin.compliance_reports.emails_placeholder', defaultMessage: 'E.g. "bill@example.com, bob@example.com"'})}
+                            placeholder={defineMessage({id: 'admin.compliance_reports.emails_placeholder', defaultMessage: 'E.g. "bill@example.com, bob@example.com"'})}
                             disabled={this.props.readOnly}
                         />
                     </div>
                     <div className='col-sm-6 col-md-4 form-group'>
-                        <label>
+                        <label htmlFor='keywords'>
                             <FormattedMessage
                                 id='admin.compliance_reports.keywords'
                                 defaultMessage='Keywords:'
                             />
                         </label>
-                        <input
+                        <LocalizedPlaceholderInput
                             type='text'
                             className='form-control'
                             id='keywords'
                             ref={this.keywordsInput}
-                            placeholder={this.props.intl.formatMessage({id: 'admin.compliance_reports.keywords_placeholder', defaultMessage: 'E.g. "shorting stock"'})}
+                            placeholder={defineMessage({id: 'admin.compliance_reports.keywords_placeholder', defaultMessage: 'E.g. "shorting stock"'})}
                             disabled={this.props.readOnly}
                         />
                     </div>
                 </div>
                 <div className='clearfix'>
-                    <button
+                    <Button
                         id='run-button'
                         type='submit'
-                        className='btn btn-primary'
+                        emphasis='primary'
                         onClick={this.runReport}
                         disabled={this.props.readOnly}
                     >
@@ -433,30 +433,34 @@ class ComplianceReports extends React.PureComponent<Props, State> {
                             id='admin.compliance_reports.run'
                             defaultMessage='Run Compliance Report'
                         />
-                    </button>
+                    </Button>
                 </div>
                 {serverError}
                 <div className='text-right'>
-                    <button
+                    <Button
                         type='submit'
-                        className='btn btn-tertiary'
+                        emphasis='tertiary'
                         disabled={this.state.runningReport}
                         onClick={this.reload}
+                        leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
                     >
-                        <ReloadIcon/>
                         <FormattedMessage
                             id='admin.compliance_reports.reload'
                             defaultMessage='Reload Completed Compliance Reports'
                         />
-                    </button>
+                    </Button>
                 </div>
                 <div className='compliance-panel__table'>
                     {content}
                 </div>
-            </div>
+            </AdminPanel>
         );
     }
 }
+
+const messages = defineMessages({
+    title: {id: 'admin.compliance_reports.title', defaultMessage: 'Compliance Reports'},
+});
 
 const style: Record<string, React.CSSProperties> = {
     content: {margin: 10},
@@ -466,5 +470,3 @@ const style: Record<string, React.CSSProperties> = {
     date: {whiteSpace: 'nowrap'},
     serverError: {marginTop: '10px'},
 };
-
-export default injectIntl(ComplianceReports);

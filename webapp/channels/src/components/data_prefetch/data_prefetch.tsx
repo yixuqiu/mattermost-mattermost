@@ -19,16 +19,16 @@ type Props = {
     prefetchQueueObj: Record<string, string[]>;
     prefetchRequestStatus: Record<string, string>;
 
-    // Whether or not the categories in the sidebar have been loaded for the current team
+    // Whether or not the data the sidebar renders from has been loaded: the categories for the
+    // current team, plus the user's channels and channel memberships
     sidebarLoaded: boolean;
 
     unreadChannels: Channel[];
 
     actions: {
         prefetchChannelPosts: (channelId: string, delay?: number) => Promise<ActionResult>;
-        trackPreloadedChannels: (prefetchQueueObj: Record<string, string[]>) => void;
     };
-}
+};
 
 /*
     This component is responsible for prefetching data. As of now component only fetches for channel posts based on the below set of rules.
@@ -56,18 +56,17 @@ export default class DataPrefetch extends React.PureComponent<Props> {
 
     async componentDidUpdate(prevProps: Props) {
         const {currentChannelId, prefetchQueueObj, sidebarLoaded} = this.props;
+        if (sidebarLoaded && !prevProps.sidebarLoaded) {
+            loadProfilesForSidebar();
+        }
+
         if (currentChannelId && sidebarLoaded && (!prevProps.currentChannelId || !prevProps.sidebarLoaded)) {
             queue.add(async () => this.prefetchPosts(currentChannelId));
-            await loadProfilesForSidebar();
             this.prefetchData();
         } else if (prevProps.prefetchQueueObj !== prefetchQueueObj) {
             clearTimeout(this.prefetchTimeout);
             await queue.clear();
             this.prefetchData();
-        }
-
-        if (currentChannelId && sidebarLoaded && (!prevProps.currentChannelId || !prevProps.sidebarLoaded)) {
-            this.props.actions.trackPreloadedChannels(prefetchQueueObj);
         }
     }
 
@@ -86,13 +85,13 @@ export default class DataPrefetch extends React.PureComponent<Props> {
     private prefetchData = () => {
         const {prefetchRequestStatus, prefetchQueueObj} = this.props;
         for (const priority in prefetchQueueObj) {
-            if (!prefetchQueueObj.hasOwnProperty(priority)) {
+            if (!Object.hasOwn(prefetchQueueObj, priority)) {
                 continue;
             }
 
             const priorityQueue = prefetchQueueObj[priority];
             for (const channelId of priorityQueue) {
-                if (!prefetchRequestStatus.hasOwnProperty(channelId)) {
+                if (!Object.hasOwn(prefetchRequestStatus, channelId)) {
                     queue.add(async () => this.prefetchPosts(channelId));
                 }
             }

@@ -7,22 +7,24 @@
 // - Use element ID when selecting an element. Create one if none.
 // ***************************************************************
 
+import type {
+    SimpleUser,
+} from './helpers';
 import {
     getPostTextboxInput,
     getQuickChannelSwitcherInput,
-    SimpleUser,
     startAtMention,
     verifySuggestionAtChannelSwitcher,
     verifySuggestionAtPostTextbox,
 } from './helpers';
 
-export function doTestPostextbox(mention: string, ...suggestion: Cypress.UserProfile[]) {
+export function doTestPostextbox(mention: string, ...suggestion: SimpleUser[]) {
     getPostTextboxInput();
     startAtMention(mention);
     verifySuggestionAtPostTextbox(...suggestion);
 }
 
-export function doTestQuickChannelSwitcher(mention: string, ...suggestion: Cypress.UserProfile[]) {
+export function doTestQuickChannelSwitcher(mention: string, ...suggestion: SimpleUser[]) {
     getQuickChannelSwitcherInput();
     startAtMention(mention);
     verifySuggestionAtChannelSwitcher(...suggestion);
@@ -49,10 +51,10 @@ export function doTestUserChannelSection(prefix: string, testTeam: Cypress.Team,
         type(`@${prefix}odinson`);
 
     // * Thor should be a channel member
-    cy.uiVerifyAtMentionInSuggestionList(thor as Cypress.UserProfile, true);
+    cy.uiVerifyAtMentionInSuggestionList(thor, true);
 
     // * Loki should NOT be a channel member
-    cy.uiVerifyAtMentionInSuggestionList(loki as Cypress.UserProfile, false);
+    cy.uiVerifyAtMentionInSuggestionList(loki, false);
 }
 
 export function doTestDMChannelSidebar(testUsers: Record<string, SimpleUser>) {
@@ -73,7 +75,7 @@ export function doTestDMChannelSidebar(testUsers: Record<string, SimpleUser>) {
     }).as('searchUsers');
 
     cy.wait('@searchUsers').then((interception) => {
-        expect(interception.response.body.length === 1);
+        expect(interception.response?.body).to.have.length(1);
     });
 
     // * There should only be one result

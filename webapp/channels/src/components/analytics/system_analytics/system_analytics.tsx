@@ -5,15 +5,23 @@ import React from 'react';
 import {FormattedMessage, defineMessages} from 'react-intl';
 
 import type {AnalyticsRow, PluginAnalyticsRow, IndexedPluginAnalyticsRow, AnalyticsState} from '@mattermost/types/admin';
-import type {ClientLicense} from '@mattermost/types/config';
+import {AnalyticsVisualizationType} from '@mattermost/types/admin';
+import type {ClientConfig, ClientLicense} from '@mattermost/types/config';
+import type {ServerLimits} from '@mattermost/types/limits';
 
-import * as AdminActions from 'actions/admin_actions.jsx';
+import {getFormattedFileSize} from 'mattermost-redux/utils/file_utils';
 
+import * as AdminActions from 'actions/admin_actions';
+
+import UserSeatAlertBanner from 'components/admin_console/license_settings/user_seat_alert_banner';
 import ActivatedUserCard from 'components/analytics/activated_users_card';
+import SingleChannelGuestsCard from 'components/analytics/single_channel_guests_card';
 import ExternalLink from 'components/external_link';
 import AdminHeader from 'components/widgets/admin_console/admin_header';
 
-import Constants from 'utils/constants';
+import Constants, {LicenseSkus} from 'utils/constants';
+
+import './analytics.scss';
 
 import type {GlobalState} from 'types/store';
 
@@ -22,7 +30,6 @@ import {
     formatPostsPerDayData,
     formatUsersWithPostsPerDayData,
     formatChannelDoughtnutData,
-    formatPostDoughtnutData,
     synchronizeChartLabels,
 } from '../format';
 import LineChart from '../line_chart';
@@ -34,12 +41,15 @@ type Props = {
     isLicensed: boolean;
     stats?: AnalyticsState;
     license: ClientLicense;
+    config?: Partial<ClientConfig>;
     pluginStatHandlers: GlobalState['plugins']['siteStatsHandlers'];
-}
+    serverLimits: ServerLimits;
+};
 
 type State = {
     pluginSiteStats: Record<string, PluginAnalyticsRow>;
-}
+    lineChartsDataLoaded: boolean;
+};
 
 const messages = defineMessages({
     title: {id: 'analytics.system.title', defaultMessage: 'System Statistics'},
@@ -58,6 +68,9 @@ const messages = defineMessages({
     totalChannels: {id: 'analytics.system.totalChannels', defaultMessage: 'Total Channels'},
     dailyActiveUsers: {id: 'analytics.system.dailyActiveUsers', defaultMessage: 'Daily Active Users'},
     monthlyActiveUsers: {id: 'analytics.system.monthlyActiveUsers', defaultMessage: 'Monthly Active Users'},
+    totalFiles: {id: 'analytics.system.totalFiles', defaultMessage: 'Total Files'},
+    totalFilesSize: {id: 'analytics.system.totalFilesSize', defaultMessage: 'Total Files Size'},
+    singleChannelGuests: {id: 'analytics.system.singleChannelGuests', defaultMessage: 'Single-channel Guests'},
 });
 
 export const searchableStrings = [
@@ -77,24 +90,44 @@ export const searchableStrings = [
     messages.totalChannels,
     messages.dailyActiveUsers,
     messages.monthlyActiveUsers,
+    messages.totalFiles,
+    messages.totalFilesSize,
+    messages.singleChannelGuests,
 ];
 
 export default class SystemAnalytics extends React.PureComponent<Props, State> {
     state = {
         pluginSiteStats: {} as Record<string, PluginAnalyticsRow>,
+        lineChartsDataLoaded: false,
     };
 
     public async componentDidMount() {
         AdminActions.getStandardAnalytics();
-        AdminActions.getPostsPerDayAnalytics();
-        AdminActions.getBotPostsPerDayAnalytics();
-        AdminActions.getUsersPerDayAnalytics();
+        AdminActions.refreshServerLimits();
 
         if (this.props.isLicensed) {
             AdminActions.getAdvancedAnalytics();
         }
         this.fetchPluginStats();
     }
+
+    private loadLineChartData = async () => {
+        await Promise.allSettled([
+            AdminActions.getPostsPerDayAnalytics(),
+            AdminActions.getBotPostsPerDayAnalytics(),
+            AdminActions.getUsersPerDayAnalytics(),
+        ]);
+        this.setState({lineChartsDataLoaded: true});
+    };
+
+    private handleLineChartsToggle = (e: React.ToggleEvent<HTMLDetailsElement>) => {
+        const details = e.currentTarget;
+        const isExpanding = details.open;
+
+        if (isExpanding && !this.state.lineChartsDataLoaded) {
+            this.loadLineChartData();
+        }
+    };
 
     // fetchPluginStats does a call for each one of the registered handlers,
     // wait and set the data in the state
@@ -222,6 +255,8 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
         let commandCount;
         let incomingCount;
         let outgoingCount;
+        let totalFiles;
+        let totalFilesSize;
         if (this.props.isLicensed) {
             sessionCount = (
                 <StatisticCount
@@ -261,6 +296,25 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
                 />
             );
 
+            totalFiles = (
+                <StatisticCount
+                    id='totalFiles'
+                    title={<FormattedMessage {...messages.totalFiles}/>}
+                    icon='fa-files-o'
+                    count={this.getStatValue(stats[StatTypes.TOTAL_FILE_COUNT])}
+                />
+            );
+
+            totalFilesSize = (
+                <StatisticCount
+                    id='totalFilesSize'
+                    title={<FormattedMessage {...messages.totalFilesSize}/>}
+                    icon='fa-files-o'
+                    count={this.getStatValue(stats[StatTypes.TOTAL_FILE_SIZE])}
+                    formatter={getFormattedFileSize}
+                />
+            );
+
             advancedStats = (
                 <>
                     <StatisticCount
@@ -288,20 +342,6 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
             );
 
             const channelTypeData = formatChannelDoughtnutData(stats[StatTypes.TOTAL_PUBLIC_CHANNELS], stats[StatTypes.TOTAL_PRIVATE_GROUPS]);
-            const postTypeData = formatPostDoughtnutData(stats[StatTypes.TOTAL_FILE_POSTS], stats[StatTypes.TOTAL_HASHTAG_POSTS], stats[StatTypes.TOTAL_POSTS]);
-
-            let postTypeGraph;
-            if (stats[StatTypes.TOTAL_POSTS] !== -1) {
-                postTypeGraph = (
-                    <DoughnutChart
-                        title={<FormattedMessage {...messages.postTypes}/>
-                        }
-                        data={postTypeData}
-                        width={300}
-                        height={225}
-                    />
-                );
-            }
 
             advancedGraphs = (
                 <div className='row'>
@@ -312,17 +352,19 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
                         width={300}
                         height={225}
                     />
-                    {postTypeGraph}
                 </div>
             );
         }
 
         const isCloud = this.props.license.Cloud === 'true';
+        const guestAccountsEnabled = this.props.config?.EnableGuestAccounts === 'true';
+        const seatAdjustedUserCount = this.props.serverLimits?.activeUserCount ?? this.getStatValue(stats[StatTypes.TOTAL_USERS]);
         const userCount = (
             <ActivatedUserCard
-                activatedUsers={this.getStatValue(stats[StatTypes.TOTAL_USERS])}
+                activatedUsers={seatAdjustedUserCount}
                 seatsPurchased={parseInt(this.props.license.Users, 10)}
                 isCloud={isCloud}
+                guestAccountsEnabled={guestAccountsEnabled}
             />
         );
 
@@ -392,21 +434,69 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
         );
 
         // Extract plugin stats that should be displayed and pass them to widget
-        const pluginSiteStats = (
-            <>
-                {Object.entries(this.state.pluginSiteStats).map(([key, stat]) =>
-                    (
-                        <StatisticCount
+        const pluginCounts = [];
+        const pluginLineCharts = [];
+        const pluginDoughnutCharts = [];
+
+        for (const [key, stat] of Object.entries(this.state.pluginSiteStats)) {
+            switch (stat.visualizationType) {
+            case AnalyticsVisualizationType.LineChart:
+                pluginLineCharts.push((
+                    <div
+                        className='row'
+                        key={'pluginstat.' + key}
+                    >
+                        <LineChart
                             id={key}
-                            key={'pluginstat.' + key}
                             title={stat.name}
-                            icon={stat.icon}
-                            count={stat.value}
+                            data={stat.value}
+                            width={740}
+                            height={225}
                         />
-                    ),
-                )}
-            </>
-        );
+                    </div>
+                ));
+                break;
+            case AnalyticsVisualizationType.DoughnutChart:
+                pluginDoughnutCharts.push((
+                    <div
+                        className='row'
+                        key={'pluginstat.' + key}
+                    >
+                        <DoughnutChart
+                            title={stat.name}
+                            data={stat.value}
+                            width={300}
+                            height={225}
+                        />
+                    </div>
+                ));
+                break;
+            case AnalyticsVisualizationType.Count:
+            default:
+                pluginCounts.push((
+                    <StatisticCount
+                        id={key}
+                        key={'pluginstat.' + key}
+                        title={stat.name}
+                        icon={stat.icon!}
+                        count={stat.value}
+                    />
+                ));
+            }
+        }
+
+        const isEntrySku = this.props.license.SkuShortName === LicenseSkus.Entry;
+        const shouldShowSingleChannelGuests = isLicensed && !isEntrySku && guestAccountsEnabled;
+
+        const singleChannelGuestsCount = this.getStatValue(stats[StatTypes.SINGLE_CHANNEL_GUESTS]);
+        const singleChannelGuestLimit = this.props.serverLimits?.singleChannelGuestLimit ?? parseInt(this.props.license.Users, 10);
+
+        const singleChannelGuests = shouldShowSingleChannelGuests ? (
+            <SingleChannelGuestsCard
+                singleChannelGuestsCount={singleChannelGuestsCount}
+                singleChannelGuestLimit={singleChannelGuestLimit}
+            />
+        ) : null;
 
         let systemCards;
         if (isLicensed) {
@@ -414,6 +504,7 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
                 <>
                     {userCount}
                     {isCloud ? null : seatsPurchased}
+                    {singleChannelGuests}
                     {teamCount}
                     {channelCount}
                     {skippedIntensiveQueries ? null : postCount}
@@ -421,6 +512,8 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
                     {commandCount}
                     {incomingCount}
                     {outgoingCount}
+                    {totalFiles}
+                    {totalFilesSize}
                 </>
             );
         } else if (!isLicensed) {
@@ -442,18 +535,38 @@ export default class SystemAnalytics extends React.PureComponent<Props, State> {
                 </AdminHeader>
                 <div className='admin-console__wrapper'>
                     <div className='admin-console__content'>
+                        <UserSeatAlertBanner
+                            license={this.props.license}
+                            totalUsers={this.props.serverLimits?.activeUserCount ?? this.getStatValue(stats[StatTypes.TOTAL_USERS]) ?? 0}
+                            location='system_statistics'
+                        />
                         {banner}
                         <div className='grid-statistics'>
                             {systemCards}
                             {dailyActiveUsers}
                             {monthlyActiveUsers}
                             {advancedStats}
-                            {pluginSiteStats}
+                            {pluginCounts}
                         </div>
                         {advancedGraphs}
-                        {postTotalGraph}
-                        {botPostTotalGraph}
-                        {activeUserGraph}
+                        {pluginDoughnutCharts}
+                        {pluginLineCharts}
+                        <details
+                            onToggle={this.handleLineChartsToggle}
+                            data-testid='details-expander'
+                        >
+                            <summary>
+                                <FormattedMessage
+                                    id='analytics.system.perDayStatistics'
+                                    defaultMessage='Load Advanced Statistics'
+                                />
+                            </summary>
+                            <>
+                                {postTotalGraph}
+                                {botPostTotalGraph}
+                                {activeUserGraph}
+                            </>
+                        </details>
                     </div>
                 </div>
             </div>

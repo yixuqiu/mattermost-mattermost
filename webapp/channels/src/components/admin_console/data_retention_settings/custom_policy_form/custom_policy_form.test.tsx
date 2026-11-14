@@ -1,10 +1,11 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {shallow} from 'enzyme';
 import React from 'react';
 
 import CustomPolicyForm from 'components/admin_console/data_retention_settings/custom_policy_form/custom_policy_form';
+
+import {renderWithContext, screen} from 'tests/react_testing_utils';
 
 describe('components/admin_console/data_retention_settings/custom_policy_form', () => {
     const defaultProps = {
@@ -21,16 +22,31 @@ describe('components/admin_console/data_retention_settings/custom_policy_form', 
         },
     };
 
-    test('should match snapshot with creating new policy', () => {
-        const props = {...defaultProps};
-        const wrapper = shallow(<CustomPolicyForm {...props}/>);
-        expect(wrapper).toMatchSnapshot();
+    beforeEach(() => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+    });
+    afterEach(() => {
+        (console.error as jest.Mock).mockClear();
     });
 
-    test('should match snapshot with editing existing policy', () => {
+    test('should render with creating new policy', () => {
+        const props = {...defaultProps};
+        renderWithContext(
+            <CustomPolicyForm {...props}/>,
+            {},
+            {useMockedStore: true},
+        );
+
+        expect(screen.getByText('Custom Retention Policy')).toBeInTheDocument();
+        expect(screen.getByText('Name and retention')).toBeInTheDocument();
+        expect(screen.getByText('Assigned teams')).toBeInTheDocument();
+        expect(screen.getByText('Assigned channels')).toBeInTheDocument();
+    });
+
+    test('should render with editing existing policy', () => {
         const props = {...defaultProps};
 
-        const wrapper = shallow(
+        renderWithContext(
             <CustomPolicyForm
                 {...props}
                 policyId='fsdgdsgdsgh'
@@ -42,7 +58,10 @@ describe('components/admin_console/data_retention_settings/custom_policy_form', 
                     channel_count: 2,
                 }}
             />,
+            {},
+            {useMockedStore: true},
         );
-        expect(wrapper).toMatchSnapshot();
+
+        expect(screen.getByText('Custom Retention Policy')).toBeInTheDocument();
     });
 });

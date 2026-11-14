@@ -10,6 +10,7 @@ import (
 	plugin "github.com/hashicorp/go-plugin"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/shared/mlog"
 )
 
 // The API can be used to retrieve data or perform actions on behalf of the plugin. Most methods
@@ -131,9 +132,17 @@ type API interface {
 
 	// GetUsers a list of users based on search options.
 	//
+	// Not all fields in UserGetOptions are supported by this API.
+	//
 	// @tag User
 	// Minimum server version: 5.10
 	GetUsers(options *model.UserGetOptions) ([]*model.User, *model.AppError)
+
+	// GetUsersByIds gets a list of users by their IDs.
+	//
+	// @tag User
+	// Minimum server version: 9.8
+	GetUsersByIds(userIDs []string) ([]*model.User, *model.AppError)
 
 	// GetUser gets a user.
 	//
@@ -438,6 +447,20 @@ type API interface {
 	// Minimum server version: 5.2
 	DeleteChannel(channelId string) *model.AppError
 
+	// RestoreChannel restores a previously deleted (archived) channel.
+	//
+	// @tag Channel
+	// Minimum server version: 11.10
+	RestoreChannel(channelId string) *model.AppError
+
+	// GetChannelOfType resolves a channel by ID, requiring it to be of the given type. Unlike
+	// GetChannel, it resolves opaque backing channel types (e.g. space) that GetChannel excludes;
+	// a caller that needs such a channel asks for it by its exact type.
+	//
+	// @tag Channel
+	// Minimum server version: 11.10
+	GetChannelOfType(channelId string, channelType model.ChannelType) (*model.Channel, *model.AppError)
+
 	// GetPublicChannelsForTeam gets a list of all channels.
 	//
 	// @tag Channel
@@ -500,6 +523,26 @@ type API interface {
 	// @tag Channel
 	// Minimum server version: 5.2
 	UpdateChannel(channel *model.Channel) (*model.Channel, *model.AppError)
+
+	// RegisterChannelGuard claims the channel for this plugin, signaling to the server that the
+	// channel has plugin-managed semantics and that the server's default behaviors are unsafe
+	// without plugin involvement.
+	//
+	// The calling plugin's ID is implicit. Multiple plugins may co-guard the same channel; each
+	// claim is an independent row. Subsequent calls from the same plugin are idempotent; calls from
+	// a different plugin add a new claim.
+	//
+	// @tag Channel
+	// Minimum server version: 11.9
+	RegisterChannelGuard(channelID string) *model.AppError
+
+	// UnregisterChannelGuard releases this plugin's claim on the channel. Only the registering
+	// plugin can unregister its own claim; other plugins' claims on the same channel are
+	// unaffected.
+	//
+	// @tag Channel
+	// Minimum server version: 11.9
+	UnregisterChannelGuard(channelID string) *model.AppError
 
 	// SearchChannels returns the channels on a team matching the provided search term.
 	//
@@ -705,6 +748,20 @@ type API interface {
 	// Minimum server version: 5.6
 	GetPostThread(postId string) (*model.PostList, *model.AppError)
 
+	// GetThreadFollowers gets the IDs of the active users who follow the thread of a root post.
+	//
+	// @tag Post
+	// Minimum server version: 12.2
+	GetThreadFollowers(threadID string) ([]string, *model.AppError)
+
+	// SetThreadFollowing makes a user follow, or stop following, the thread of a root post, as
+	// the user's follow button on the thread does. It does not check that the user can read the
+	// post's channel: the plugin is responsible for that.
+	//
+	// @tag Post
+	// Minimum server version: 12.2
+	SetThreadFollowing(userID, threadID string, following bool) *model.AppError
+
 	// GetPost gets a post.
 	//
 	// @tag Post
@@ -750,6 +807,21 @@ type API interface {
 	// @tag Post
 	// Minimum server version: 5.2
 	UpdatePost(post *model.Post) (*model.Post, *model.AppError)
+
+	// UpdatePostWithOptions updates a post using the supplied options.
+	// UpdatePost is the same edit with SafeUpdate false, no file creator, and
+	// AllowMmBlocksActionsUpdate set only when the post carries a valid
+	// mm_blocks_actions value. This method uses the options as given.
+	// FileCreatorID selects newly added files: a file attaches when its
+	// creator is that id, or when it was uploaded with UploadFile (creator
+	// "nouser"). A file that cannot be attached is omitted and the rest of
+	// the edit is saved. Nil options match the zero value. The plugin
+	// authorizes the edit. Permissions, hooks, and the returned post match
+	// UpdatePost: no session is created.
+	//
+	// @tag Post
+	// Minimum server version: 12.1
+	UpdatePostWithOptions(post *model.Post, options *model.UpdatePostOptions) (*model.Post, *model.AppError)
 
 	// GetProfileImage gets user's profile image.
 	//
@@ -819,6 +891,12 @@ type API interface {
 	// Minimum server version: 5.8
 	GetFile(fileId string) ([]byte, *model.AppError)
 
+	// HasPermissionToFileAction evaluates the applicable policy for a session and file.
+	//
+	// @tag File
+	// Minimum server version: 11.7
+	HasPermissionToFileAction(sessionID, fileID, action string) bool
+
 	// GetFileLink gets the public link to a file by fileId.
 	//
 	// @tag File
@@ -850,6 +928,14 @@ type API interface {
 	//
 	// Minimum server version: 5.6
 	OpenInteractiveDialog(dialog model.OpenDialogRequest) *model.AppError
+
+	// SendToastMessage sends a toast notification to a specific user or user session.
+	// The userID parameter specifies the user to send the toast to.
+	// If connectionID is set, the toast will only be sent to that specific connection.
+	//
+	// @tag Frontend
+	// Minimum server version: 11.5
+	SendToastMessage(userID, connectionID, message string, options model.SendToastMessageOptions) *model.AppError
 
 	// Plugin Section
 
@@ -950,11 +1036,28 @@ type API interface {
 	// Minimum server version: 5.6
 	KVDeleteAll() *model.AppError
 
-	// KVList lists all keys for a plugin.
+	// KVList lists all keys for a plugin, sorted by key.
+	// To list only the keys with a given prefix, use KVListWithOptions.
 	//
 	// @tag KeyValueStore
 	// Minimum server version: 5.6
 	KVList(page, perPage int) ([]string, *model.AppError)
+
+	// KVListWithOptions lists the keys for a plugin that match the given options, sorted by key.
+	// The database filters the keys before it applies page and perPage, so the pages contain
+	// only matching keys. A page with fewer than perPage keys is the last page.
+	//
+	// Options.Prefix returns only the keys that start with the prefix. All characters in the
+	// prefix match literally, including SQL wildcards such as % and _. An empty prefix returns
+	// all keys, as KVList does. Expired keys are not returned.
+	//
+	// On a server older than 12.2, the call returns an AppError with status code 501
+	// (Not Implemented). The pluginapi ListKeys method with WithPrefix uses KVListWithOptions,
+	// and on older servers it lists all keys and filters them in the plugin.
+	//
+	// @tag KeyValueStore
+	// Minimum server version: 12.2
+	KVListWithOptions(page, perPage int, options model.PluginKVListOptions) ([]string, *model.AppError)
 
 	// PublishWebSocketEvent sends an event to WebSocket connections.
 	// event is the type and will be prepended with "custom_<pluginid>_".
@@ -1062,7 +1165,12 @@ type API interface {
 	// Minimum server version: 5.10
 	PermanentDeleteBot(botUserId string) *model.AppError
 
-	// PluginHTTP allows inter-plugin requests to plugin APIs.
+	// PluginHTTP allows inter-plugin requests to plugin APIs. Deadlines and cancellation attached to
+	// request.Context() are propagated to updated destination plugins. If the context ends before
+	// response headers arrive, PluginHTTP returns nil and the caller can inspect request.Context().Err().
+	// If it ends after headers arrive, reads from the response body return the context error.
+	// Context propagation requires Mattermost server v12.0 or later.
+	// Calls to older servers retain legacy behavior and may not return promptly after cancellation.
 	//
 	// Minimum server version: 5.18
 	PluginHTTP(request *http.Request) *http.Response
@@ -1167,6 +1275,23 @@ type API interface {
 	// Minimum server version: 5.36
 	PublishPluginClusterEvent(ev model.PluginClusterEvent, opts model.PluginClusterEventSendOptions) error
 
+	// GetClusterNodeID returns the cluster ID of the node the plugin is running on, for use as
+	// PluginClusterEventSendOptions.TargetId by other nodes. It returns an empty string until
+	// the node has joined a High-Availability cluster, e.g. when clustering is disabled.
+	//
+	// @tag Cluster
+	// Minimum server version: 12.2
+	GetClusterNodeID() string
+
+	// GetClusterNodes returns the nodes connected to the High-Availability cluster, including
+	// the one the plugin is running on. Each Id can be used as
+	// PluginClusterEventSendOptions.TargetId. It returns an empty list until this node has
+	// joined a cluster. Each call may query the database, so avoid calling it on hot paths.
+	//
+	// @tag Cluster
+	// Minimum server version: 12.2
+	GetClusterNodes() ([]*model.ClusterInfo, error)
+
 	// RequestTrialLicense requests a trial license and installs it in the server
 	//
 	// Minimum server version: 5.36
@@ -1235,12 +1360,22 @@ type API interface {
 	// Minimum server version: 9.5
 	RegisterPluginForSharedChannels(opts model.RegisterPluginOpts) (remoteID string, err error)
 
-	// UnregisterPluginForSharedChannels unregisters the plugin as a `Remote` for SharedChannels.
-	// The plugin will no longer receive synchronization messages via the `OnSharedChannelsSyncMsg` hook.
+	// UnregisterPluginForSharedChannels unregisters all remotes for this plugin. The plugin will no
+	// longer receive synchronization messages via the `OnSharedChannelsSyncMsg` hook. Used in
+	// OnDeactivate for bulk cleanup.
 	//
 	// @tag SharedChannels
 	// Minimum server version: 9.5
 	UnregisterPluginForSharedChannels(pluginID string) error
+
+	// UnregisterPluginRemoteForSharedChannels unregisters a specific remote by its remoteID.
+	// The remote must belong to the calling plugin (ownership is validated server-side).
+	// The remote will no longer receive synchronization messages. Used for config change
+	// reconciliation when a connection is removed but others remain.
+	//
+	// @tag SharedChannels
+	// Minimum server version: 11.7
+	UnregisterPluginRemoteForSharedChannels(remoteID string) error
 
 	// ShareChannel marks a channel for sharing via shared channels. Note, this does not automatically
 	// invite any remote clusters to the channel - use `InviteRemote` to invite a remote , or this plugin,
@@ -1273,6 +1408,15 @@ type API interface {
 	// Minimum server version: 9.5
 	UpdateSharedChannelCursor(channelID, remoteID string, cusror model.GetPostsSinceForSyncCursor) error
 
+	// GetSharedChannelCursor returns the sync cursor for the specified channel and RemoteID (passed by
+	// the plugin when registering). The remote must belong to the calling plugin. This can be used to
+	// track the progress of a re-sync started by rewinding the cursor with UpdateSharedChannelCursor.
+	// Returns an error if the remote is not invited to the channel or its invite is not yet confirmed.
+	//
+	// @tag SharedChannels
+	// Minimum server version: 12.2
+	GetSharedChannelCursor(channelID, remoteID string) (model.GetPostsSinceForSyncCursor, error)
+
 	// SyncSharedChannel forces a shared channel to send any changed content to all remotes.
 	//
 	// @tag SharedChannels
@@ -1294,12 +1438,486 @@ type API interface {
 	// Minimum server version: 9.5
 	UninviteRemoteFromChannel(channelID string, remoteID string) error
 
+	// ReceiveSharedChannelSyncMsg processes a sync message from this plugin, creating or updating
+	// posts, reactions, users, statuses, acknowledgements, and membership changes.
+	// When msg.ChannelId is set, content is synced into that shared channel.
+	// When msg.ChannelId is empty and only Users are present, a global user sync is performed.
+	// This is the inbound counterpart of the OnSharedChannelsSyncMsg hook.
+	// The remoteID identifies which of the plugin's registered remotes this message is from
+	// (the value returned by RegisterPluginForSharedChannels). Entities in the SyncMsg will
+	// have their RemoteId set to match this remote.
+	//
+	// @tag SharedChannels
+	// Minimum server version: 11.7
+	ReceiveSharedChannelSyncMsg(remoteID string, msg *model.SyncMsg) (model.SyncResponse, error)
+
+	// ReceiveSharedChannelAttachmentSyncMsg syncs a file attachment into a shared channel.
+	// The FileInfo provides metadata (Name, Size, CreatorId); the server constructs the
+	// storage path and manages the upload. The data reader provides the raw file bytes.
+	// This is the inbound counterpart of the OnSharedChannelsAttachmentSyncMsg hook.
+	// The remoteID identifies which of the plugin's registered remotes this attachment is from
+	// (the value returned by RegisterPluginForSharedChannels).
+	//
+	// The post-receive (ReceiveSharedChannelSyncMsg) and file-receive calls for the same
+	// post-and-attachment pair may be issued in either order or concurrently; the framework
+	// binds the file to its post regardless of arrival order. Repeated calls with the same
+	// (fi.Id, channelID, fi.CreatorId) return the existing FileInfo without producing
+	// duplicates, allowing transports with at-least-once delivery semantics to redeliver
+	// safely. Repeats whose fi.Id matches an existing record under a different channel or
+	// creator are rejected.
+	//
+	// @tag SharedChannels
+	// Minimum server version: 11.7
+	ReceiveSharedChannelAttachmentSyncMsg(remoteID, channelID string, fi *model.FileInfo, data io.Reader) (*model.FileInfo, error)
+
+	// ReceiveSharedChannelProfileImageSyncMsg syncs a user's profile image from this plugin's
+	// remote into Mattermost. The user must have a RemoteId matching the specified remote.
+	// This is the inbound counterpart of the OnSharedChannelsProfileImageSyncMsg hook.
+	// The remoteID identifies which of the plugin's registered remotes this image is from
+	// (the value returned by RegisterPluginForSharedChannels).
+	//
+	// @tag SharedChannels
+	// Minimum server version: 11.7
+	ReceiveSharedChannelProfileImageSyncMsg(remoteID, userID string, image []byte) error
+
+	// UpsertGroupMember adds a user to a group or updates their existing membership.
+	//
+	// @tag Group
+	// @tag User
+	// Minimum server version: 10.7
+	UpsertGroupMember(groupID string, userID string) (*model.GroupMember, *model.AppError)
+
+	// UpsertGroupMembers adds multiple users to a group or updates their existing memberships.
+	//
+	// @tag Group
+	// @tag User
+	// Minimum server version: 10.7
+	UpsertGroupMembers(groupID string, userIDs []string) ([]*model.GroupMember, *model.AppError)
+
+	// GetGroupByRemoteID gets a group by its remote ID.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	GetGroupByRemoteID(remoteID string, groupSource model.GroupSource) (*model.Group, *model.AppError)
+
+	// CreateGroup creates a new group.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	CreateGroup(group *model.Group) (*model.Group, *model.AppError)
+
+	// UpdateGroup updates a group.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	UpdateGroup(group *model.Group) (*model.Group, *model.AppError)
+
+	// DeleteGroup soft deletes a group.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	DeleteGroup(groupID string) (*model.Group, *model.AppError)
+
+	// RestoreGroup restores a soft deleted group.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	RestoreGroup(groupID string) (*model.Group, *model.AppError)
+
+	// DeleteGroupMember removes a user from a group.
+	//
+	// @tag Group
+	// @tag User
+	// Minimum server version: 10.7
+	DeleteGroupMember(groupID string, userID string) (*model.GroupMember, *model.AppError)
+
+	// GetGroupSyncable gets a group syncable.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	GetGroupSyncable(groupID string, syncableID string, syncableType model.GroupSyncableType) (*model.GroupSyncable, *model.AppError)
+
+	// GetGroupSyncables gets all group syncables for the given group.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	GetGroupSyncables(groupID string, syncableType model.GroupSyncableType) ([]*model.GroupSyncable, *model.AppError)
+
+	// UpsertGroupSyncable creates or updates a group syncable.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	UpsertGroupSyncable(groupSyncable *model.GroupSyncable) (*model.GroupSyncable, *model.AppError)
+
+	// UpdateGroupSyncable updates a group syncable.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	UpdateGroupSyncable(groupSyncable *model.GroupSyncable) (*model.GroupSyncable, *model.AppError)
+
+	// DeleteGroupSyncable deletes a group syncable.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	DeleteGroupSyncable(groupID string, syncableID string, syncableType model.GroupSyncableType) (*model.GroupSyncable, *model.AppError)
+
 	// UpdateUserRoles updates the role for a user.
 	//
 	// @tag Team
 	// @tag User
 	// Minimum server version: 9.8
 	UpdateUserRoles(userID, newRoles string) (*model.User, *model.AppError)
+
+	// GetPluginID returns the plugin ID.
+	//
+	// @tag Plugin
+	// Minimum server version: 10.1
+	GetPluginID() string
+
+	// GetGroups returns a list of all groups with the given options and restrictions.
+	//
+	// @tag Group
+	// Minimum server version: 10.7
+	GetGroups(page, perPage int, opts model.GroupSearchOpts, viewRestrictions *model.ViewUsersRestrictions) ([]*model.Group, *model.AppError)
+
+	// CreateDefaultSyncableMemberships creates default syncable memberships based off the provided parameters.
+	//
+	// @tag Group
+	// Minimum server version: 10.9
+	CreateDefaultSyncableMemberships(params model.CreateDefaultMembershipParams) *model.AppError
+
+	// DeleteGroupConstrainedMemberships deletes team and channel memberships of users who aren't members of the allowed groups of all group-constrained teams and channels.
+	//
+	// @tag Group
+	// Minimum server version: 10.9
+	DeleteGroupConstrainedMemberships() *model.AppError
+
+	// CreatePropertyField creates a new property field.
+	//
+	// If the field's LinkedFieldID is set, the field inherits type, options,
+	// and security attributes from the referenced template field. The source
+	// must be a template field in the same group, must not itself be linked,
+	// and must not be deleted.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	CreatePropertyField(field *model.PropertyField) (*model.PropertyField, error)
+
+	// GetPropertyField gets a property field by groupID and fieldID.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	GetPropertyField(groupID, fieldID string) (*model.PropertyField, error)
+
+	// GetPropertyFields gets multiple property fields by groupID and a list of IDs.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	GetPropertyFields(groupID string, ids []string) ([]*model.PropertyField, error)
+
+	// UpdatePropertyField updates an existing property field.
+	//
+	// Fields with a LinkedFieldID cannot have their type or options modified.
+	// Set LinkedFieldID to an empty string to unlink a field from its source.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	UpdatePropertyField(groupID string, field *model.PropertyField) (*model.PropertyField, error)
+
+	// DeletePropertyField deletes a property field (soft delete).
+	//
+	// Returns an error if the field has active linked dependents. Unlink or
+	// delete dependent fields first.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	DeletePropertyField(groupID, fieldID string) error
+
+	// SearchPropertyFields searches for property fields with filtering options.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.0
+	SearchPropertyFields(groupID string, opts model.PropertyFieldSearchOpts) ([]*model.PropertyField, error)
+
+	// CountPropertyFields counts property fields for a group.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.0
+	CountPropertyFields(groupID string, includeDeleted bool) (int64, error)
+
+	// CountPropertyFieldsForTarget counts property fields for a specific target.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.0
+	CountPropertyFieldsForTarget(groupID, targetType, targetID string, includeDeleted bool) (int64, error)
+
+	// GetPropertyFieldOptions returns one page of a property field's options,
+	// ordered by creation time and continuing after the option the cursor names.
+	// Pass a zero cursor for the first page, then the create_at and id of the
+	// last option of the page just read. Both cursor parts or neither.
+	//
+	// The page includes the options the field inherits from the template it
+	// links to, flagged read_only, and for a field whose options form a
+	// hierarchy each option carries the names of the options directly above it.
+	// A page size is required, and at most 200 options are served at a time.
+	//
+	// A page holds the options this caller may see, which on a field whose
+	// options are access-controlled is fewer than the field has -- and on one
+	// whose options form a hierarchy the options above the caller's own are
+	// withheld along with their names, so those options carry no parents.
+	// Continue while the page's HasMore is true, passing its NextCursorCreateAt
+	// and NextCursorID back on the next call: the page length alone does not say
+	// whether the listing is over, and the cursor names the last option the page
+	// query examined rather than the last one it returned.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.10
+	GetPropertyFieldOptions(groupID, fieldID string, cursorCreateAt int64, cursorID string, perPage int) (*model.PropertyFieldOptionPage, error)
+
+	// CreatePropertyFieldOptions adds options to a property field, at most 200
+	// per call. Each option may name the options it sits under, by name, in
+	// parents; a name resolves against the field's existing options and the
+	// names in the same payload, so a hierarchy can be built in one call.
+	//
+	// Every option is created or none is: the first item that cannot be
+	// accepted fails the call, reporting its position and the reason. An
+	// option's identifier is assigned here, so supplying one is refused.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.10
+	CreatePropertyFieldOptions(groupID, fieldID string, options []*model.PropertyFieldOption) ([]*model.PropertyFieldOption, error)
+
+	// UpdatePropertyFieldOptions rewrites options a property field owns, at most
+	// 200 per call, each named by id. A part the payload leaves out is left as
+	// it was, so changing a name does not discard a colour or detach an option
+	// from the options above it; parents, when given, replaces that option's
+	// parent set rather than adding to it.
+	//
+	// Options the field inherits from a template cannot be changed through the
+	// field that inherits them. Every option is updated or none is.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.10
+	UpdatePropertyFieldOptions(groupID, fieldID string, options []*model.PropertyFieldOption) ([]*model.PropertyFieldOption, error)
+
+	// DeletePropertyFieldOptions removes options a property field owns, at most
+	// 200 per call, named by id. The set is judged as a whole, so a branch of a
+	// hierarchy can be removed in one call; an option left with something still
+	// below it is refused, because that option would become a root of its own.
+	//
+	// Values naming a removed option are left alone: a value naming an option
+	// that no longer exists is ignored wherever it is read.
+	//
+	// @tag PropertyField
+	// Minimum server version: 11.10
+	DeletePropertyFieldOptions(groupID, fieldID string, optionIDs []string) error
+
+	// CreatePropertyValue creates a new property value.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	CreatePropertyValue(value *model.PropertyValue) (*model.PropertyValue, error)
+
+	// GetPropertyValue gets a property value by groupID and valueID.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	GetPropertyValue(groupID, valueID string) (*model.PropertyValue, error)
+
+	// GetPropertyValues gets multiple property values by groupID and a list of IDs.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	GetPropertyValues(groupID string, ids []string) ([]*model.PropertyValue, error)
+
+	// UpdatePropertyValue updates an existing property value.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	UpdatePropertyValue(groupID string, value *model.PropertyValue) (*model.PropertyValue, error)
+
+	// UpsertPropertyValue creates a new property value or updates if it already exists.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	UpsertPropertyValue(value *model.PropertyValue) (*model.PropertyValue, error)
+
+	// DeletePropertyValue deletes a property value (soft delete).
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	DeletePropertyValue(groupID, valueID string) error
+
+	// SearchPropertyValues searches for property values with filtering options.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.0
+	SearchPropertyValues(groupID string, opts model.PropertyValueSearchOpts) ([]*model.PropertyValue, error)
+
+	// RegisterPropertyGroup registers a new property group.
+	//
+	// @tag PropertyGroup
+	// Minimum server version: 10.10
+	RegisterPropertyGroup(name string) (*model.PropertyGroup, error)
+
+	// GetPropertyGroup gets a property group by name.
+	//
+	// @tag PropertyGroup
+	// Minimum server version: 10.10
+	GetPropertyGroup(name string) (*model.PropertyGroup, error)
+
+	// GetPropertyFieldByName gets a property field by groupID, targetID and name.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	GetPropertyFieldByName(groupID, targetID, name string) (*model.PropertyField, error)
+
+	// UpdatePropertyFields updates multiple property fields in a single operation.
+	//
+	// @tag PropertyField
+	// Minimum server version: 10.10
+	UpdatePropertyFields(groupID string, fields []*model.PropertyField) ([]*model.PropertyField, error)
+
+	// UpdatePropertyValues updates multiple property values in a single operation.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	UpdatePropertyValues(groupID string, values []*model.PropertyValue) ([]*model.PropertyValue, error)
+
+	// UpsertPropertyValues creates or updates multiple property values in a single operation.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	UpsertPropertyValues(values []*model.PropertyValue) ([]*model.PropertyValue, error)
+
+	// DeletePropertyValuesForTarget deletes all property values for a specific target.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	DeletePropertyValuesForTarget(groupID, targetType, targetID string) error
+
+	// DeletePropertyValuesForField deletes all property values for a specific field.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 10.10
+	DeletePropertyValuesForField(groupID, fieldID string) error
+
+	// UpsertPropertyValuesWithOptions creates or updates multiple property
+	// values, declaring the scope the plugin is acting as. The scope is
+	// checked against each field's owners list when the field is owner-managed.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.10
+	UpsertPropertyValuesWithOptions(values []*model.PropertyValue, options model.PropertyRequestOptions) ([]*model.PropertyValue, error)
+
+	// UpsertPropertyValueWithOptions creates or updates a single property
+	// value, declaring the scope the plugin is acting as.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.10
+	UpsertPropertyValueWithOptions(value *model.PropertyValue, options model.PropertyRequestOptions) (*model.PropertyValue, error)
+
+	// DeletePropertyValueWithOptions deletes a property value, declaring the
+	// scope the plugin is acting as.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.10
+	DeletePropertyValueWithOptions(groupID, valueID string, options model.PropertyRequestOptions) error
+
+	// DeletePropertyValuesForTargetWithOptions deletes all property values for
+	// a target, declaring the scope the plugin is acting as. This is the
+	// deprovisioning entrypoint: it needs no value objects, only the target.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.10
+	DeletePropertyValuesForTargetWithOptions(groupID, targetType, targetID string, options model.PropertyRequestOptions) error
+
+	// DeletePropertyValuesForFieldWithOptions deletes all property values for a
+	// field, declaring the scope the plugin is acting as.
+	//
+	// @tag PropertyValue
+	// Minimum server version: 11.10
+	DeletePropertyValuesForFieldWithOptions(groupID, fieldID string, options model.PropertyRequestOptions) error
+
+	// LogAuditRec logs an audit record using the default audit logger.
+	//
+	// @tag Audit
+	// Minimum server version: 10.10
+	LogAuditRec(rec *model.AuditRecord)
+
+	// LogAuditRecWithLevel logs an audit record with a specific log level.
+	//
+	// @tag Audit
+	// Minimum server version: 10.10
+	LogAuditRecWithLevel(rec *model.AuditRecord, level mlog.Level)
+
+	// EvaluateAccessControl evaluates whether userID may perform action on the
+	// plugin-owned resource (resourceType, resourceID). resourceType must be
+	// "<callingPluginID>:<type>". The reply follows the OpenID AuthZEN
+	// evaluation response: Decision plus an optional Context.
+	//
+	// AccessDecision.IsNoPolicy() reports that the server positively determined
+	// no policy governs the resource — resolved even when the access control
+	// engine is unavailable — so the caller can safely apply its own defaults
+	// instead of treating the allow as an explicit grant. Any returned error
+	// means the decision could not be computed and the plugin MUST fail closed
+	// (deny).
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	EvaluateAccessControl(userID, resourceType, resourceID, action string) (*model.AccessDecision, *model.AppError)
+
+	// SaveAccessControlPolicy creates or updates a policy whose Type is
+	// "<callingPluginID>:<type>". Version is forced to v0.5 and Active to
+	// true. policy.ID must be the resource's stable 26-char ID.
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	SaveAccessControlPolicy(actingUserID string, policy *model.AccessControlPolicy) (*model.AccessControlPolicy, *model.AppError)
+
+	// GetAccessControlPolicy returns the policy stored under id. Returns a
+	// not-found error if no policy exists OR the stored policy's type is not
+	// owned by the calling plugin (fail closed, no existence leak).
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	GetAccessControlPolicy(id string) (*model.AccessControlPolicy, *model.AppError)
+
+	// DeleteAccessControlPolicy deletes the policy stored under id after
+	// verifying the stored policy's type equals resourceType and is owned by
+	// the calling plugin. Type mismatches return a not-found error (fail closed).
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	DeleteAccessControlPolicy(actingUserID, resourceType, id string) *model.AppError
+
+	// CheckAccessControlExpression compiles and lints a CEL expression; an
+	// empty slice means the expression is valid.
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	CheckAccessControlExpression(actingUserID, resourceType, expression string) ([]model.CELExpressionError, *model.AppError)
+
+	// QueryUsersForAccessControlExpression returns users matching the
+	// expression (test modal support for policy editors).
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	QueryUsersForAccessControlExpression(actingUserID, resourceType, expression, term, cursorID string, limit int) (*model.AccessControlPolicyTestResponse, *model.AppError)
+
+	// GetAccessControlFieldsAutocomplete returns CPA fields for editor
+	// autocomplete, filtered by the acting user's attribute visibility.
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	GetAccessControlFieldsAutocomplete(actingUserID, after string, limit int) ([]*model.PropertyField, *model.AppError)
+
+	// GetAccessControlVisualAST converts a CEL expression to the visual
+	// (table) AST.
+	//
+	// @tag AccessControl
+	// Minimum server version: 11.10
+	GetAccessControlVisualAST(actingUserID, resourceType, expression string) (*model.VisualExpression, *model.AppError)
 }
 
 var handshake = plugin.HandshakeConfig{

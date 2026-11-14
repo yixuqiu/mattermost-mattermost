@@ -5,7 +5,10 @@ import fs from 'fs';
 
 import nock from 'nock';
 
-import type {Team} from '@mattermost/types/teams';
+import {CollapsedThreads} from '@mattermost/types/config';
+import type {Team, TeamsWithCount} from '@mattermost/types/teams';
+import type {UserProfile} from '@mattermost/types/users';
+import type {RelationOneToManyUnique} from '@mattermost/types/utilities';
 
 import {UserTypes} from 'mattermost-redux/action_types';
 import * as Actions from 'mattermost-redux/actions/teams';
@@ -29,7 +32,7 @@ describe('Actions.Teams', () => {
             entities: {
                 general: {
                     config: {
-                        CollapsedThreads: 'always_on',
+                        CollapsedThreads: CollapsedThreads.ALWAYS_ON,
                     },
                 },
             },
@@ -61,12 +64,7 @@ describe('Actions.Teams', () => {
             reply(200, [TestHelper.basicTeam]);
         await store.dispatch(Actions.getMyTeams());
 
-        const teamsRequest = store.getState().requests.teams.getMyTeams;
         const {teams} = store.getState().entities.teams;
-
-        if (teamsRequest.status === RequestStatus.FAILURE) {
-            throw new Error(JSON.stringify(teamsRequest.error));
-        }
 
         expect(teams).toBeTruthy();
         expect(teams[TestHelper.basicTeam!.id]).toBeTruthy();
@@ -360,7 +358,7 @@ describe('Actions.Teams', () => {
         const member = members[TestHelper.basicTeam!.id];
 
         expect(member).toBeTruthy();
-        expect(Object.prototype.hasOwnProperty.call(member, 'mention_count')).toBeTruthy();
+        expect(Object.hasOwn(member, 'mention_count')).toBeTruthy();
     });
 
     it('getTeamMembersForUser', async () => {
@@ -520,10 +518,10 @@ describe('Actions.Teams', () => {
                         currentUserId: '',
                         profilesInTeam: {
                             [team.id]: [user.id],
-                        },
+                        } as unknown as RelationOneToManyUnique<Team, UserProfile>,
                         profilesNotInTeam: {
                             [team.id]: [],
-                        },
+                        } as unknown as RelationOneToManyUnique<Team, UserProfile>,
                     },
                 },
             });
@@ -788,6 +786,6 @@ describe('Actions.Teams', () => {
             throw new Error(JSON.stringify(paginatedRequest.error));
         }
 
-        expect(response.data.teams.length === 2).toBeTruthy();
+        expect((response.data as unknown as TeamsWithCount).teams.length === 2).toBeTruthy();
     });
 });

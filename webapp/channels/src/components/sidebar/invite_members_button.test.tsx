@@ -2,14 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {Provider} from 'react-redux';
 
 import * as teams from 'mattermost-redux/selectors/entities/teams';
 
 import InviteMembersButton from 'components/sidebar/invite_members_button';
 
-import {mountWithIntl} from 'tests/helpers/intl-test-helper';
-import mockStore from 'tests/test_store';
+import {renderWithContext} from 'tests/react_testing_utils';
 
 describe('components/sidebar/invite_members_button', () => {
     // required state to mount using the provider
@@ -46,22 +44,9 @@ describe('components/sidebar/invite_members_button', () => {
         },
     };
 
-    const props = {
-        isAdmin: false,
-    };
+    const props = {};
 
-    const store = mockStore(state);
     jest.spyOn(teams, 'getCurrentTeamId').mockReturnValue('team_id2sss');
-
-    test('should match snapshot', () => {
-        const wrapper = mountWithIntl(
-            <Provider store={store}>
-                <InviteMembersButton {...props}/>
-            </Provider>,
-        );
-
-        expect(wrapper).toMatchSnapshot();
-    });
 
     test('should return nothing when user does not have permissions', () => {
         const guestUser = {
@@ -74,13 +59,11 @@ describe('components/sidebar/invite_members_button', () => {
             },
         };
         const noPermissionsState = {...state, entities: {...state.entities, users: guestUser}};
-        const store = mockStore(noPermissionsState);
 
-        const wrapper = mountWithIntl(
-            <Provider store={store}>
-                <InviteMembersButton {...props}/>
-            </Provider>,
+        const {container} = renderWithContext(
+            <InviteMembersButton {...props}/>,
+            noPermissionsState,
         );
-        expect(wrapper.find('i').exists()).toBeFalsy();
+        expect(container.querySelector('i')).toBeNull();
     });
 });

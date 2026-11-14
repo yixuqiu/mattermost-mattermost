@@ -2,9 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback} from 'react';
+import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
-import styled from 'styled-components';
 
+import {InformationOutlineIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 import type {Channel} from '@mattermost/types/channels';
 
 import {closeRightHandSide, showChannelInfo} from 'actions/views/rhs';
@@ -20,16 +22,9 @@ interface Props {
     channel: Channel;
 }
 
-const Icon = styled.i`
-    font-size:18px;
-    line-height:18px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-`;
-
 const ChannelInfoButton = ({channel}: Props) => {
     const dispatch = useDispatch();
+    const intl = useIntl();
 
     const rhsState: RhsState = useSelector(getRhsState);
     const isRhsOpen: boolean = useSelector(getIsRhsOpen);
@@ -48,22 +43,24 @@ const ChannelInfoButton = ({channel}: Props) => {
         }
     }, [buttonActive, channel.id, isChannelInfo, dispatch]);
 
-    const tooltipKey = buttonActive ? 'closeChannelInfo' : 'openChannelInfo';
-
-    let buttonClass = 'channel-header__icon';
+    let tooltip;
     if (buttonActive) {
-        buttonClass += ' channel-header__icon--active-inverted';
+        tooltip = intl.formatMessage({id: 'channel_header.closeChannelInfo', defaultMessage: 'Close Info'});
+    } else {
+        tooltip = intl.formatMessage({id: 'channel_header.openChannelInfo', defaultMessage: 'View Info'});
     }
 
     return (
         <HeaderIconWrapper
-            buttonClass={buttonClass}
+            active={buttonActive}
+            buttonClass='channel-header__icon channel-header__icon--small'
             buttonId='channel-info-btn'
             onClick={toggleRHS}
-            ariaLabel={true}
-            iconComponent={<Icon className='icon-information-outline'/>}
-            tooltipKey={tooltipKey}
-        />
+            size='small'
+            tooltip={tooltip}
+        >
+            <Icon glyph={<InformationOutlineIcon/>}/>
+        </HeaderIconWrapper>
     );
 };
 

@@ -20,6 +20,19 @@ export type ModalFilters = {
     team_roles?: string[];
 };
 
+export type UserGridSearchFilters = {
+    roles?: string[];
+    channel_roles?: string[];
+    team_roles?: string[];
+};
+
+export type ChannelListSearchFilters = {
+    public?: boolean;
+    private?: boolean;
+    deleted?: boolean;
+    team_ids?: string[];
+};
+
 export type AdminConsoleUserManagementTableProperties = {
     sortColumn: string;
     sortIsDescending: boolean;
@@ -35,6 +48,13 @@ export type AdminConsoleUserManagementTableProperties = {
     filterStatus: string;
     filterRole: string;
     dateRange?: ReportDuration;
+};
+
+export type EditingPostDetails = {
+    postId: string;
+    refocusId: string;
+    isRHS: boolean;
+    show: boolean;
 };
 
 export type ViewsState = {
@@ -85,6 +105,7 @@ export type ViewsState = {
         remotes: {
             [storageKey: string]: boolean;
         };
+        pendingQuote: PendingQuote | null;
     };
 
     rhs: RhsViewState;
@@ -92,11 +113,7 @@ export type ViewsState = {
     rhsSuppressed: boolean;
 
     posts: {
-        editingPost: {
-            postId: string;
-            show: boolean;
-            isRHS: boolean;
-        };
+        editingPost: EditingPostDetails;
         menuActions: {
             [postId: string]: {
                 [actionId: string]: {
@@ -127,6 +144,10 @@ export type ViewsState = {
 
     lhs: LhsViewState;
 
+    readout: {
+        message: string | null;
+    };
+
     search: {
         modalSearch: string;
         popoverSearch: string;
@@ -134,21 +155,12 @@ export type ViewsState = {
         modalFilters: ModalFilters;
         userGridSearch: {
             term: string;
-            filters: {
-                roles?: string[];
-                channel_roles?: string[];
-                team_roles?: string[];
-            };
+            filters: UserGridSearchFilters;
         };
         teamListSearch: string;
         channelListSearch: {
             term: string;
-            filters: {
-                public?: boolean;
-                private?: boolean;
-                deleted?: boolean;
-                team_ids?: string[];
-            };
+            filters: ChannelListSearchFilters;
         };
     };
 
@@ -179,24 +191,27 @@ export type ViewsState = {
         filter: string;
     };
 
-    productMenu: {
-        switcherOpen: boolean;
-    };
-
     channelSidebar: {
         unreadFilterEnabled: boolean;
         draggingState: DraggingState;
         newCategoryIds: string[];
         multiSelectedChannelIds: string[];
         lastSelectedChannel: string;
+        initChannelsLoaded: boolean;
+        initChannelMembershipsLoaded: boolean;
     };
 
-    statusDropdown: {
-        isOpen: boolean;
-    };
+    productRail: {
 
-    addChannelDropdown: {
-        isOpen: boolean;
+        // Which channel list the LHS shows while the product rail is on and a plugin registers boards.
+        section: ProductRailSection;
+
+        // The path last viewed under each rail item, keyed by ProductRailTab then team id, so
+        // clicking an item returns to it.
+        lastPathByTeam: Record<string, Record<string, string>>;
+
+        // Whether the paths saved from earlier sessions have been restored.
+        lastPathsLoaded: boolean;
     };
 
     addChannelCtaDropdown: {
@@ -212,14 +227,22 @@ export type ViewsState = {
     threads: {
         selectedThreadIdInTeam: RelationOneToOne<Team, UserThread['id'] | null>;
         lastViewedAt: {[id: string]: number};
+        lastUpdateAt: {[id: string]: number};
         manuallyUnread: {[id: string]: boolean};
         toastStatus: boolean;
     };
+};
 
-    textbox: {
-        shouldShowPreviewOnCreateComment: boolean;
-        shouldShowPreviewOnCreatePost: boolean;
-        shouldShowPreviewOnEditChannelHeaderModal: boolean;
-        shouldShowPreviewOnEditPostModal: boolean;
-    };
+// Channels shows channels and DMs, Boards only boards.
+export type ProductRailSection = 'channels' | 'boards';
+
+// A rail item that remembers where the user was: a section, Threads, or a product as `product:<id>`.
+export type ProductRailTab = ProductRailSection | 'threads' | `product:${string}`;
+
+export type PendingQuote = {
+    channelId: string;
+    rootId: string;
+
+    // Markdown of the quoted text
+    text: string;
 };

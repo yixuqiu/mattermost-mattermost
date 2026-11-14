@@ -4,20 +4,22 @@
 import React from 'react';
 import {Redirect} from 'react-router-dom';
 
+import {isAndroid, isIos} from '@mattermost/shared/utils/user_agent';
 import type {UserProfile} from '@mattermost/types/users';
 
 import * as GlobalActions from 'actions/global_actions';
-import * as WebSocketActions from 'actions/websocket_actions.jsx';
+import * as WebSocketActions from 'actions/websocket_actions';
 import BrowserStore from 'stores/browser_store';
 
 import LoadingScreen from 'components/loading_screen';
 
 import WebSocketClient from 'client/web_websocket_client';
+import {ensureAuthenticatedPluginsLoaded} from 'plugins';
 import Constants from 'utils/constants';
 import DesktopApp from 'utils/desktop_api';
 import {isKeyPressed} from 'utils/keyboard';
 import {getBrowserTimezone} from 'utils/timezone';
-import * as UserAgent from 'utils/user_agent';
+import {doesCookieContainsMMUserId} from 'utils/utils';
 
 declare global {
     interface Window {
@@ -33,17 +35,19 @@ export type Props = {
     isCurrentChannelManuallyUnread: boolean;
     children?: React.ReactNode;
     mfaRequired: boolean;
+    customProfileAttributesEnabled: boolean;
     actions: {
         autoUpdateTimezone: (deviceTimezone: string) => void;
         getChannelURLAction: (channelId: string, teamId: string, url: string) => void;
         updateApproximateViewTime: (channelId: string) => void;
+        getCustomProfileAttributeFields: () => void;
     };
     showTermsOfService: boolean;
     location: {
         pathname: string;
         search: string;
     };
-}
+};
 
 export default class LoggedIn extends React.PureComponent<Props> {
     private cleanupDesktopListeners?: () => void;
@@ -65,7 +69,14 @@ export default class LoggedIn extends React.PureComponent<Props> {
         // Initialize websocket
         WebSocketActions.initialize();
 
-        this.props.actions.autoUpdateTimezone(getBrowserTimezone());
+        ensureAuthenticatedPluginsLoaded();
+
+        this.updateTimeZone();
+
+        // Fetch custom profile attributes for authenticated user
+        if (this.props.customProfileAttributesEnabled) {
+            this.props.actions.getCustomProfileAttributeFields();
+        }
 
         // Make sure the websockets close and reset version
         window.addEventListener('beforeunload', this.handleBeforeUnload);
@@ -86,9 +97,9 @@ export default class LoggedIn extends React.PureComponent<Props> {
         };
 
         // Device tracking setup
-        if (UserAgent.isIos()) {
+        if (isIos()) {
             document.body.classList.add('ios');
-        } else if (UserAgent.isAndroid()) {
+        } else if (isAndroid()) {
             document.body.classList.add('android');
         }
 
@@ -113,7 +124,6 @@ export default class LoggedIn extends React.PureComponent<Props> {
         WebSocketActions.close();
 
         window.removeEventListener('keydown', this.handleBackSpace);
-
         window.removeEventListener('focus', this.onFocusListener);
         window.removeEventListener('blur', this.onBlurListener);
 
@@ -140,13 +150,18 @@ export default class LoggedIn extends React.PureComponent<Props> {
         return this.props.children;
     }
 
-    private onFocusListener(): void {
-        GlobalActions.emitBrowserFocus(true);
+    private updateTimeZone(): void {
+        this.props.actions.autoUpdateTimezone(getBrowserTimezone());
     }
 
-    private onBlurListener(): void {
+    private onFocusListener = (): void => {
+        this.updateTimeZone();
+        GlobalActions.emitBrowserFocus(true);
+    };
+
+    private onBlurListener = (): void => {
         GlobalActions.emitBrowserFocus(false);
-    }
+    };
 
     private updateActiveStatus = (userIsActive: boolean, idleTime: number, manual: boolean) => {
         if (!this.props.currentUser) {
@@ -189,7 +204,7 @@ export default class LoggedIn extends React.PureComponent<Props> {
     private handleBeforeUnload = (): void => {
         // remove the event listener to prevent getting stuck in a loop
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
-        if (document.cookie.indexOf('MMUSERID=') > -1 && this.props.currentChannelId && !this.props.isCurrentChannelManuallyUnread) {
+        if (doesCookieContainsMMUserId() && this.props.currentChannelId && !this.props.isCurrentChannelManuallyUnread) {
             this.props.actions.updateApproximateViewTime(this.props.currentChannelId);
         }
         WebSocketActions.close();

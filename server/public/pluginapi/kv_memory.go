@@ -136,7 +136,7 @@ func (s *MemoryStore) SetAtomicWithRetries(key string, valueFunc func(oldValue [
 		return errors.New("function must not be nil")
 	}
 
-	for i := 0; i < numRetries; i++ {
+	for range numRetries {
 		var oldVal []byte
 		if err := s.Get(key, &oldVal); err != nil {
 			return errors.Wrapf(err, "failed to get value for key %s", key)
@@ -178,11 +178,17 @@ func (s *MemoryStore) ListKeys(page int, count int, options ...ListKeysOption) (
 			o(&opt)
 		}
 	}
+	if opt.noMatch {
+		return []string{}, nil
+	}
 
 	allKeys := make([]string, 0)
 	s.mux.RLock()
 	for k, e := range s.elems {
 		if e.isExpired() {
+			continue
+		}
+		if opt.prefix != "" && !strings.HasPrefix(k, opt.prefix) {
 			continue
 		}
 		allKeys = append(allKeys, k)

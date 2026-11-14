@@ -1,7 +1,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {type JSX} from 'react';
 import {FormattedMessage, defineMessage} from 'react-intl';
 
 import type {Role} from '@mattermost/types/roles';
@@ -36,14 +36,14 @@ export type Props = {
         setUserGridSearch: (term: string) => void;
     };
     readOnly?: boolean;
-}
+};
 
 type State = {
     loading: boolean;
     page: number;
     includeUsers: Record<string, UserProfile>;
     excludeUsers: Record<string, UserProfile>;
-}
+};
 
 const USERS_PER_PAGE = 10;
 
@@ -236,7 +236,7 @@ export default class SystemRoleUsers extends React.PureComponent<Props, State> {
     };
 
     render() {
-        const {page, loading} = this.state;
+        const {loading} = this.state;
         const {term, role, usersToAdd, usersToRemove, readOnly} = this.props;
         const {startCount, endCount, total} = this.getPaginationProps();
         return (
@@ -248,7 +248,7 @@ export default class SystemRoleUsers extends React.PureComponent<Props, State> {
                 button={
                     <ToggleModalButton
                         id='addRoleMembers'
-                        className='btn btn-primary'
+                        emphasis='primary'
                         modalId={ModalIdentifiers.ADD_USER_TO_ROLE}
                         dialogType={AddUsersToRoleModal}
                         disabled={readOnly}
@@ -272,7 +272,6 @@ export default class SystemRoleUsers extends React.PureComponent<Props, State> {
                     columns={this.getColumns()}
                     nextPage={this.nextPage}
                     previousPage={this.previousPage}
-                    page={page}
                     startCount={startCount}
                     endCount={endCount}
                     loading={loading}

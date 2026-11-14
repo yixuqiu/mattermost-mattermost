@@ -14,10 +14,13 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-func handlerForGzip(c *Context, w http.ResponseWriter, r *http.Request) {
-	// gziphandler default requires body size greater than 1400 bytes
-	var body [1400]byte
-	w.Write(body[:])
+func handlerForGzip(t *testing.T) func(*Context, http.ResponseWriter, *http.Request) {
+	return func(_ *Context, w http.ResponseWriter, _ *http.Request) {
+		// gziphandler default requires body size greater than 1400 bytes
+		var body [1400]byte
+		_, err := w.Write(body[:])
+		require.NoError(t, err)
+	}
 }
 
 func testAPIHandlerGzipMode(t *testing.T, name string, h http.Handler, token string) {
@@ -65,31 +68,140 @@ func testAPIHandlerNoGzipMode(t *testing.T, name string, h http.Handler, token s
 	})
 }
 
-func TestAPIHandlersWithGzip(t *testing.T) {
+func TestAPIHandlersWithCompression(t *testing.T) {
+	mainHelper.Parallel(t)
 	th := Setup(t)
-	defer th.TearDown()
 
 	api, err := Init(th.Server)
 	require.NoError(t, err)
 	session, _ := th.App.GetSession(th.Client.AuthToken)
 
-	t.Run("with WebserverMode == \"gzip\"", func(t *testing.T) {
-		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.WebserverMode = "gzip" })
+	th.ConfigStore.SetReadOnlyFF(false)
 
-		testAPIHandlerGzipMode(t, "ApiHandler", api.APIHandler(handlerForGzip), "")
-		testAPIHandlerGzipMode(t, "ApiSessionRequired", api.APISessionRequired(handlerForGzip), session.Token)
-		testAPIHandlerGzipMode(t, "ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForGzip), session.Token)
-		testAPIHandlerGzipMode(t, "ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForGzip), "")
-		testAPIHandlerGzipMode(t, "ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForGzip), session.Token)
+	t.Run("with WebserverMode == \"gzip\"", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.WebserverMode = "gzip"
+			cfg.FeatureFlags.EnableBrotliCompression = false
+		})
+
+		testAPIHandlerGzipMode(t, "ApiHandler", api.APIHandler(handlerForGzip(t)), "")
+		testAPIHandlerGzipMode(t, "ApiSessionRequired", api.APISessionRequired(handlerForGzip(t)), session.Token)
+		testAPIHandlerGzipMode(t, "ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForGzip(t)), session.Token)
+		testAPIHandlerGzipMode(t, "ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForGzip(t)), "")
+		testAPIHandlerGzipMode(t, "ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForGzip(t)), session.Token)
 	})
 
-	t.Run("with WebserverMode == \"nogzip\"", func(t *testing.T) {
-		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.WebserverMode = "nogzip" })
+	t.Run("with WebserverMode == \"gzip\" and EnableBrotliCompression off, Accept-Encoding: br falls back to gzip", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.WebserverMode = "gzip"
+			cfg.FeatureFlags.EnableBrotliCompression = false
+		})
 
-		testAPIHandlerNoGzipMode(t, "ApiHandler", api.APIHandler(handlerForGzip), "")
-		testAPIHandlerNoGzipMode(t, "ApiSessionRequired", api.APISessionRequired(handlerForGzip), session.Token)
-		testAPIHandlerNoGzipMode(t, "ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForGzip), session.Token)
-		testAPIHandlerNoGzipMode(t, "ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForGzip), "")
-		testAPIHandlerNoGzipMode(t, "ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForGzip), session.Token)
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v4/test", nil)
+		req.Header.Set("Accept-Encoding", "br, gzip")
+		api.APIHandler(handlerForGzip(t)).ServeHTTP(resp, req)
+
+		assert.Equal(t, http.StatusOK, resp.Code)
+		assert.Equal(t, "gzip", resp.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("with WebserverMode == \"uncompressed\"", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) { *cfg.ServiceSettings.WebserverMode = "uncompressed" })
+
+		testAPIHandlerNoGzipMode(t, "ApiHandler", api.APIHandler(handlerForGzip(t)), "")
+		testAPIHandlerNoGzipMode(t, "ApiSessionRequired", api.APISessionRequired(handlerForGzip(t)), session.Token)
+		testAPIHandlerNoGzipMode(t, "ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForGzip(t)), session.Token)
+		testAPIHandlerNoGzipMode(t, "ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForGzip(t)), "")
+		testAPIHandlerNoGzipMode(t, "ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForGzip(t)), session.Token)
+	})
+
+	t.Run("with EnableBrotliCompression and Accept-Encoding: br", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.WebserverMode = "gzip"
+			cfg.FeatureFlags.EnableBrotliCompression = true
+		})
+
+		for _, tc := range []struct {
+			name    string
+			handler http.Handler
+		}{
+			{"ApiHandler", api.APIHandler(handlerForBrotli(t))},
+			{"ApiSessionRequired", api.APISessionRequired(handlerForBrotli(t))},
+			{"ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForBrotli(t))},
+			{"ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForBrotli(t))},
+			{"ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForBrotli(t))},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resp := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/api/v4/test", nil)
+				req.Header.Set("Accept-Encoding", "br, gzip")
+				if tc.name != "ApiHandler" && tc.name != "ApiHandlerTrustRequester" {
+					req.Header.Set(model.HeaderAuth, "Bearer "+session.Token)
+				}
+				tc.handler.ServeHTTP(resp, req)
+				assert.Equal(t, http.StatusOK, resp.Code)
+				assert.Equal(t, "br", resp.Header().Get("Content-Encoding"), "handler %s should use brotli", tc.name)
+			})
+		}
+	})
+
+	t.Run("with EnableBrotliCompression and Accept-Encoding: gzip", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.WebserverMode = "gzip"
+			cfg.FeatureFlags.EnableBrotliCompression = true
+		})
+
+		for _, tc := range []struct {
+			name    string
+			handler http.Handler
+		}{
+			{"ApiHandler", api.APIHandler(handlerForGzip(t))},
+			{"ApiSessionRequired", api.APISessionRequired(handlerForGzip(t))},
+			{"ApiSessionRequiredMfa", api.APISessionRequiredMfa(handlerForGzip(t))},
+			{"ApiHandlerTrustRequester", api.APIHandlerTrustRequester(handlerForGzip(t))},
+			{"ApiSessionRequiredTrustRequester", api.APISessionRequiredTrustRequester(handlerForGzip(t))},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resp := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/api/v4/test", nil)
+				req.Header.Set("Accept-Encoding", "gzip")
+				if tc.name != "ApiHandler" && tc.name != "ApiHandlerTrustRequester" {
+					req.Header.Set(model.HeaderAuth, "Bearer "+session.Token)
+				}
+				tc.handler.ServeHTTP(resp, req)
+				assert.Equal(t, http.StatusOK, resp.Code)
+				assert.Equal(t, "gzip", resp.Header().Get("Content-Encoding"), "handler %s should fall back to gzip", tc.name)
+			})
+		}
+	})
+
+	t.Run("with EnableBrotliCompression, the Gzip handler variants never use brotli", func(t *testing.T) {
+		th.App.UpdateConfig(func(cfg *model.Config) {
+			*cfg.ServiceSettings.WebserverMode = "gzip"
+			cfg.FeatureFlags.EnableBrotliCompression = true
+		})
+
+		for _, tc := range []struct {
+			name    string
+			handler http.Handler
+		}{
+			{"ApiHandlerGzip", api.APIHandlerGzip(handlerForGzip(t))},
+			{"ApiSessionRequiredGzip", api.APISessionRequiredGzip(handlerForGzip(t))},
+			{"ApiSessionRequiredTrustRequesterGzip", api.APISessionRequiredTrustRequesterGzip(handlerForGzip(t))},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resp := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, "/api/v4/test", nil)
+				req.Header.Set("Accept-Encoding", "br, gzip")
+				req.Header.Set(model.HeaderAuth, "Bearer "+session.Token)
+
+				tc.handler.ServeHTTP(resp, req)
+
+				assert.Equal(t, http.StatusOK, resp.Code)
+				assert.Equal(t, "gzip", resp.Header().Get("Content-Encoding"),
+					"handler %s must fall back to gzip even when the client accepts brotli", tc.name)
+			})
+		}
 	})
 }

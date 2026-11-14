@@ -16,12 +16,6 @@ export const adminConsoleNavigation = [
     },
     {
         type: ['cloud_enterprise'],
-        header: 'Billing History',
-        sidebar: 'Billing History',
-        url: 'admin_console/billing/billing_history',
-    },
-    {
-        type: ['cloud_enterprise'],
         header: 'Company Information',
         sidebar: 'Company Information',
         url: 'admin_console/billing/company_info',
@@ -29,7 +23,7 @@ export const adminConsoleNavigation = [
     {
         type: ['team', 'e20', 'cloud_enterprise'],
         header: 'System Statistics',
-        sidebar: 'Site Statistics',
+        sidebar: 'System Statistics',
         url: '/admin_console/reporting/system_analytics',
     },
     {
@@ -80,8 +74,8 @@ export const adminConsoleNavigation = [
     },
     {
         type: ['team', 'e20', 'cloud_enterprise'],
-        header: 'System Roles',
-        sidebar: 'System Roles',
+        header: 'Delegated Granular Administration',
+        sidebar: 'Delegated Granular Administration',
         url: 'admin_console/user_management/system_roles',
     },
     {
@@ -241,7 +235,7 @@ export const adminConsoleNavigation = [
     },
     {
         type: ['team', 'e20', 'cloud_enterprise'],
-        header: 'Email Authentication',
+        header: 'Email',
         sidebar: 'Email',
         url: 'admin_console/authentication/email',
     },
@@ -259,7 +253,7 @@ export const adminConsoleNavigation = [
     },
     {
         type: ['team', 'e20', 'cloud_enterprise'],
-        header: 'AD/LDAP',
+        header: 'AD/LDAP Wizard',
         sidebar: 'AD/LDAP',
         url: 'admin_console/authentication/ldap',
     },
@@ -307,8 +301,8 @@ export const adminConsoleNavigation = [
     },
     {
         type: ['team', 'e20', 'cloud_enterprise'],
-        header: 'GIF (Beta)',
-        sidebar: 'GIF (Beta)',
+        header: 'GIF',
+        sidebar: 'GIF',
         url: 'admin_console/integrations/gif',
     },
     {
@@ -358,11 +352,5 @@ export const adminConsoleNavigation = [
         header: 'Feature Flags',
         sidebar: 'Feature Flags',
         url: 'admin_console/experimental/feature_flags',
-    },
-    {
-        type: ['team', 'e20'],
-        header: 'Bleve',
-        sidebar: 'Bleve',
-        url: 'admin_console/experimental/blevesearch',
     },
 ];

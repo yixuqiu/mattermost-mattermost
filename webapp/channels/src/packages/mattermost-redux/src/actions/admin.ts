@@ -3,13 +3,13 @@
 
 import {batchActions} from 'redux-batched-actions';
 
-import type {LogFilter} from '@mattermost/types/admin';
+import type {LogFilter, LogFilterQuery, LogsByNode} from '@mattermost/types/admin';
 import type {
     Channel,
     ChannelSearchOpts,
 } from '@mattermost/types/channels';
 import type {Compliance} from '@mattermost/types/compliance';
-import type {AdminConfig, AllowedIPRange} from '@mattermost/types/config';
+import type {AdminConfig, AllowedIPRange, LdapSettings} from '@mattermost/types/config';
 import type {
     CreateDataRetentionCustomPolicy,
     DataRetentionCustomPolicies,
@@ -35,18 +35,47 @@ import {bindClientFunc, forceLogoutIfNecessary} from './helpers';
 
 import {General} from '../constants';
 
-export function getLogs({serverNames = [], logLevels = [], dateFrom, dateTo}: LogFilter) {
-    const logFilter = {
+function toLogFilterQuery({serverNames = [], logLevels = [], dateFrom, dateTo, search = '', fields}: LogFilter): LogFilterQuery {
+    return {
         server_names: serverNames,
         log_levels: logLevels,
         date_from: dateFrom,
         date_to: dateTo,
+        search,
+        fields,
     };
+}
+
+// Aborting signal drops the request without storing or reporting anything, as a newer one replaces it
+export function getLogs(logFilter: LogFilter, signal?: AbortSignal): ActionFuncAsync<LogsByNode> {
+    return async (dispatch, getState) => {
+        let data: LogsByNode;
+        try {
+            data = await Client4.getLogs(toLogFilterQuery(logFilter), undefined, undefined, signal);
+        } catch (error) {
+            if (signal?.aborted) {
+                return {error};
+            }
+            forceLogoutIfNecessary(error, dispatch, getState);
+            dispatch(logError(error));
+            return {error};
+        }
+
+        if (signal?.aborted) {
+            return {error: signal.reason};
+        }
+        dispatch({type: AdminTypes.RECEIVED_LOGS, data});
+        return {data};
+    };
+}
+
+// Merges the response into the loaded entries instead of replacing them
+export function getNewLogs(logFilter: LogFilter) {
     return bindClientFunc({
         clientFunc: Client4.getLogs,
-        onSuccess: [AdminTypes.RECEIVED_LOGS],
+        onSuccess: [AdminTypes.RECEIVED_NEW_LOGS],
         params: [
-            logFilter,
+            toLogFilterQuery(logFilter),
         ],
     });
 }
@@ -121,9 +150,23 @@ export function testSiteURL(siteURL: string) {
     });
 }
 
+/**
+ * @deprecated Use testFileStoreConnection instead. The /file/s3_test
+ * endpoint is kept for backwards compatibility but is no longer
+ * backend-specific.
+ */
 export function testS3Connection(config?: AdminConfig) {
     return bindClientFunc({
         clientFunc: Client4.testS3Connection,
+        params: [
+            config,
+        ],
+    });
+}
+
+export function testFileStoreConnection(config?: AdminConfig) {
+    return bindClientFunc({
+        clientFunc: Client4.testFileStoreConnection,
         params: [
             config,
         ],
@@ -200,6 +243,42 @@ export function getClusterStatus() {
 export function testLdap() {
     return bindClientFunc({
         clientFunc: Client4.testLdap,
+    });
+}
+
+export function testLdapConnection(settings: LdapSettings) {
+    return bindClientFunc({
+        clientFunc: Client4.testLdapConnection,
+        params: [
+            settings,
+        ],
+    });
+}
+
+export function testLdapFilters(settings: LdapSettings) {
+    return bindClientFunc({
+        clientFunc: Client4.testLdapFilters,
+        params: [
+            settings,
+        ],
+    });
+}
+
+export function testLdapAttributes(settings: LdapSettings) {
+    return bindClientFunc({
+        clientFunc: Client4.testLdapAttributes,
+        params: [
+            settings,
+        ],
+    });
+}
+
+export function testLdapGroupAttributes(settings: LdapSettings) {
+    return bindClientFunc({
+        clientFunc: Client4.testLdapGroupAttributes,
+        params: [
+            settings,
+        ],
     });
 }
 
@@ -319,6 +398,21 @@ export function uploadIdpSamlCertificate(fileData: File) {
     });
 }
 
+export function uploadAuditCertificate(fileData: File) {
+    return bindClientFunc({
+        clientFunc: Client4.uploadAuditLogCertificate,
+        params: [
+            fileData,
+        ],
+    });
+}
+
+export function removeAuditCertificate() {
+    return bindClientFunc({
+        clientFunc: Client4.removeAuditLogCertificate,
+    });
+}
+
 export function removePublicSamlCertificate() {
     return bindClientFunc({
         clientFunc: Client4.deletePublicSamlCertificate,
@@ -370,6 +464,15 @@ export function purgeElasticsearchIndexes(indexes?: string[]) {
 export function uploadLicense(fileData: File) {
     return bindClientFunc({
         clientFunc: Client4.uploadLicense,
+        params: [
+            fileData,
+        ],
+    });
+}
+
+export function previewLicense(fileData: File) {
+    return bindClientFunc({
+        clientFunc: Client4.previewLicense,
         params: [
             fileData,
         ],

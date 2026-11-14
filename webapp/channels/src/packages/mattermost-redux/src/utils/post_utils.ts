@@ -3,23 +3,13 @@
 
 import type {Channel} from '@mattermost/types/channels';
 import type {Post, PostType, PostMetadata, PostEmbed} from '@mattermost/types/posts';
-import type {PreferenceType} from '@mattermost/types/preferences';
 import type {GlobalState} from '@mattermost/types/store';
 import type {Team} from '@mattermost/types/teams';
 import type {UserProfile} from '@mattermost/types/users';
 
 import {haveIChannelPermission} from 'mattermost-redux/selectors/entities/roles';
 
-import {getPreferenceKey} from './preference_utils';
-
 import {Posts, Preferences, Permissions} from '../constants';
-
-export function isPostFlagged(postId: Post['id'], myPreferences: {
-    [x: string]: PreferenceType;
-}): boolean {
-    const key = getPreferenceKey(Preferences.CATEGORY_FLAGGED_POST, postId);
-    return myPreferences.hasOwnProperty(key);
-}
 
 export function isSystemMessage(post: Post): boolean {
     return Boolean(post.type && post.type.startsWith(Posts.SYSTEM_MESSAGE_PREFIX));
@@ -30,7 +20,19 @@ export function isMeMessage(post: Post): boolean {
 }
 
 export function isFromWebhook(post: Post): boolean {
-    return post.props && post.props.from_webhook;
+    return post.props?.from_webhook === 'true';
+}
+
+export function isSilentNotification(post: Post): boolean {
+    return post.props?.silent_notification === true;
+}
+
+// Mirrors server IsNotificationSuppressed: force_notification wins over silent.
+export function isNotificationSuppressed(post: Post): boolean {
+    if (post.props?.force_notification) {
+        return false;
+    }
+    return isSilentNotification(post);
 }
 
 export function isPostEphemeral(post: Post): boolean {
@@ -38,8 +40,8 @@ export function isPostEphemeral(post: Post): boolean {
 }
 
 export function isUserAddedInChannel(post: Post, userId?: UserProfile['id']): boolean {
-    const postTypeCheck = post.type && (post.type === Posts.POST_TYPES.ADD_TO_CHANNEL);
-    const userIdCheck = post.props && post.props.addedUserId && (post.props.addedUserId === userId);
+    const postTypeCheck = Boolean(post.type && (post.type === Posts.POST_TYPES.ADD_TO_CHANNEL));
+    const userIdCheck = Boolean(post.props && post.props.addedUserId && (post.props.addedUserId === userId));
     return postTypeCheck && userIdCheck;
 }
 
@@ -64,6 +66,10 @@ export function isEdited(post: Post): boolean {
 
 export function canEditPost(state: GlobalState, config: any, license: any, teamId: Team['id'], channelId: Channel['id'], userId: UserProfile['id'], post: Post): boolean {
     if (!post || isSystemMessage(post)) {
+        return false;
+    }
+
+    if (post.type === Posts.POST_TYPES.BURN_ON_READ) {
         return false;
     }
 
@@ -179,7 +185,7 @@ export function isPostCommentMention({post, currentUser, threadRepliedToByCurren
         commentsNotifyLevel = currentUser.notify_props.comments;
     }
 
-    const notCurrentUser = post.user_id !== currentUser.id || (post.props && post.props.from_webhook);
+    const notCurrentUser = post.user_id !== currentUser.id || isFromWebhook(post);
     if (notCurrentUser) {
         if (commentsNotifyLevel === Preferences.COMMENTS_ANY && (threadCreatedByCurrentUser || threadRepliedToByCurrentUser)) {
             isCommentMention = true;
@@ -244,10 +250,47 @@ export function shouldUpdatePost(receivedPost: Post, storedPost?: Post): boolean
             return true;
         }
 
+        // A policy change strips or restores file metadata without touching update_at. Both sides
+        // must carry metadata: a response that omits it entirely (some endpoints do) must not
+        // clobber what's stored, which is what the check above guards in the other direction.
+        if (storedPost.metadata && receivedPost.metadata &&
+            (storedPost.metadata.redacted_file_count ?? 0) !== (receivedPost.metadata.redacted_file_count ?? 0)
+        ) {
+            return true;
+        }
+
+        // Same shape of problem: hydration can fail on one fetch and succeed on the next
+        // without the post changing, so update_at cannot tell them apart. Without this a
+        // post that failed once keeps saying its attributes are unavailable until it is
+        // edited, and one that recovers keeps rendering the values it had when it broke.
+        // The server sends the flag only on responses that asked for hydration: true when
+        // the lookup failed, false when it worked. A response without it (search, pinned,
+        // flagged, getPostsByIds) says nothing about the values, so it must not replace a
+        // stored post over this flag, least of all clear a stored true. A post stored
+        // without the flag counts as false.
+        const receivedUnavailable = receivedPost.metadata?.property_values_unavailable;
+        if (storedPost.metadata && receivedUnavailable !== undefined &&
+            (storedPost.metadata.property_values_unavailable ?? false) !== receivedUnavailable
+        ) {
+            return true;
+        }
+
         // The stored post is the same as the one we've received
         return false;
     }
 
     // The stored post is older than the one we've received
     return true;
+}
+
+export function ensureString(v: unknown) {
+    return typeof v === 'string' ? v : '';
+}
+
+export function ensureNumber(v: unknown) {
+    return typeof v === 'number' ? v : 0;
+}
+
+export function secureGetFromRecord<T>(v: Record<string, T> | undefined, key: string) {
+    return typeof v === 'object' && v && Object.hasOwn(v, key) ? v[key] : undefined;
 }

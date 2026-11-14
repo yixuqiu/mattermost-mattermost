@@ -4,6 +4,8 @@
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
 import useOpenPricingModal from 'components/common/hooks/useOpenPricingModal';
 import Tag from 'components/widgets/tag/tag';
 
@@ -27,7 +29,7 @@ export const PlanDetailsTopElements = ({
     isYearly,
 }: Props) => {
     let productName;
-    const openPricingModal = useOpenPricingModal();
+    const {openPricingModal, isAirGapped} = useOpenPricingModal();
     const {formatMessage} = useIntl();
 
     const userCountDisplay = (
@@ -56,11 +58,11 @@ export const PlanDetailsTopElements = ({
             />
         );
         break;
-    case CloudProducts.STARTER:
+    case CloudProducts.ADVANCED:
         productName = (
             <FormattedMessage
-                id='admin.billing.subscription.planDetails.productName.cloudFree'
-                defaultMessage='Cloud Free'
+                id='admin.billing.subscription.planDetails.productName.cloudAdvanced'
+                defaultMessage='Cloud Enterprise Advanced'
             />
         );
         break;
@@ -107,11 +109,6 @@ export const PlanDetailsTopElements = ({
     );
 
     const getBadge = () => {
-        // no badges to show if the plan is Cloud Free
-        if (subscriptionPlan === CloudProducts.STARTER) {
-            return null;
-        }
-
         if (isFreeTrial) {
             return trialBadge;
         }
@@ -123,16 +120,17 @@ export const PlanDetailsTopElements = ({
         return monthlyBadge;
     };
 
-    const viewPlansButton = (
-        <button
-            onClick={() => openPricingModal({trackingLocation: 'billing_plan_details_view_plans'})}
-            className='btn btn-secondary PlanDetails__viewPlansButton'
+    const viewPlansButton = isAirGapped ? null : (
+        <Button
+            onClick={openPricingModal}
+            emphasis='secondary'
+            className='PlanDetails__viewPlansButton'
         >
             {formatMessage({
                 id: 'workspace_limits.menu_limit.view_plans',
                 defaultMessage: 'View plans',
             })}
-        </button>
+        </Button>
     );
 
     return (

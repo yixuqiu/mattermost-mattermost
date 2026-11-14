@@ -3,7 +3,7 @@
 
 import React from 'react';
 
-import {fireEvent, renderWithContext, screen} from 'tests/react_testing_utils';
+import {renderWithContext, screen, userEvent, waitFor} from 'tests/react_testing_utils';
 import Constants from 'utils/constants';
 
 import TopButtons from './top_buttons';
@@ -26,7 +26,7 @@ describe('channel_info_rhs/top_buttons', () => {
         channelURL: 'https://test.com',
         isFavorite: false,
         isMuted: false,
-        isInvitingPeople: false,
+        isInManagedCategory: false,
         canAddPeople: true,
         actions: {
             addPeople: jest.fn(),
@@ -35,10 +35,10 @@ describe('channel_info_rhs/top_buttons', () => {
         },
     };
 
-    test('should display and toggle Favorite', () => {
+    test('should display and toggle Favorite', async () => {
         const toggleFavorite = jest.fn();
 
-        // Favorite to Favorited
+        // Unpressed
         const testProps: Props = {
             ...topButtonDefaultProps,
             actions: {
@@ -47,34 +47,36 @@ describe('channel_info_rhs/top_buttons', () => {
             },
         };
 
-        renderWithContext(
+        const {rerender} = renderWithContext(
             <TopButtons
                 {...testProps}
             />,
         );
 
         expect(screen.getByText('Favorite')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Favorite'));
+        expect(screen.getByRole('button', {name: 'Favorite'})).toHaveAttribute('aria-pressed', 'false');
+        await userEvent.click(screen.getByText('Favorite'));
         expect(toggleFavorite).toHaveBeenCalled();
 
-        // Favorited to Favorite
+        // Pressed: the name stays the same, only aria-pressed changes
         toggleFavorite.mockReset();
         testProps.isFavorite = true;
-        renderWithContext(
+        rerender(
             <TopButtons
                 {...testProps}
             />,
         );
 
-        expect(screen.getByText('Favorited')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Favorited'));
+        expect(screen.getByText('Favorite')).toBeInTheDocument();
+        expect(screen.getByRole('button', {name: 'Favorite'})).toHaveAttribute('aria-pressed', 'true');
+        await userEvent.click(screen.getByText('Favorite'));
         expect(toggleFavorite).toHaveBeenCalled();
     });
 
-    test('should display and toggle Mute', () => {
+    test('should display and toggle Mute', async () => {
         const toggleMute = jest.fn();
 
-        // Mute to Muted
+        // Unpressed
         const testProps: Props = {
             ...topButtonDefaultProps,
             actions: {
@@ -83,31 +85,33 @@ describe('channel_info_rhs/top_buttons', () => {
             },
         };
 
-        renderWithContext(
+        const {rerender} = renderWithContext(
             <TopButtons
                 {...testProps}
             />,
         );
 
         expect(screen.getByText('Mute')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Mute'));
+        expect(screen.getByRole('button', {name: 'Mute'})).toHaveAttribute('aria-pressed', 'false');
+        await userEvent.click(screen.getByText('Mute'));
         expect(toggleMute).toHaveBeenCalled();
 
-        // Muted to Mute
+        // Pressed: the name stays the same, only aria-pressed changes
         toggleMute.mockReset();
         testProps.isMuted = true;
-        renderWithContext(
+        rerender(
             <TopButtons
                 {...testProps}
             />,
         );
 
-        expect(screen.getByText('Muted')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Muted'));
+        expect(screen.getByText('Mute')).toBeInTheDocument();
+        expect(screen.getByRole('button', {name: 'Mute'})).toHaveAttribute('aria-pressed', 'true');
+        await userEvent.click(screen.getByText('Mute'));
         expect(toggleMute).toHaveBeenCalled();
     });
 
-    test('should display and active call Add People', () => {
+    test('should display Add People as a dialog trigger, not a toggle', async () => {
         const addPeople = jest.fn();
 
         const testProps = {
@@ -124,8 +128,12 @@ describe('channel_info_rhs/top_buttons', () => {
             />,
         );
 
-        expect(screen.getByText('Add People')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Add People'));
+        const addPeopleButton = screen.getByRole('button', {name: 'Add People'});
+        expect(addPeopleButton).toBeInTheDocument();
+        expect(addPeopleButton).toHaveAttribute('aria-haspopup', 'dialog');
+        expect(addPeopleButton).not.toHaveAttribute('aria-expanded');
+        expect(addPeopleButton).not.toHaveAttribute('aria-pressed');
+        await userEvent.click(addPeopleButton);
         expect(addPeople).toHaveBeenCalled();
     });
     test('should not Add People in DM', () => {
@@ -158,7 +166,7 @@ describe('channel_info_rhs/top_buttons', () => {
         expect(screen.queryByText('Add People')).not.toBeInTheDocument();
     });
 
-    test('can copy link', () => {
+    test('can copy link', async () => {
         renderWithContext(
             <TopButtons
                 {...topButtonDefaultProps}
@@ -166,8 +174,29 @@ describe('channel_info_rhs/top_buttons', () => {
         );
 
         expect(screen.getByText('Copy Link')).toBeInTheDocument();
-        fireEvent.click(screen.getByText('Copy Link'));
+        await userEvent.click(screen.getByText('Copy Link'));
         expect(mockOnCopyTextClick).toHaveBeenCalled();
+    });
+
+    test('should disable favorite button when channel is in a managed category', () => {
+        const toggleFavorite = jest.fn();
+        const testProps: Props = {
+            ...topButtonDefaultProps,
+            isInManagedCategory: true,
+            actions: {
+                ...topButtonDefaultProps.actions,
+                toggleFavorite,
+            },
+        };
+
+        renderWithContext(
+            <TopButtons
+                {...testProps}
+            />,
+        );
+
+        const favoriteButton = screen.getByRole('button', {name: 'Favorite'});
+        expect(favoriteButton).toBeDisabled();
     });
 
     test('cannot copy link in DM or GM', () => {
@@ -187,5 +216,26 @@ describe('channel_info_rhs/top_buttons', () => {
 
             expect(screen.queryByText('Copy Link')).not.toBeInTheDocument();
         });
+    });
+
+    test('says board in the tooltips for a board', async () => {
+        renderWithContext(
+            <TopButtons
+                {...topButtonDefaultProps}
+                channelKind='board'
+            />,
+        );
+
+        await userEvent.hover(screen.getByRole('button', {name: 'Mute'}));
+        await waitFor(() => {
+            expect(screen.getByText('Mute notifications for this board')).toBeInTheDocument();
+        });
+        expect(screen.queryByText('Mute notifications for this channel')).not.toBeInTheDocument();
+
+        await userEvent.hover(screen.getByRole('button', {name: 'Copy Link'}));
+        await waitFor(() => {
+            expect(screen.getByText('Copy link to this board')).toBeInTheDocument();
+        });
+        expect(screen.queryByText('Copy link to this channel')).not.toBeInTheDocument();
     });
 });

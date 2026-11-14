@@ -1,22 +1,27 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import classNames from 'classnames';
 import React, {PureComponent} from 'react';
 import type {ChangeEvent, DragEvent, MouseEvent, TouchEvent, RefObject} from 'react';
 import {defineMessages, FormattedMessage, injectIntl} from 'react-intl';
 import type {IntlShape} from 'react-intl';
 
 import {PaperclipIcon} from '@mattermost/compass-icons/components';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import type {ServerError} from '@mattermost/types/errors';
 import type {FileInfo, FileUploadResponse} from '@mattermost/types/files';
 
 import type {UploadFile} from 'actions/file_actions';
 
 import type {FilePreviewInfo} from 'components/file_preview/file_preview';
+import {
+    DropOverlayIdCreateComment,
+    DropOverlayIdEditPost,
+    DropOverlayIdRHS,
+} from 'components/file_upload_overlay/file_upload_overlay';
 import KeyboardShortcutSequence, {KEYBOARD_SHORTCUTS} from 'components/keyboard_shortcuts/keyboard_shortcuts_sequence';
-import OverlayTrigger from 'components/overlay_trigger';
-import Tooltip from 'components/tooltip';
 import Menu from 'components/widgets/menu/menu';
 import MenuWrapper from 'components/widgets/menu/menu_wrapper';
 
@@ -26,10 +31,6 @@ import dragster from 'utils/dragster';
 import {cmdOrCtrlPressed, isKeyPressed} from 'utils/keyboard';
 import {hasPlainText, createFileFromClipboardDataItem} from 'utils/paste';
 import {
-    isIosChrome,
-    isMobileApp,
-} from 'utils/user_agent';
-import {
     clearFileInput,
     generateId,
     isFileTransfer,
@@ -38,7 +39,7 @@ import {
     isTextDroppableEvent,
 } from 'utils/utils';
 
-import type {FilesWillUploadHook, PluginComponent} from 'types/store/plugins';
+import type {FilesWillUploadHook, FileUploadMethodAction} from 'types/store/plugins';
 
 const holders = defineMessages({
     limited: {
@@ -75,6 +76,8 @@ const customStyles = {
     bottom: '100%',
     top: 'auto',
 };
+
+export type TextEditorLocationType = 'post' | 'comment' | 'thread' | 'edit_post';
 
 export type Props = {
     channelId: string;
@@ -126,7 +129,7 @@ export type Props = {
     /**
      * Type of the object which the uploaded file is attached to
      */
-    postType: string;
+    postType: TextEditorLocationType;
 
     /**
      * The maximum uploaded file size.
@@ -139,15 +142,26 @@ export type Props = {
     canUploadFiles: boolean;
 
     /**
+     * An access control policy denies uploads here. Renders the control disabled with an
+     * explanation, unlike canUploadFiles which hides it: policy denial is user-specific, so the
+     * user needs to know why their experience differs from a colleague's in the same channel.
+     */
+    disabledByPolicy?: boolean;
+
+    /**
      * Plugin file upload methods to be added
      */
-    pluginFileUploadMethods: PluginComponent[];
+    pluginFileUploadMethods: FileUploadMethodAction[];
     pluginFilesWillUploadHooks: FilesWillUploadHook[];
 
     /**
      * Function called when xhr fires progress event.
      */
     onUploadProgress: (filePreviewInfo: FilePreviewInfo) => void;
+
+    centerChannelPostBeingEdited: boolean;
+    rhsPostBeingEdited: boolean;
+
     actions: {
 
         /**
@@ -163,7 +177,7 @@ type State = {
 };
 
 export class FileUpload extends PureComponent<Props, State> {
-    fileInput: RefObject<HTMLInputElement>;
+    fileInput: RefObject<HTMLInputElement | null>;
     unbindDragsterEvents?: () => void;
 
     static defaultProps = {
@@ -180,17 +194,58 @@ export class FileUpload extends PureComponent<Props, State> {
         this.fileInput = React.createRef();
     }
 
-    componentDidMount() {
-        if (this.props.postType === 'post') {
-            this.registerDragEvents('.row.main', '.center-file-overlay');
-        } else if (this.props.postType === 'comment') {
-            this.registerDragEvents('.post-right__container', '.right-file-overlay');
-        } else if (this.props.postType === 'thread') {
-            this.registerDragEvents('.ThreadPane', '.right-file-overlay');
+    getDragEventDefinition = () => {
+        let containerSelector: string;
+        let overlaySelector: string;
+
+        switch (this.props.postType) {
+        case 'post': {
+            containerSelector = this.props.centerChannelPostBeingEdited ? 'form#create_post .AdvancedTextEditor__body' : '.row.main';
+            overlaySelector = this.props.centerChannelPostBeingEdited ? '#createPostFileDropOverlay' : '.center-file-overlay';
+            break;
         }
+        case 'comment': {
+            containerSelector = this.props.rhsPostBeingEdited ? '#sidebar-right .post-create__container .AdvancedTextEditor__body' : '.post-right__container';
+            overlaySelector = this.props.rhsPostBeingEdited ? '#' + DropOverlayIdCreateComment : '#' + DropOverlayIdRHS;
+            break;
+        }
+        case 'thread': {
+            containerSelector = this.props.rhsPostBeingEdited ? '.post-create__container .AdvancedTextEditor__body' : '.ThreadPane';
+            overlaySelector = this.props.rhsPostBeingEdited ? '#createPostFileDropOverlay' : '.right-file-overlay';
+            break;
+        }
+        case 'edit_post': {
+            containerSelector = '.post--editing';
+            overlaySelector = '#' + DropOverlayIdEditPost;
+            break;
+        }
+        }
+
+        return {
+            containerSelector,
+            overlaySelector,
+        };
+    };
+
+    componentDidMount() {
+        const {containerSelector, overlaySelector} = this.getDragEventDefinition();
+        this.registerDragEvents(containerSelector, overlaySelector);
 
         document.addEventListener('paste', this.pasteUpload);
         document.addEventListener('keydown', this.keyUpload);
+    }
+
+    componentDidUpdate(prevProps: Readonly<Props>) {
+        // when a post starts or finishes being edited, we need to
+        // clear existing drag handlers and register fresh ones in the right place.
+        if (
+            prevProps.centerChannelPostBeingEdited !== this.props.centerChannelPostBeingEdited ||
+            prevProps.rhsPostBeingEdited !== this.props.rhsPostBeingEdited
+        ) {
+            this.unbindDragsterEvents?.();
+            const {containerSelector, overlaySelector} = this.getDragEventDefinition();
+            this.registerDragEvents(containerSelector, overlaySelector);
+        }
     }
 
     componentWillUnmount() {
@@ -327,7 +382,12 @@ export class FileUpload extends PureComponent<Props, State> {
 
     handleDrop = (e: DragEvent<HTMLInputElement>) => {
         if (!this.props.canUploadFiles) {
-            this.props.onUploadError(localizeMessage('file_upload.disabled', 'File attachments are disabled.'));
+            this.props.onUploadError(localizeMessage({id: 'file_upload.disabled', defaultMessage: 'File attachments are disabled.'}));
+            return;
+        }
+
+        if (this.props.disabledByPolicy) {
+            this.props.onUploadError(localizeMessage({id: 'file_upload.disabled_by_policy', defaultMessage: 'File uploads are restricted in this channel'}));
             return;
         }
 
@@ -357,7 +417,7 @@ export class FileUpload extends PureComponent<Props, State> {
         }
 
         if (files.length === 0) {
-            this.props.onUploadError(localizeMessage('file_upload.drag_folder', 'This attachment cannot be uploaded.'));
+            this.props.onUploadError(localizeMessage({id: 'file_upload.drag_folder', defaultMessage: 'This attachment cannot be uploaded.'}));
             return;
         }
 
@@ -369,13 +429,19 @@ export class FileUpload extends PureComponent<Props, State> {
     };
 
     registerDragEvents = (containerSelector: string, overlaySelector: string) => {
-        const overlay = document.querySelector(overlaySelector);
+        let overlay = document.querySelector(overlaySelector);
 
         const dragTimeout = new DelayedAction(() => {
             overlay?.classList.add('hidden');
         });
 
         const enter = (e: CustomEvent) => {
+            // this null check is to deal with the race condition between rendering the post edit advanced text editor
+            // and this hook querying the same in DOM to register event handler on it.
+            if (!overlay) {
+                overlay = document.querySelector(overlaySelector);
+            }
+
             const files = e.detail.dataTransfer;
             if (!isUriDrop(files) && isFileTransfer(files)) {
                 overlay?.classList.remove('hidden');
@@ -470,6 +536,11 @@ export class FileUpload extends PureComponent<Props, State> {
                 return;
             }
 
+            if (this.props.disabledByPolicy) {
+                this.props.onUploadError(this.props.intl.formatMessage({id: 'file_upload.disabled_by_policy', defaultMessage: 'File uploads are restricted in this channel'}));
+                return;
+            }
+
             const fileNamePrefixIfNoName = this.props.intl.formatMessage({id: 'file_upload.pasted', defaultMessage: 'Image Pasted at '});
 
             const fileList = fileClipboardItems.
@@ -492,9 +563,15 @@ export class FileUpload extends PureComponent<Props, State> {
             e.preventDefault();
 
             if (!this.props.canUploadFiles) {
-                this.props.onUploadError(localizeMessage('file_upload.disabled', 'File attachments are disabled.'));
+                this.props.onUploadError(localizeMessage({id: 'file_upload.disabled', defaultMessage: 'File attachments are disabled.'}));
                 return;
             }
+
+            if (this.props.disabledByPolicy) {
+                this.props.onUploadError(localizeMessage({id: 'file_upload.disabled_by_policy', defaultMessage: 'File uploads are restricted in this channel'}));
+                return;
+            }
+
             const postTextbox = this.props.postType === 'post' && document.activeElement?.id === 'post_textbox';
             const commentTextbox = this.props.postType === 'comment' && document.activeElement?.id === 'reply_textbox';
             const threadTextbox = this.props.postType === 'thread' && document.activeElement?.id === 'reply_textbox';
@@ -543,22 +620,16 @@ export class FileUpload extends PureComponent<Props, State> {
     simulateInputClick = (e: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | TouchEvent) => {
         e.preventDefault();
         e.stopPropagation();
+
+        if (this.props.disabledByPolicy) {
+            return;
+        }
+
         this.fileInput.current?.click();
     };
 
     render() {
         const {formatMessage} = this.props.intl;
-        let multiple = true;
-        if (isMobileApp()) {
-            // iOS WebViews don't upload videos properly in multiple mode
-            multiple = false;
-        }
-
-        let accept = '';
-        if (isIosChrome()) {
-            // iOS Chrome can't upload videos at all
-            accept = 'image/*';
-        }
 
         const uploadsRemaining = Constants.MAX_UPLOAD_FILES - this.props.fileCount;
 
@@ -566,50 +637,67 @@ export class FileUpload extends PureComponent<Props, State> {
         const buttonAriaLabel = formatMessage({id: 'accessibility.button.attachment', defaultMessage: 'attachment'});
         const iconAriaLabel = formatMessage({id: 'generic_icons.attach', defaultMessage: 'Attachment Icon'});
 
-        if (this.props.pluginFileUploadMethods.length === 0) {
+        const {disabledByPolicy} = this.props;
+
+        const dimmed = uploadsRemaining <= 0 || disabledByPolicy;
+
+        const uploadTooltip = disabledByPolicy ? formatMessage({id: 'file_upload.disabled_by_policy', defaultMessage: 'File uploads are restricted in this channel'}) : (
+            <KeyboardShortcutSequence
+                shortcut={KEYBOARD_SHORTCUTS.filesUpload}
+                hoistDescription={true}
+                isInsideTooltip={true}
+            />
+        );
+
+        // asChild + disabled: IconButton applies aria-disabled and the disabled class (not the
+        // native disabled attribute), so WithTooltip can still explain policy denial / show the
+        // shortcut. Every upload entry point also checks disabledByPolicy.
+        const attachmentButton = (onActivate?: (e: MouseEvent<HTMLButtonElement | HTMLAnchorElement> | TouchEvent) => void) => (
+            <WithTooltip title={uploadTooltip}>
+                <IconButton
+                    asChild={true}
+                    size='small'
+                    disabled={dimmed}
+                    icon={
+                        <Icon
+                            glyph={
+                                <PaperclipIcon
+                                    color='currentColor'
+                                    aria-label={iconAriaLabel}
+                                />
+                            }
+                        />
+                    }
+                    aria-label={buttonAriaLabel}
+                >
+                    <button
+                        id='fileUploadButton'
+                        type='button'
+                        onClick={onActivate}
+                        onTouchEnd={onActivate}
+                    />
+                </IconButton>
+            </WithTooltip>
+        );
+
+        // No entry points for a denied user: a menu of plugin sources that would each be rejected
+        // is worse than one control that says why.
+        if (disabledByPolicy) {
+            bodyAction = <div>{attachmentButton()}</div>;
+        } else if (this.props.pluginFileUploadMethods.length === 0) {
             bodyAction = (
                 <div>
-                    <OverlayTrigger
-                        delayShow={Constants.OVERLAY_TIME_DELAY}
-                        placement='top'
-                        trigger={['hover', 'focus']}
-                        overlay={
-                            <Tooltip id='upload-tooltip'>
-                                <KeyboardShortcutSequence
-                                    shortcut={KEYBOARD_SHORTCUTS.filesUpload}
-                                    hoistDescription={true}
-                                    isInsideTooltip={true}
-                                />
-                            </Tooltip>
-                        }
-                    >
-                        <button
-                            type='button'
-                            id='fileUploadButton'
-                            aria-label={buttonAriaLabel}
-                            className={classNames('style--none AdvancedTextEditor__action-button', {
-                                disabled: uploadsRemaining <= 0,
-                            })}
-                            onClick={this.simulateInputClick}
-                            onTouchEnd={this.simulateInputClick}
-                        >
-                            <PaperclipIcon
-                                size={18}
-                                color={'currentColor'}
-                                aria-label={iconAriaLabel}
-                            />
-                        </button>
-                    </OverlayTrigger>
+                    {attachmentButton(this.simulateInputClick)}
                     <input
                         id='fileUploadInput'
+                        className='file-attachment-menu-item-input'
                         tabIndex={-1}
                         aria-label={formatMessage(holders.uploadFile)}
                         ref={this.fileInput}
                         type='file'
                         onChange={this.handleChange}
                         onClick={this.handleLocalFileUploaded}
-                        multiple={multiple}
-                        accept={accept}
+                        multiple={true}
                     />
                 </div>
             );
@@ -644,37 +732,10 @@ export class FileUpload extends PureComponent<Props, State> {
                         className='file-attachment-menu-item-input'
                         onChange={this.handleChange}
                         onClick={this.handleLocalFileUploaded}
-                        multiple={multiple}
-                        accept={accept}
+                        multiple={true}
                     />
                     <MenuWrapper>
-                        <OverlayTrigger
-                            delayShow={Constants.OVERLAY_TIME_DELAY}
-                            placement='top'
-                            trigger={['hover', 'focus']}
-                            overlay={
-                                <Tooltip id='upload-tooltip'>
-                                    <KeyboardShortcutSequence
-                                        shortcut={KEYBOARD_SHORTCUTS.filesUpload}
-                                        hoistDescription={true}
-                                        isInsideTooltip={true}
-                                    />
-                                </Tooltip>
-                            }
-                        >
-                            <button
-                                type='button'
-                                id='fileUploadButton'
-                                aria-label={buttonAriaLabel}
-                                className='style--none AdvancedTextEditor__action-button'
-                            >
-                                <PaperclipIcon
-                                    size={18}
-                                    color={'currentColor'}
-                                    aria-label={iconAriaLabel}
-                                />
-                            </button>
-                        </OverlayTrigger>
+                        {attachmentButton()}
                         <Menu
                             id='fileUploadOptions'
                             openLeft={true}
@@ -709,7 +770,7 @@ export class FileUpload extends PureComponent<Props, State> {
         }
 
         return (
-            <div className={uploadsRemaining <= 0 ? ' style--none btn-file__disabled' : 'style--none'}>
+            <div className='style--none'>
                 {bodyAction}
             </div>
         );

@@ -5,29 +5,21 @@ import {connect} from 'react-redux';
 import {bindActionCreators} from 'redux';
 import type {Dispatch} from 'redux';
 
-import type {GlobalState} from '@mattermost/types/store';
+import type {Channel} from '@mattermost/types/channels';
 
 import {patchChannel} from 'mattermost-redux/actions/channels';
-import {createSelector} from 'mattermost-redux/selectors/create_selector';
-import {getTeam} from 'mattermost-redux/selectors/entities/teams';
 
-import {getSiteURL} from 'utils/url';
+import {getChannelKind} from 'utils/channel_kind';
+
+import type {GlobalState} from 'types/store';
 
 import RenameChannelModal from './rename_channel_modal';
 
-const mapStateToPropsRenameChannel = createSelector(
-    'mapStateToPropsRenameChannel',
-    (state: GlobalState) => {
-        const currentTeamId = state.entities.teams.currentTeamId;
-        const team = getTeam(state, currentTeamId);
-        const currentTeamUrl = `${getSiteURL()}/${team ? team.name : ''}`;
-        return {
-            currentTeamUrl,
-            team,
-        };
-    },
-    (teamInfo) => ({...teamInfo}),
-);
+function mapStateToProps(state: GlobalState, ownProps: {channel: Channel}) {
+    return {
+        channelKind: getChannelKind(state, ownProps.channel),
+    };
+}
 
 function mapDispatchToProps(dispatch: Dispatch) {
     return {
@@ -37,4 +29,5 @@ function mapDispatchToProps(dispatch: Dispatch) {
     };
 }
 
-export default connect(mapStateToPropsRenameChannel, mapDispatchToProps)(RenameChannelModal);
+export default connect(mapStateToProps, mapDispatchToProps)(RenameChannelModal);
+

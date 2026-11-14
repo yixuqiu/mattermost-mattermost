@@ -27,10 +27,6 @@ const (
 )
 
 func TestService_sendProfileImageToRemote(t *testing.T) {
-	hadPing := disablePing
-	disablePing = true
-	defer func() { disablePing = hadPing }()
-
 	shouldError := &flag{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +91,7 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 
 	user := &model.User{
 		Id:       model.NewId(),
-		RemoteId: model.NewString(rc.RemoteId),
+		RemoteId: new(rc.RemoteId),
 	}
 
 	provider := testImageProvider{}
@@ -107,6 +103,7 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 
 	service, err := NewRemoteClusterService(mockServer, mockApp)
 	require.NoError(t, err)
+	service.disablePing = true
 
 	err = service.Start()
 	require.NoError(t, err)
@@ -152,6 +149,68 @@ func TestService_sendProfileImageToRemote(t *testing.T) {
 	})
 }
 
+// TestService_sendProfileImageToRemote_ResponseHandling exercises sendProfileImageToRemote against
+// a remote whose reply varies in size, shape and status. The cases cover what the caller makes of
+// each reply, and how much of a reply the remote gets to send before the caller stops reading.
+func TestService_sendProfileImageToRemote_ResponseHandling(t *testing.T) {
+	rs := newResponseServer()
+	defer rs.Close()
+
+	rc := makeRemoteCluster("remote_test_profile_image_response", rs.URL, TestTopics)
+
+	user := &model.User{
+		Id:       model.NewId(),
+		RemoteId: new(rc.RemoteId),
+	}
+
+	mockServer := newMockServer(t, makeRemoteClusters(NumRemotes, rs.URL, false))
+	mockServer.SetUser(user)
+
+	service, err := NewRemoteClusterService(mockServer, newMockApp(t, nil))
+	require.NoError(t, err)
+	service.disablePing = true
+
+	require.NoError(t, service.Start())
+	defer service.Shutdown()
+
+	task := sendProfileImageTask{
+		rc:       rc,
+		userID:   user.Id,
+		provider: testImageProvider{},
+	}
+
+	call := func(timeout time.Duration) error {
+		return service.sendProfileImageToRemote(timeout, task)
+	}
+
+	// The complete reply of a remote that stored the image.
+	reply := []byte(model.MapToJSON(map[string]string{model.STATUS: model.StatusOk}))
+
+	t.Run("complete reply", func(t *testing.T) {
+		rs.setReply(replyBody{prefix: reply})
+		defer rs.awaitIdle(t)
+
+		require.NoError(t, call(defaultCallTimeout))
+	})
+
+	// This call site ignores the reply body, so a reply with no body at all is not an error.
+	assertReplyCases(t, rs, call, sharedReplyCases(reply, true))
+
+	t.Run("connection is available to the calls that follow", func(t *testing.T) {
+		rs.setReply(replyBody{prefix: reply})
+		rs.takeConnectionCount()
+
+		for range 3 {
+			require.NoError(t, call(defaultCallTimeout))
+		}
+
+		assert.Equal(t, 1, rs.takeConnectionCount(),
+			"reading a complete reply to its end should leave the connection for the next call to reuse")
+	})
+
+	assertReplyBytesServedStaysBounded(t, rs, reply, call)
+}
+
 type testImageProvider struct {
 }
 
@@ -159,8 +218,8 @@ func (tip testImageProvider) GetProfileImage(user *model.User) ([]byte, bool, *m
 	img := image.NewRGBA(image.Rectangle{image.Point{0, 0}, image.Point{imageWidth, imageHeight}})
 	red := color.RGBA{255, 50, 50, 0xff}
 
-	for x := 0; x < imageWidth; x++ {
-		for y := 0; y < imageHeight; y++ {
+	for x := range imageWidth {
+		for y := range imageHeight {
 			img.Set(x, y, red)
 		}
 	}
